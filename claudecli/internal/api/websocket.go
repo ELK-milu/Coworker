@@ -21,11 +21,12 @@ var upgrader = websocket.Upgrader{
 
 // WSHandler WebSocket 处理器
 type WSHandler struct {
-	client   *client.ClaudeClient
-	sessions *session.Manager
-	tools    *tools.Registry
-	system   string
-	mu       sync.Mutex
+	client     *client.ClaudeClient
+	sessions   *session.Manager
+	tools      *tools.Registry
+	system     string
+	mu         sync.Mutex
+	cancelFunc context.CancelFunc
 }
 
 // NewWSHandler 创建 WebSocket 处理器
@@ -87,9 +88,13 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 			continue
 		}
 
-		if wsMsg.Type == "chat" {
+		switch wsMsg.Type {
+		case "chat":
 			log.Printf("[WS] Processing chat message")
 			h.handleChat(conn, wsMsg.Payload)
+		case "abort":
+			log.Printf("[WS] Processing abort message")
+			h.handleAbort()
 		}
 	}
 }
@@ -100,6 +105,17 @@ func (h *WSHandler) sendError(conn *websocket.Conn, msg string) {
 		"type":    "error",
 		"payload": map[string]string{"error": msg},
 	})
+}
+
+// handleAbort 处理中断请求
+func (h *WSHandler) handleAbort() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.cancelFunc != nil {
+		h.cancelFunc()
+		h.cancelFunc = nil
+		log.Printf("[WS] Conversation aborted")
+	}
 }
 
 // handleChat 处理聊天消息
@@ -116,20 +132,25 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		sess = h.sessions.Create(chat.UserID)
 	}
 
+	// 创建可取消的 context
+	ctx, cancel := context.WithCancel(context.Background())
+	h.mu.Lock()
+	h.cancelFunc = cancel
+	h.mu.Unlock()
+
 	// 创建事件通道
 	eventCh := make(chan loop.LoopEvent, 100)
 
 	// 启动对话循环
-	go h.runConversation(sess, chat.Message, eventCh)
+	go h.runConversation(ctx, sess, chat.Message, eventCh)
 
 	// 转发事件到 WebSocket
 	h.forwardEvents(conn, sess.ID, eventCh)
 }
 
 // runConversation 运行对话
-func (h *WSHandler) runConversation(sess *session.Session, msg string, eventCh chan loop.LoopEvent) {
+func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, msg string, eventCh chan loop.LoopEvent) {
 	defer close(eventCh)
-	ctx := context.Background()
 	l := loop.NewConversationLoop(h.client, sess, h.tools, h.system, eventCh)
 	l.ProcessMessage(ctx, msg)
 }

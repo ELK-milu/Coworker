@@ -1,13 +1,26 @@
-import React from 'react';
-import { Typography } from '@douyinfe/semi-ui';
+import React, { useState } from 'react';
+import { Typography, Toast } from '@douyinfe/semi-ui';
+import { IconCopy, IconTick } from '@douyinfe/semi-icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const { Text } = Typography;
 
-const MessageBubble = ({ role, content, timestamp }) => {
+const MessageBubble = ({ role, content, timestamp, aborted }) => {
+  const [copied, setCopied] = useState(false);
   const isUser = role === 'user';
   const isError = role === 'error';
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content || '');
+      setCopied(true);
+      Toast.success('已复制到剪贴板');
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      Toast.error('复制失败');
+    }
+  };
 
   return (
     <div className={`message-bubble ${isUser ? 'user' : 'assistant'}`}>
@@ -28,7 +41,14 @@ const MessageBubble = ({ role, content, timestamp }) => {
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {content || ''}
           </ReactMarkdown>
+          {aborted && <Text type="warning" size="small">（已中断）</Text>}
         </div>
+      </div>
+      {/* 操作按钮 */}
+      <div className="message-actions">
+        <button className="action-btn" onClick={handleCopy} title="复制">
+          {copied ? <IconTick size="small" /> : <IconCopy size="small" />}
+        </button>
       </div>
     </div>
   );

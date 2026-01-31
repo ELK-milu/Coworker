@@ -4,7 +4,7 @@ Copyright (C) 2025 QuantumNous
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Typography, Spin, TextArea } from '@douyinfe/semi-ui';
-import { IconSend } from '@douyinfe/semi-icons';
+import { IconSend, IconStop } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
 import './styles.css';
@@ -134,6 +134,22 @@ const Coworker = () => {
     }));
   };
 
+  // 中断对话
+  const abortMessage = () => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'abort' }));
+    }
+    setLoading(false);
+    setThinking(false);
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last?.streaming) {
+        return [...prev.slice(0, -1), { ...last, streaming: false, aborted: true }];
+      }
+      return prev;
+    });
+  };
+
   // 渲染消息项
   const renderMessage = (msg, index) => {
     if (msg.type === 'tool') {
@@ -155,6 +171,7 @@ const Coworker = () => {
         role={msg.type}
         content={msg.content}
         timestamp={msg.timestamp}
+        aborted={msg.aborted}
       />
     );
   };
@@ -194,22 +211,31 @@ const Coworker = () => {
             <TextArea
               value={inputValue}
               onChange={setInputValue}
-              placeholder="输入消息，按 Enter 发送..."
+              placeholder={loading ? "Claude 正在回复，你可以继续输入..." : "输入消息，按 Enter 发送..."}
               autosize={{ minRows: 1, maxRows: 5 }}
               onEnterPress={(e) => {
-                if (!e.shiftKey) {
+                if (!e.shiftKey && !loading) {
                   e.preventDefault();
                   sendMessage();
                 }
               }}
-              disabled={!connected || loading}
+              disabled={!connected}
             />
-            <Button
-              icon={<IconSend />}
-              theme="solid"
-              onClick={sendMessage}
-              disabled={!connected || loading || !inputValue.trim()}
-            />
+            {loading ? (
+              <Button
+                icon={<IconStop />}
+                theme="solid"
+                type="danger"
+                onClick={abortMessage}
+              />
+            ) : (
+              <Button
+                icon={<IconSend />}
+                theme="solid"
+                onClick={sendMessage}
+                disabled={!connected || !inputValue.trim()}
+              />
+            )}
           </div>
         </div>
       </div>
