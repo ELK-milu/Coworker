@@ -28,6 +28,7 @@ const SIDEBAR_REFRESH_EVENT = 'sidebar-refresh';
 export const DEFAULT_ADMIN_CONFIG = {
   chat: {
     enabled: true,
+    coworker: true,
     playground: true,
     chat: true,
   },
@@ -69,7 +70,13 @@ export const mergeAdminConfig = (savedConfig) => {
       continue;
     }
 
-    merged[sectionKey] = { ...merged[sectionKey], ...sectionConfig };
+    // 智能合并：保留默认配置中的新模块
+    // 只有当 savedConfig 中明确设置了某个模块时，才覆盖默认值
+    const mergedSection = { ...merged[sectionKey] };
+    for (const [key, value] of Object.entries(sectionConfig)) {
+      mergedSection[key] = value;
+    }
+    merged[sectionKey] = mergedSection;
   }
 
   return merged;

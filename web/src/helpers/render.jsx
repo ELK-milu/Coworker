@@ -74,6 +74,7 @@ import {
   CircleUser,
   Package,
   Server,
+  Users,
 } from 'lucide-react';
 
 // 获取侧边栏Lucide图标组件
@@ -92,6 +93,8 @@ export function getLucideIcon(key, selected = false) {
   switch (key) {
     case 'detail':
       return <LayoutDashboard {...commonProps} color={iconColor} />;
+    case 'coworker':
+      return <Users {...commonProps} color={iconColor} />;
     case 'playground':
       return <TerminalSquare {...commonProps} color={iconColor} />;
     case 'chat':

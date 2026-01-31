@@ -46,6 +46,7 @@ const routerMap = {
   task: '/console/task',
   models: '/console/models',
   deployment: '/console/deployment',
+  coworker: '/console/coworker',
   playground: '/console/playground',
   personal: '/console/personal',
 };
@@ -195,6 +196,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
   const chatMenuItems = useMemo(() => {
     const items = [
+      {
+        text: 'Coworker',
+        itemKey: 'coworker',
+        to: '/coworker',
+      },
       {
         text: t('操练场'),
         itemKey: 'playground',
