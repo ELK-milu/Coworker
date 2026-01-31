@@ -20,7 +20,7 @@ Coworker is a fork of [new-api](https://github.com/Calcium-Ion/new-api), an LLM 
 ### Start Development Environment
 
 ```bash
-# Start all services (backend, frontend, postgres, redis)
+# Start all services (backend, frontend build, postgres, redis)
 docker-compose -f docker-compose-dev.yml up
 
 # Start in background
@@ -28,17 +28,17 @@ docker-compose -f docker-compose-dev.yml up -d
 
 # View logs
 docker logs -f new-api-dev  # Backend
-docker logs -f web-dev      # Frontend
 
-# Restart specific service
-docker-compose -f docker-compose-dev.yml restart new-api-dev
+# Rebuild frontend after code changes
+docker-compose -f docker-compose-dev.yml restart web-dev
 ```
 
-**Access URLs:**
-- Frontend: http://localhost:5173 (Vite dev server)
-- Backend API: http://localhost:3000
+**Access URL:**
+- Application: http://localhost:3000 (Backend serves static files)
 - PostgreSQL: localhost:5432
 - Redis: localhost:6379
+
+**Note:** Frontend uses build mode (not dev server). After modifying frontend code, run `docker-compose -f docker-compose-dev.yml restart web-dev` to rebuild.
 
 ### Backend Development
 
@@ -302,32 +302,6 @@ docker logs --tail 20 new-api-dev
 - [ ] Route configured in `App.jsx`
 - [ ] Sidebar button added in `SiderBar.jsx`
 - [ ] Module config added in `useSidebar.js`
-
-### WebSocket Connection Failed
-
-**Problem:** WebSocket connection fails with error: `WebSocket connection to 'ws://localhost:5173/claudecli/ws' failed`
-
-**Root Cause:** Vite dev server (5173) doesn't proxy WebSocket requests to backend (3000).
-
-**Solution:** Add `/claudecli` proxy configuration in `vite.config.js`:
-
-```javascript
-server: {
-  host: '0.0.0.0',
-  proxy: {
-    '/claudecli': {
-      target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
-      changeOrigin: true,
-      ws: true,  // Enable WebSocket proxy
-    },
-  },
-},
-```
-
-**After fixing:**
-1. Restart frontend container: `docker-compose -f docker-compose-dev.yml restart web-dev`
-2. Refresh browser page
-3. Check connection status shows "● 已连接"
 
 ---
 

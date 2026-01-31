@@ -87,26 +87,4 @@ export default defineConfig({
       },
     },
   },
-  server: {
-    host: '0.0.0.0',
-    proxy: {
-      '/api': {
-        target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
-        changeOrigin: true,
-      },
-      '/mj': {
-        target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
-        changeOrigin: true,
-      },
-      '/pg': {
-        target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
-        changeOrigin: true,
-      },
-      '/claudecli': {
-        target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
-        changeOrigin: true,
-        ws: true,  // Enable WebSocket proxy
-      },
-    },
-  },
 });

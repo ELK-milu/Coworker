@@ -1,42 +1,39 @@
 # Development Docker Compose Configuration
-# 遵循官方推荐的本地开发方式
+# 简化的本地开发方式
 #
 # 使用方法:
 #   docker-compose -f docker-compose-dev.yml up
 #
-# 架构说明（官方推荐）:
-#   开发时访问: http://localhost:5173 (前端开发服务器)
+# 架构说明:
+#   开发时访问: http://localhost:3000 (后端服务)
 #       ↓
-#   Vite Dev Server (5173) + HMR 热重载
+#   Go 后端 (3000) + Air 热重载 + 静态文件服务
 #       ↓
-#   API 代理 (/api, /v1, /mj, /pg) → Go 后端 (3000) + Air 热重载
+#   前端构建产物 (web/dist)
 #
 # 特性:
-#   - 前端：http://localhost:5173 (Vite dev server + 热重载)
-#   - 后端：http://localhost:3000 (Go + air + 热重载)
-#   - Vite 自动代理 API 请求到后端
-#   - 源代码实时挂载
+#   - 统一入口：http://localhost:3000
+#   - 后端：Go + Air 热重载
+#   - 前端：bun build 构建静态文件，修改后手动重启 web-dev 容器
+#
+# 前端修改后重新构建:
+#   docker-compose -f docker-compose-dev.yml restart web-dev
 
 version: '3.4'
 
 services:
-  # 前端开发服务 (Vite + React)
+  # 前端构建服务 (Bun + Vite Build)
   web-dev:
     image: oven/bun:latest
     container_name: web-dev
-    restart: unless-stopped
-    ports:
-      - "5173:5173"  # Vite dev server 端口
+    restart: "no"
     volumes:
-      # 挂载前端源代码（实时更新）
       - ./web:/app
-      # 排除 node_modules（使用容器内的）
-      - /app/node_modules
+      - web_node_modules:/app/node_modules
     working_dir: /app
-    command: sh -c "bun install && bun run dev --host 0.0.0.0"
+    command: sh -c "bun install && bun run build"
     environment:
-      - NODE_ENV=development
-      - VITE_API_BASE_URL=http://new-api-dev:3000
+      - NODE_ENV=production
 
   # 后端开发服务 (Go + Air)
   new-api-dev:
@@ -90,3 +87,4 @@ services:
 
 volumes:
   pg_data_dev:
+  web_node_modules:
