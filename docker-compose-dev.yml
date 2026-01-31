@@ -50,8 +50,7 @@ services:
     volumes:
       # 挂载源代码（实时更新）
       - .:/app
-      # 排除 vendor 和构建产物
-      - /app/vendor
+      # 排除构建产物
       - /app/tmp
     environment:
       - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api

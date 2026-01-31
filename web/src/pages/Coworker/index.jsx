@@ -18,12 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Card, Input, Button, Typography, Space, Spin } from '@douyinfe/semi-ui';
+import { Card, Input, Button, Typography, Space, Spin, TextArea } from '@douyinfe/semi-ui';
 import { IconSend } from '@douyinfe/semi-icons';
 
-const { Content } = Layout;
 const { Title, Text } = Typography;
-const { TextArea } = Input;
 
 const Coworker = () => {
   const [messages, setMessages] = useState([]);
@@ -44,34 +42,50 @@ const Coworker = () => {
 
   // 连接 WebSocket
   const connectWebSocket = () => {
+    console.log('[Coworker] Starting WebSocket connection...');
+
+    // 如果已有连接，先关闭
+    if (wsRef.current) {
+      console.log('[Coworker] Closing existing connection, readyState:', wsRef.current.readyState);
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/claudecli/ws`;
+    console.log('[Coworker] WebSocket URL:', wsUrl);
 
-    wsRef.current = new WebSocket(wsUrl);
+    try {
+      wsRef.current = new WebSocket(wsUrl);
+      console.log('[Coworker] WebSocket object created, readyState:', wsRef.current.readyState);
 
-    wsRef.current.onopen = () => {
-      setConnected(true);
-      console.log('WebSocket connected');
-    };
+      wsRef.current.onopen = () => {
+        console.log('[Coworker] WebSocket onopen event fired');
+        setConnected(true);
+      };
 
-    wsRef.current.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        handleWebSocketMessage(data);
-      } catch (error) {
-        console.error('Failed to parse message:', error);
-      }
-    };
+      wsRef.current.onmessage = (event) => {
+        console.log('[Coworker] WebSocket message received:', event.data);
+        try {
+          const data = JSON.parse(event.data);
+          handleWebSocketMessage(data);
+        } catch (error) {
+          console.error('[Coworker] Failed to parse message:', error);
+        }
+      };
 
-    wsRef.current.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setConnected(false);
-    };
+      wsRef.current.onerror = (error) => {
+        console.error('[Coworker] WebSocket error:', error);
+        setConnected(false);
+      };
 
-    wsRef.current.onclose = () => {
-      setConnected(false);
-      console.log('WebSocket disconnected');
-    };
+      wsRef.current.onclose = (event) => {
+        console.log('[Coworker] WebSocket closed. Code:', event.code, 'Reason:', event.reason);
+        setConnected(false);
+      };
+    } catch (error) {
+      console.error('[Coworker] Failed to create WebSocket:', error);
+    }
   };
 
   // 处理 WebSocket 消息
@@ -120,27 +134,28 @@ const Coworker = () => {
   // 组件挂载时连接 WebSocket
   useEffect(() => {
     connectWebSocket();
+
+    // 清理函数：只在组件真正卸载时关闭连接
     return () => {
-      if (wsRef.current) {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.close();
       }
     };
   }, []);
 
   return (
-    <Layout style={{ minHeight: '100vh', background: 'var(--semi-color-bg-0)' }}>
-      <Content style={{ padding: '24px' }}>
-        <Card
-          title={
-            <Space>
-              <Title heading={3} style={{ margin: 0 }}>Coworker - AI 助手</Title>
-              <Text type={connected ? 'success' : 'danger'}>
-                {connected ? '● 已连接' : '● 未连接'}
-              </Text>
-            </Space>
-          }
-          style={{ maxWidth: '1200px', margin: '0 auto' }}
-        >
+    <div className='mt-[60px] px-2'>
+      <Card
+        title={
+          <Space>
+            <Title heading={3} style={{ margin: 0 }}>Coworker - AI 助手</Title>
+            <Text type={connected ? 'success' : 'danger'}>
+              {connected ? '● 已连接' : '● 未连接'}
+            </Text>
+          </Space>
+        }
+        style={{ maxWidth: '1200px', margin: '0 auto' }}
+      >
           {/* 消息列表 */}
           <div style={{
             height: '500px',
@@ -208,8 +223,7 @@ const Coworker = () => {
             </Button>
           </Space>
         </Card>
-      </Content>
-    </Layout>
+      </div>
   );
 };
 

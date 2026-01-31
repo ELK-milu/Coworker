@@ -102,6 +102,11 @@ export default defineConfig({
         target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
         changeOrigin: true,
       },
+      '/claudecli': {
+        target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
+        changeOrigin: true,
+        ws: true,  // Enable WebSocket proxy
+      },
     },
   },
 });

@@ -58,12 +58,15 @@ type ChatPayload struct {
 
 // Handle 处理 WebSocket 连接
 func (h *WSHandler) Handle(c *gin.Context) {
+	log.Printf("[WS] Attempting to upgrade connection from %s", c.Request.RemoteAddr)
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		log.Printf("[WS] Failed to upgrade connection: %v", err)
 		return
 	}
 	defer conn.Close()
 
+	log.Printf("[WS] Connection established successfully")
 	h.handleConnection(conn)
 }
 

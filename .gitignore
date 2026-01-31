@@ -28,3 +28,5 @@ data/
 .gomodcache/
 .gocache-temp
 .gopath
+vendor/
+tmp/
