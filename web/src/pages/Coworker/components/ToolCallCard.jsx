@@ -1,0 +1,72 @@
+import React, { useState } from 'react';
+import { Typography, Tag, Spin } from '@douyinfe/semi-ui';
+import { IconChevronDown, IconChevronRight, IconTick, IconClose, IconTerminal } from '@douyinfe/semi-icons';
+
+const { Text } = Typography;
+
+// 工具调用卡片组件
+const ToolCallCard = ({ toolName, toolId, input, result, status, isError }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  // 状态标签
+  const renderStatus = () => {
+    if (status === 'running') {
+      return <Spin size="small" />;
+    }
+    if (status === 'completed') {
+      return isError ? (
+        <Tag color="red" size="small"><IconClose size="small" /> 失败</Tag>
+      ) : (
+        <Tag color="green" size="small"><IconTick size="small" /> 完成</Tag>
+      );
+    }
+    return null;
+  };
+
+  // 格式化输出内容
+  const formatContent = (content, maxLines = 20) => {
+    if (!content) return '';
+    const lines = content.split('\n');
+    if (lines.length > maxLines) {
+      return lines.slice(0, maxLines).join('\n') + `\n... (${lines.length - maxLines} more lines)`;
+    }
+    return content;
+  };
+
+  return (
+    <div className="tool-call-card">
+      <div
+        className="tool-call-header"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="tool-icon"><IconTerminal /></span>
+        <Text strong className="tool-name">{toolName}</Text>
+        <span className="tool-status">{renderStatus()}</span>
+        <span className="tool-expand">
+          {expanded ? <IconChevronDown /> : <IconChevronRight />}
+        </span>
+      </div>
+
+      {expanded && (
+        <div className="tool-call-content">
+          {input && (
+            <div className="tool-section">
+              <Text type="tertiary" size="small">输入参数:</Text>
+              <pre className="tool-code">{formatContent(input)}</pre>
+            </div>
+          )}
+          {result && (
+            <div className="tool-section">
+              <Text type="tertiary" size="small">执行结果:</Text>
+              <pre className={`tool-code ${isError ? 'error' : ''}`}>
+                {formatContent(result)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ToolCallCard;

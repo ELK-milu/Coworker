@@ -149,6 +149,7 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 			payload["tool_id"] = event.ToolID
 		case loop.EventTypeToolEnd:
 			payload["name"] = event.ToolName
+			payload["tool_id"] = event.ToolID
 			payload["result"] = event.ToolResult
 		case loop.EventTypeError:
 			payload["error"] = event.Error
