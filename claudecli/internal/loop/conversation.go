@@ -72,6 +72,20 @@ func (l *ConversationLoop) ProcessMessage(ctx context.Context, userInput string)
 // runLoop 运行对话循环
 func (l *ConversationLoop) runLoop(ctx context.Context) error {
 	for {
+		// 检查上下文是否被取消
+		select {
+		case <-ctx.Done():
+			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
+			return ctx.Err()
+		default:
+		}
+
+		// 检查上下文是否接近限制，如果是则压缩
+		if l.session.IsContextNearLimit() {
+			log.Printf("[Loop] Context near limit, compacting...")
+			l.session.CompactContext()
+		}
+
 		// 调用 Claude API
 		streamCh, err := l.client.CreateMessageStream(
 			ctx,
@@ -85,7 +99,7 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		}
 
 		// 处理流事件
-		toolCalls, stopReason, err := l.processStream(streamCh)
+		toolCalls, stopReason, err := l.processStream(ctx, streamCh)
 		if err != nil {
 			return err
 		}
@@ -111,46 +125,58 @@ type toolCall struct {
 }
 
 // processStream 处理流事件
-func (l *ConversationLoop) processStream(streamCh <-chan client.StreamEvent) ([]toolCall, string, error) {
+func (l *ConversationLoop) processStream(ctx context.Context, streamCh <-chan client.StreamEvent) ([]toolCall, string, error) {
 	var toolCalls []toolCall
 	var currentTool *toolCall
 	var textContent string
 	var stopReason string
 
-	for event := range streamCh {
-		switch event.Type {
-		case client.EventText:
-			textContent += event.Text
-			l.eventCh <- LoopEvent{Type: EventTypeText, Text: event.Text}
+	for {
+		select {
+		case <-ctx.Done():
+			// 上下文被取消，保存已有内容并返回
+			if textContent != "" || len(toolCalls) > 0 {
+				l.saveAssistantMessage(textContent, toolCalls)
+			}
+			return nil, "", ctx.Err()
 
-		case client.EventToolStart:
-			currentTool = &toolCall{ID: event.ToolID, Name: event.ToolName}
-			l.eventCh <- LoopEvent{
-				Type:     EventTypeToolStart,
-				ToolID:   event.ToolID,
-				ToolName: event.ToolName,
+		case event, ok := <-streamCh:
+			if !ok {
+				// 通道关闭，保存助手消息
+				l.saveAssistantMessage(textContent, toolCalls)
+				return toolCalls, stopReason, nil
 			}
 
-		case client.EventToolDelta:
-			if currentTool != nil {
-				currentTool.Input += event.ToolInput
-			}
+			switch event.Type {
+			case client.EventText:
+				textContent += event.Text
+				l.eventCh <- LoopEvent{Type: EventTypeText, Text: event.Text}
 
-		case client.EventStop:
-			stopReason = event.StopReason
-			if currentTool != nil {
-				toolCalls = append(toolCalls, *currentTool)
-				currentTool = nil
-			}
+			case client.EventToolStart:
+				currentTool = &toolCall{ID: event.ToolID, Name: event.ToolName}
+				l.eventCh <- LoopEvent{
+					Type:     EventTypeToolStart,
+					ToolID:   event.ToolID,
+					ToolName: event.ToolName,
+				}
 
-		case client.EventError:
-			return nil, "", &loopError{msg: event.Error}
+			case client.EventToolDelta:
+				if currentTool != nil {
+					currentTool.Input += event.ToolInput
+				}
+
+			case client.EventStop:
+				stopReason = event.StopReason
+				if currentTool != nil {
+					toolCalls = append(toolCalls, *currentTool)
+					currentTool = nil
+				}
+
+			case client.EventError:
+				return nil, "", &loopError{msg: event.Error}
+			}
 		}
 	}
-
-	// 保存助手消息
-	l.saveAssistantMessage(textContent, toolCalls)
-	return toolCalls, stopReason, nil
 }
 
 // loopError 循环错误

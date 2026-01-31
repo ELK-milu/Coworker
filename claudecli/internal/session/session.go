@@ -1,9 +1,11 @@
 package session
 
 import (
-	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/new-api/claudecli/internal/context"
+	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
 // Session 会话
@@ -15,6 +17,7 @@ type Session struct {
 	UpdatedAt  time.Time
 	TotalCost  float64
 	WorkingDir string
+	Context    *context.Manager // 上下文管理器
 	mu         sync.RWMutex
 }
 
@@ -27,6 +30,7 @@ func NewSession(id, userID, workingDir string) *Session {
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 		WorkingDir: workingDir,
+		Context:    context.NewManager(nil),
 	}
 }
 
@@ -45,4 +49,37 @@ func (s *Session) GetMessages() []types.Message {
 	result := make([]types.Message, len(s.Messages))
 	copy(result, s.Messages)
 	return result
+}
+
+// GetContextStats 获取上下文统计
+func (s *Session) GetContextStats() context.Stats {
+	if s.Context == nil {
+		return context.Stats{}
+	}
+	return s.Context.GetStats()
+}
+
+// IsContextNearLimit 检查上下文是否接近限制
+func (s *Session) IsContextNearLimit() bool {
+	if s.Context == nil {
+		return false
+	}
+	return s.Context.IsNearLimit()
+}
+
+// CompactContext 压缩上下文
+func (s *Session) CompactContext() {
+	if s.Context != nil {
+		s.Context.Compact()
+	}
+}
+
+// ClearMessages 清除消息
+func (s *Session) ClearMessages() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Messages = make([]types.Message, 0)
+	if s.Context != nil {
+		s.Context.Clear()
+	}
 }
