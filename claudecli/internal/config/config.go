@@ -22,14 +22,15 @@ type ServerConfig struct {
 type ClaudeConfig struct {
 	APIKey    string
 	AuthToken string
+	BaseURL   string
 	Model     string
 	MaxTokens int
 }
 
 // SecurityConfig 安全配置
 type SecurityConfig struct {
-	WorkingDir     string
-	AllowedDirs    []string
+	WorkingDir      string
+	AllowedDirs     []string
 	BlockedCommands []string
 }
 
@@ -49,6 +50,7 @@ func Load() *Config {
 			Claude: ClaudeConfig{
 				APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
 				AuthToken: os.Getenv("ANTHROPIC_AUTH_TOKEN"),
+				BaseURL:   getEnv("ANTHROPIC_BASE_URL", getEnv("ANTHROPIC_API_BASE_URL", "")),
 				Model:     getEnv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
 				MaxTokens: 16000,
 			},

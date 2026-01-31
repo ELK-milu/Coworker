@@ -58,6 +58,7 @@ services:
       - DEBUG=true
       # Agent 配置
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
       - WORKSPACE_BASE_PATH=/data/users
     depends_on:
       - redis

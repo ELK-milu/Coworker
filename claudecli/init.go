@@ -40,6 +40,7 @@ func Init() *Module {
 	claudeClient := client.NewClaudeClient(
 		cfg.Claude.APIKey,
 		cfg.Claude.AuthToken,
+		cfg.Claude.BaseURL,
 		cfg.Claude.Model,
 		cfg.Claude.MaxTokens,
 	)

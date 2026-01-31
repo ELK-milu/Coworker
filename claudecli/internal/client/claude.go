@@ -26,7 +26,7 @@ type ClaudeClient struct {
 }
 
 // NewClaudeClient 创建客户端
-func NewClaudeClient(apiKey, authToken, model string, maxTokens int) *ClaudeClient {
+func NewClaudeClient(apiKey, authToken, baseURL, model string, maxTokens int) *ClaudeClient {
 	var client anthropic.Client
 	var isOAuth bool
 
@@ -42,6 +42,9 @@ func NewClaudeClient(apiKey, authToken, model string, maxTokens int) *ClaudeClie
 		opts := []option.RequestOption{
 			option.WithAuthToken(authToken),
 		}
+		if baseURL != "" {
+			opts = append(opts, option.WithBaseURL(baseURL))
+		}
 		for k, v := range defaultHeaders {
 			opts = append(opts, option.WithHeader(k, v))
 		}
@@ -51,6 +54,9 @@ func NewClaudeClient(apiKey, authToken, model string, maxTokens int) *ClaudeClie
 		// API Key 模式
 		opts := []option.RequestOption{
 			option.WithAPIKey(apiKey),
+		}
+		if baseURL != "" {
+			opts = append(opts, option.WithBaseURL(baseURL))
 		}
 		for k, v := range defaultHeaders {
 			opts = append(opts, option.WithHeader(k, v))
