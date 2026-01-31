@@ -8,6 +8,32 @@ const { Text } = Typography;
 const ToolCallCard = ({ toolName, toolId, input, result, status, isError }) => {
   const [expanded, setExpanded] = useState(false);
 
+  // 获取简短的工具调用描述
+  const getToolSummary = () => {
+    if (!input) return toolName;
+    try {
+      const inputObj = JSON.parse(input);
+      // 根据不同工具类型提取关键信息
+      if (inputObj.command) {
+        // Bash 工具：显示命令的前50个字符
+        const cmd = inputObj.command.split('\n')[0].substring(0, 50);
+        return `${toolName}(${cmd}${inputObj.command.length > 50 ? '...' : ''})`;
+      }
+      if (inputObj.file_path) {
+        // Read/Write/Edit 工具：显示文件路径
+        const fileName = inputObj.file_path.split(/[/\\]/).pop();
+        return `${toolName}(${fileName})`;
+      }
+      if (inputObj.pattern) {
+        // Glob/Grep 工具：显示模式
+        return `${toolName}(${inputObj.pattern})`;
+      }
+      return toolName;
+    } catch {
+      return toolName;
+    }
+  };
+
   // 状态标签
   const renderStatus = () => {
     if (status === 'running') {
@@ -40,7 +66,7 @@ const ToolCallCard = ({ toolName, toolId, input, result, status, isError }) => {
         onClick={() => setExpanded(!expanded)}
       >
         <span className="tool-icon"><IconTerminal /></span>
-        <Text strong className="tool-name">{toolName}</Text>
+        <Text strong className="tool-name">{getToolSummary()}</Text>
         <span className="tool-status">{renderStatus()}</span>
         <span className="tool-expand">
           {expanded ? <IconChevronDown /> : <IconChevronRight />}

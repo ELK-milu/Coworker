@@ -54,19 +54,36 @@
 /* 消息气泡 */
 .message-bubble {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  gap: 12px;
   margin-bottom: 20px;
   max-width: 85%;
 }
 
 .message-bubble.user {
+  flex-direction: row-reverse;
   align-self: flex-end;
   margin-left: auto;
 }
 
 .message-bubble.assistant {
+  flex-direction: row;
   align-self: flex-start;
   margin-right: auto;
+}
+
+.message-avatar {
+  flex-shrink: 0;
+}
+
+.message-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.message-bubble.user .message-body {
+  align-items: flex-end;
 }
 
 .message-header {
@@ -78,7 +95,7 @@
 }
 
 .message-bubble.user .message-header {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
 }
 
 .message-sender {
@@ -90,15 +107,19 @@
   border-radius: 12px;
   background: var(--semi-color-bg-2);
   border: 1px solid var(--semi-color-border);
+  display: inline-block;
+  max-width: 100%;
 }
 
 .message-content.user {
   background: var(--semi-color-primary-light-default);
   border-color: var(--semi-color-primary-light-active);
+  text-align: right;
 }
 
 .message-content.assistant {
   background: var(--semi-color-bg-2);
+  text-align: left;
 }
 
 .message-content.error {
@@ -200,6 +221,11 @@
 
 .tool-name {
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
 }
 
 .tool-status {
@@ -284,6 +310,10 @@
 
 .message-bubble.user .message-actions {
   justify-content: flex-end;
+}
+
+.message-bubble.assistant .message-actions {
+  justify-content: flex-start;
 }
 
 .action-btn {
