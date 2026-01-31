@@ -51,6 +51,16 @@ func convertBetaMessage(msg types.Message) anthropic.BetaMessageParam {
 					Text: v.Text,
 				},
 			})
+		case types.ToolUseBlock:
+			// 处理 assistant 消息中的 tool_use 块
+			blocks = append(blocks, anthropic.BetaContentBlockParamUnion{
+				OfToolUse: &anthropic.BetaToolUseBlockParam{
+					Type:  "tool_use",
+					ID:    v.ID,
+					Name:  v.Name,
+					Input: v.Input,
+				},
+			})
 		case types.ToolResultBlock:
 			blocks = append(blocks, anthropic.BetaContentBlockParamUnion{
 				OfToolResult: &anthropic.BetaToolResultBlockParam{

@@ -21,14 +21,15 @@ type ConversationLoop struct {
 
 // LoopEvent 循环事件
 type LoopEvent struct {
-	Type      string      `json:"type"`
-	Text      string      `json:"text,omitempty"`
-	ToolName  string      `json:"tool_name,omitempty"`
-	ToolID    string      `json:"tool_id,omitempty"`
-	ToolInput string      `json:"tool_input,omitempty"`
-	ToolResult string     `json:"tool_result,omitempty"`
-	Error     string      `json:"error,omitempty"`
-	Done      bool        `json:"done,omitempty"`
+	Type       string `json:"type"`
+	Text       string `json:"text,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
+	ToolID     string `json:"tool_id,omitempty"`
+	ToolInput  string `json:"tool_input,omitempty"`
+	ToolResult string `json:"tool_result,omitempty"`
+	IsError    bool   `json:"is_error,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Done       bool   `json:"done,omitempty"`
 }
 
 const (
@@ -215,6 +216,7 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 			ToolID:     tc.ID,
 			ToolName:   tc.Name,
 			ToolResult: toolResult.Content,
+			IsError:    toolResult.IsError,
 		}
 	}
 
