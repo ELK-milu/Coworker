@@ -19,6 +19,7 @@ const Coworker = () => {
   const [thinking, setThinking] = useState(false);
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const abortedRef = useRef(false); // 中断标志
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -69,6 +70,11 @@ const Coworker = () => {
 
   // 处理 WebSocket 消息
   const handleWebSocketMessage = (data) => {
+    // 如果已中断，忽略除 done 和 error 外的消息
+    if (abortedRef.current && data.type !== 'done' && data.type !== 'error') {
+      return;
+    }
+
     const { type, payload } = data;
 
     switch (type) {
@@ -122,6 +128,7 @@ const Coworker = () => {
   const sendMessage = () => {
     if (!inputValue.trim() || !connected || loading) return;
 
+    abortedRef.current = false; // 重置中断标志
     const userMsg = { type: 'user', content: inputValue, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
     setInputValue('');
@@ -136,6 +143,7 @@ const Coworker = () => {
 
   // 中断对话
   const abortMessage = () => {
+    abortedRef.current = true; // 设置中断标志
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'abort' }));
     }
