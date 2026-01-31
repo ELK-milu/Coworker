@@ -1,17 +1,44 @@
 # Development Docker Compose Configuration
-# 支持代码实时挂载和热重载
+# 遵循官方推荐的本地开发方式
 #
 # 使用方法:
 #   docker-compose -f docker-compose-dev.yml up
 #
+# 架构说明（官方推荐）:
+#   开发时访问: http://localhost:5173 (前端开发服务器)
+#       ↓
+#   Vite Dev Server (5173) + HMR 热重载
+#       ↓
+#   API 代理 (/api, /v1, /mj, /pg) → Go 后端 (3000) + Air 热重载
+#
 # 特性:
+#   - 前端：http://localhost:5173 (Vite dev server + 热重载)
+#   - 后端：http://localhost:3000 (Go + air + 热重载)
+#   - Vite 自动代理 API 请求到后端
 #   - 源代码实时挂载
-#   - 使用 air 实现热重载
-#   - 开发环境配置
 
 version: '3.4'
 
 services:
+  # 前端开发服务 (Vite + React)
+  web-dev:
+    image: oven/bun:latest
+    container_name: web-dev
+    restart: unless-stopped
+    ports:
+      - "5173:5173"  # Vite dev server 端口
+    volumes:
+      # 挂载前端源代码（实时更新）
+      - ./web:/app
+      # 排除 node_modules（使用容器内的）
+      - /app/node_modules
+    working_dir: /app
+    command: sh -c "bun install && bun run dev --host 0.0.0.0"
+    environment:
+      - NODE_ENV=development
+      - VITE_API_BASE_URL=http://new-api-dev:3000
+
+  # 后端开发服务 (Go + Air)
   new-api-dev:
     build:
       context: .
@@ -19,7 +46,7 @@ services:
     container_name: new-api-dev
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3000:3000"  # Go API 服务端口
     volumes:
       # 挂载源代码（实时更新）
       - .:/app
@@ -27,7 +54,7 @@ services:
       - /app/vendor
       - /app/tmp
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/new-api
+      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
@@ -55,7 +82,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: root
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_PASSWORD: Xm8@Kp9#vL5n!Qw2%Rt7&Yz4
       POSTGRES_DB: new-api
     volumes:
       - pg_data_dev:/var/lib/postgresql/data

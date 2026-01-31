@@ -91,15 +91,15 @@ export default defineConfig({
     host: '0.0.0.0',
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
         changeOrigin: true,
       },
       '/mj': {
-        target: 'http://localhost:3000',
+        target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
         changeOrigin: true,
       },
       '/pg': {
-        target: 'http://localhost:3000',
+        target: process.env.VITE_API_BASE_URL || 'http://localhost:3000',
         changeOrigin: true,
       },
     },
