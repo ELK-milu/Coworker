@@ -175,11 +175,21 @@ claudecli/
 ├── internal/
 │   ├── api/
 │   │   ├── handler.go        # REST API handlers
-│   │   └── websocket.go      # WebSocket handler
+│   │   ├── websocket.go      # WebSocket handler
+│   │   └── file_handler.go   # File upload/download handlers
 │   ├── client/
 │   │   └── claude.go         # Anthropic API client
+│   ├── context/              # Context management (compact)
+│   │   ├── context.go        # Context manager
+│   │   ├── compress.go       # Message compression
+│   │   ├── tokens.go         # Token estimation
+│   │   └── summary.go        # Summary generation
 │   ├── session/
 │   │   └── manager.go        # Session management
+│   ├── task/
+│   │   └── task.go           # Task management (todo list)
+│   ├── workspace/
+│   │   └── workspace.go      # User workspace management
 │   ├── tools/                # Claude Code tools
 │   │   ├── bash.go
 │   │   ├── read.go
@@ -199,23 +209,116 @@ claudecli/
 
 **WebSocket Protocol:**
 ```javascript
-// Client → Server
-{
-  "type": "chat",
-  "payload": {
-    "message": "user message",
-    "user_id": "user_123"
-  }
-}
+// Client → Server (Chat)
+{ "type": "chat", "payload": { "message": "...", "session_id": "...", "user_id": "...", "mode": "normal" } }
+{ "type": "abort" }  // Abort current response
 
-// Server → Client
-{
-  "type": "text",           // or "done", "error"
-  "payload": {
-    "content": "response"
-  }
-}
+// Client → Server (Session Management)
+{ "type": "load_history", "payload": { "session_id": "..." } }
+{ "type": "list_sessions", "payload": { "user_id": "..." } }
+{ "type": "delete_session", "payload": { "session_id": "..." } }
+
+// Client → Server (File Management)
+{ "type": "list_files", "payload": { "user_id": "...", "path": "..." } }
+{ "type": "create_folder", "payload": { "user_id": "...", "path": "..." } }
+{ "type": "delete_file", "payload": { "user_id": "...", "path": "..." } }
+{ "type": "rename_file", "payload": { "user_id": "...", "path": "...", "new_name": "..." } }
+
+// Server → Client (Chat)
+{ "type": "text", "payload": { "content": "...", "session_id": "..." } }
+{ "type": "tool_start", "payload": { "name": "...", "tool_id": "...", "input": {...} } }
+{ "type": "tool_end", "payload": { "tool_id": "...", "result": "...", "is_error": false } }
+{ "type": "status", "payload": { "model": "...", "total_tokens": 0, "context_percent": 0 } }
+{ "type": "done" }
+{ "type": "error", "payload": { "error": "..." } }
+
+// Server → Client (Session/File)
+{ "type": "history", "payload": { "messages": [...] } }
+{ "type": "sessions_list", "payload": { "sessions": [...] } }
+{ "type": "files_list", "payload": { "files": [...], "path": "..." } }
+{ "type": "folder_created", "payload": { "success": true, "path": "..." } }
+{ "type": "file_deleted", "payload": { "success": true, "path": "..." } }
+{ "type": "file_renamed", "payload": { "success": true, "old_path": "...", "new_name": "..." } }
+
+// Client → Server (Task Management)
+{ "type": "task_create", "payload": { "user_id": "...", "list_id": "default", "subject": "...", "description": "..." } }
+{ "type": "task_get", "payload": { "user_id": "...", "list_id": "default", "task_id": "..." } }
+{ "type": "task_update", "payload": { "user_id": "...", "list_id": "default", "task_id": "...", "status": "..." } }
+{ "type": "task_list", "payload": { "user_id": "...", "list_id": "default" } }
+
+// Client → Server (Context Compact)
+{ "type": "compact", "payload": { "session_id": "..." } }
+{ "type": "context_stats", "payload": { "session_id": "..." } }
+
+// Server → Client (Task)
+{ "type": "tasks_list", "payload": { "tasks": [...] } }
+{ "type": "task_created", "payload": { "success": true, "task": {...} } }
+{ "type": "task_updated", "payload": { "success": true, "task": {...} } }
+
+// Server → Client (Context)
+{ "type": "compact_done", "payload": { "success": true, "stats": {...} } }
+{ "type": "context_stats", "payload": { "stats": {...} } }
 ```
+
+### Coworker Frontend Features
+
+**Location:** `web/src/pages/Coworker/`
+
+**Components:**
+```
+web/src/pages/Coworker/
+├── index.jsx                    # Main page with WebSocket connection
+├── styles.css                   # Main styles
+└── components/
+    ├── MessageBubble.jsx        # Chat message display
+    ├── ToolCallCard.jsx         # Tool call visualization
+    ├── SessionSidebar.jsx       # DeepSeek-style session sidebar
+    ├── SessionSidebar.css
+    ├── FileExplorer.jsx         # Google Colab-style file manager
+    ├── FileExplorer.css
+    ├── TaskList.jsx             # Claude Code-style task list
+    └── TaskList.css
+```
+
+**File Manager Features (Google Colab Style):**
+- File/folder listing with icons by file type
+- Drag-and-drop file upload
+- Create new folders (inline input)
+- Rename files/folders (inline editing)
+- Delete files/folders with confirmation
+- Download files (direct download, no new window)
+- Download folders as ZIP
+- Breadcrumb navigation
+- Right-click context menu
+
+**Session Sidebar Features (DeepSeek Style):**
+- Session list grouped by time (Today, Yesterday, Last 7 days, etc.)
+- New chat button
+- Session switching with history loading
+- Delete sessions
+- Collapsible sidebar
+
+**Task List Features (Claude Code Style):**
+- Create tasks with subject and description
+- Task status: pending → in_progress → completed
+- Progress bar showing completion percentage
+- Task dependencies (blocks/blockedBy)
+- Inline task status updates
+- Delete tasks
+- Persistent storage per user
+
+**Context Compact Features:**
+- Automatic context compression when usage exceeds 70%
+- Token estimation for messages (English ~3.5 chars/token, Chinese ~2 chars/token)
+- Code block compression (keep 60% head + 40% tail, max 50 lines)
+- Tool output compression (max 2000 chars)
+- Summary generation for old messages
+- Manual compact trigger via WebSocket
+
+**User Workspace Isolation:**
+- Each user has isolated workspace: `./userdata/{user_id}/workspace/`
+- User ID stored in localStorage: `coworker_user_id`
+- Session ID stored in localStorage: `coworker_session_id`
 
 ---
 
@@ -302,6 +405,37 @@ docker logs --tail 20 new-api-dev
 - [ ] Route configured in `App.jsx`
 - [ ] Sidebar button added in `SiderBar.jsx`
 - [ ] Module config added in `useSidebar.js`
+
+### React Closure Trap in WebSocket Handlers
+
+**Problem:** State values captured in WebSocket `onmessage` handler become stale.
+
+**Symptoms:** After operations (create folder, delete file, rename), UI jumps to root directory instead of staying in current path.
+
+**Cause:** `handleWebSocketMessage` function captures initial state values (e.g., `currentPath = ''`) and never updates.
+
+**❌ Wrong:**
+```javascript
+const handleWebSocketMessage = (data) => {
+  // currentPath is captured at function definition time
+  loadFilesList(wsRef.current, currentPath);  // Always uses stale value!
+};
+```
+
+**✅ Correct:**
+```javascript
+const currentPathRef = useRef(currentPath);
+
+useEffect(() => {
+  currentPathRef.current = currentPath;  // Sync to ref on every change
+}, [currentPath]);
+
+const handleWebSocketMessage = (data) => {
+  loadFilesList(wsRef.current, currentPathRef.current);  // Always gets latest value
+};
+```
+
+**Rule:** Use `useRef` to track state values that need to be accessed in closures (WebSocket handlers, event listeners, timers).
 
 ---
 
@@ -420,4 +554,149 @@ Pay-per-use billing with configurable model pricing:
 
 ---
 
-*Last updated: 2026-01-31*
+## Recent Changes (2026-02-01)
+
+### Task Management Feature (Claude Code Style)
+
+集成了 Claude Code CLI 的任务管理功能，支持将用户需求分解为 Todolist。
+
+**新增文件:**
+- `claudecli/internal/task/task.go` - 任务管理后端模块
+- `web/src/pages/Coworker/components/TaskList.jsx` - 任务列表组件
+- `web/src/pages/Coworker/components/TaskList.css` - 任务列表样式
+
+**修改文件:**
+- `claudecli/init.go` - 添加 task 包导入和 Tasks 字段
+- `claudecli/internal/api/websocket.go` - 添加任务相关 WebSocket 消息处理
+- `web/src/pages/Coworker/index.jsx` - 添加任务状态和 WebSocket 处理
+- `web/src/pages/Coworker/components/SessionSidebar.jsx` - 添加任务标签页
+
+### Context Compact Feature
+
+集成了 Claude Code CLI 的上下文压缩功能，支持自动/手动压缩上下文。
+
+**修改文件:**
+- `claudecli/internal/api/websocket.go` - 添加 compact 和 context_stats 消息处理
+
+### Microcompact Feature (New)
+
+实现了轻量级压缩功能，清理旧的工具调用结果，保留最近 3 个工具结果。
+
+**新增功能:**
+- 工具白名单机制（Read, Bash, Grep, Glob, WebSearch, WebFetch）
+- 自动清理旧工具结果，替换为占位符
+- 与摘要压缩配合使用
+
+**修改文件:**
+- `claudecli/internal/context/compress.go` - 添加 Microcompact 函数
+- `claudecli/internal/context/context.go` - 集成 Microcompact 到 Compact 流程
+
+### Session Memory Feature (New)
+
+实现了 Session Memory 功能，将对话摘要保存到结构化模板文件。
+
+**新增文件:**
+- `claudecli/internal/context/session_memory.go` - Session Memory 管理器
+
+**功能:**
+- 结构化模板保存关键信息（任务规格、文件、工作流、错误等）
+- 章节 token 估算和警告
+- 格式化用于系统提示
+
+### AI Summary Generation (New)
+
+增强了 AI 摘要生成功能，添加压缩边界标记。
+
+**新增文件:**
+- `claudecli/internal/context/summarizer.go` - 摘要生成器
+
+**功能:**
+- 生成对话摘要提示词
+- 创建压缩边界标记
+- 格式化摘要消息
+
+### Inline Task Display (New)
+
+在对话框中显示任务状态，而不仅仅在侧边栏显示。
+
+**新增文件:**
+- `web/src/pages/Coworker/components/InlineTaskCard.jsx` - 内联任务卡片
+- `web/src/pages/Coworker/components/InlineTaskCard.css` - 样式
+
+**修改文件:**
+- `web/src/pages/Coworker/components/MessageBubble.jsx` - 集成任务卡片
+- `web/src/pages/Coworker/index.jsx` - 传递任务到消息组件
+
+### Async Implementation for Multi-User Support (New)
+
+由于 ClaudeCLI 需要支持多用户同时操作以提供线上 HTTPS 服务，所有可能阻塞的操作必须使用异步实现。
+
+**设计原则:**
+- 所有文件 I/O 操作必须在 goroutine 中执行
+- WebSocket 写操作使用 `sync.Mutex` 保证线程安全
+- 避免在主 handler 中执行耗时操作
+
+**异步模式示例:**
+
+```go
+// ✅ 正确：异步执行文件 I/O
+func (h *WSHandler) handleTaskCreate(conn *websocket.Conn, payload json.RawMessage) {
+    var req TaskCreateRequest
+    if err := json.Unmarshal(payload, &req); err != nil {
+        h.sendError(conn, "invalid request")
+        return
+    }
+
+    // 异步执行文件 I/O 操作
+    go func() {
+        t, err := h.tasks.Create(req.UserID, req.ListID, req.Subject, req.Description, req.ActiveForm)
+        if err != nil {
+            h.sendError(conn, "failed to create task: "+err.Error())
+            return
+        }
+        h.sendJSON(conn, map[string]interface{}{
+            "type": "task_created",
+            "payload": map[string]interface{}{
+                "success": true,
+                "task":    t,
+            },
+        })
+    }()
+}
+
+// ❌ 错误：同步执行会阻塞其他用户
+func (h *WSHandler) handleTaskCreate(conn *websocket.Conn, payload json.RawMessage) {
+    // 直接执行文件 I/O，会阻塞
+    t, err := h.tasks.Create(...)
+    h.sendJSON(conn, ...)
+}
+```
+
+**已异步化的 Handler:**
+- `handleTaskCreate` - 任务创建
+- `handleTaskUpdate` - 任务更新
+- `handleTaskList` - 任务列表
+- `handleListFiles` - 文件列表
+- `handleCreateFolder` - 创建文件夹
+- `handleDeleteFile` - 删除文件
+- `handleRenameFile` - 重命名文件
+- `handleCompact` - 上下文压缩
+- `handleChat` - 聊天（已使用 goroutine）
+
+**线程安全的 WebSocket 写入:**
+
+```go
+type WSHandler struct {
+    writeMu sync.Mutex  // 保护 WebSocket 写操作
+}
+
+func (h *WSHandler) sendJSON(conn *websocket.Conn, data interface{}) {
+    h.writeMu.Lock()
+    defer h.writeMu.Unlock()
+    conn.WriteJSON(data)
+}
+```
+
+---
+
+*Last updated: 2026-02-01*

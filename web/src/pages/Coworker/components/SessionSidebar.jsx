@@ -11,8 +11,10 @@ import {
   IconDelete,
   IconHistory,
   IconFolder,
+  IconList,
 } from '@douyinfe/semi-icons';
 import FileExplorer from './FileExplorer';
+import TaskList from './TaskList';
 import './SessionSidebar.css';
 
 const { Text } = Typography;
@@ -50,6 +52,12 @@ const SessionSidebar = ({
   filesLoading = false,
   onNavigateFile,
   onRefreshFiles,
+  // 任务相关
+  tasks = [],
+  tasksLoading = false,
+  onCreateTask,
+  onUpdateTask,
+  onRefreshTasks,
   // 新增：用于文件操作
   wsRef,
   userId,
@@ -180,6 +188,13 @@ const SessionSidebar = ({
               <span>历史</span>
             </button>
             <button
+              className={`tab-btn ${activeTab === 'tasks' ? 'active' : ''}`}
+              onClick={() => setActiveTab('tasks')}
+            >
+              <IconList size="small" />
+              <span>任务</span>
+            </button>
+            <button
               className={`tab-btn ${activeTab === 'files' ? 'active' : ''}`}
               onClick={() => setActiveTab('files')}
             >
@@ -201,6 +216,14 @@ const SessionSidebar = ({
       <div className="sidebar-content">
         {activeTab === 'history' ? (
           renderHistoryContent()
+        ) : activeTab === 'tasks' ? (
+          <TaskList
+            tasks={tasks}
+            loading={tasksLoading}
+            onCreateTask={onCreateTask}
+            onUpdateTask={onUpdateTask}
+            onRefresh={onRefreshTasks}
+          />
         ) : (
           <FileExplorer
             files={files}

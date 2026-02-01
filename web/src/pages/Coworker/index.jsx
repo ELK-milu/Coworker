@@ -51,6 +51,9 @@ const Coworker = () => {
   const [files, setFiles] = useState([]);
   const [currentPath, setCurrentPath] = useState('');
   const [filesLoading, setFilesLoading] = useState(false);
+  // 任务管理相关状态
+  const [tasks, setTasks] = useState([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
   const [userId] = useState(() => {
     // 从 localStorage 获取或生成用户ID
     let uid = localStorage.getItem('coworker_user_id');
@@ -109,6 +112,17 @@ const Coworker = () => {
     }
   }, [userId]);
 
+  // 加载任务列表
+  const loadTasksList = useCallback((ws) => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      setTasksLoading(true);
+      ws.send(JSON.stringify({
+        type: 'task_list',
+        payload: { user_id: userId, list_id: 'default' }
+      }));
+    }
+  }, [userId]);
+
   // 删除会话
   const deleteSession = useCallback((sessId) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -135,9 +149,10 @@ const Coworker = () => {
       wsRef.current = new WebSocket(wsUrl);
       wsRef.current.onopen = () => {
         setConnected(true);
-        // 连接成功后加载会话列表和文件列表
+        // 连接成功后加载会话列表、文件列表和任务列表
         loadSessionsList(wsRef.current);
         loadFilesList(wsRef.current, '');
+        loadTasksList(wsRef.current);
         // 如果有 session_id，加载历史消息
         if (currentSessionId) {
           loadHistory(wsRef.current, currentSessionId);
@@ -156,7 +171,7 @@ const Coworker = () => {
     } catch (error) {
       console.error('[Coworker] WebSocket error:', error);
     }
-  }, [loadHistory, loadSessionsList, loadFilesList]);
+  }, [loadHistory, loadSessionsList, loadFilesList, loadTasksList]);
 
   useEffect(() => {
     connectWebSocket();
@@ -307,6 +322,31 @@ const Coworker = () => {
           loadFilesList(wsRef.current, currentPathRef.current);
         }
         break;
+
+      // 任务相关消息
+      case 'tasks_list':
+        setTasksLoading(false);
+        setTasks(payload.tasks || []);
+        console.log('[Coworker] Loaded tasks:', payload.tasks?.length || 0);
+        break;
+
+      case 'task_created':
+        if (payload.success && payload.task) {
+          setTasks(prev => [...prev, payload.task]);
+          console.log('[Coworker] Task created:', payload.task.id);
+        }
+        break;
+
+      case 'task_updated':
+        if (payload.success && payload.task) {
+          if (payload.task.status === 'deleted') {
+            setTasks(prev => prev.filter(t => t.id !== payload.task.id));
+          } else {
+            setTasks(prev => prev.map(t => t.id === payload.task.id ? payload.task : t));
+          }
+          console.log('[Coworker] Task updated:', payload.task.id);
+        }
+        break;
     }
   };
 
@@ -378,6 +418,40 @@ const Coworker = () => {
     loadFilesList(wsRef.current, currentPath);
   };
 
+  // 创建任务
+  const createTask = (taskData) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'task_create',
+        payload: {
+          user_id: userId,
+          list_id: 'default',
+          ...taskData
+        }
+      }));
+    }
+  };
+
+  // 更新任务
+  const updateTask = (taskId, updates) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'task_update',
+        payload: {
+          user_id: userId,
+          list_id: 'default',
+          task_id: taskId,
+          ...updates
+        }
+      }));
+    }
+  };
+
+  // 刷新任务列表
+  const refreshTasks = () => {
+    loadTasksList(wsRef.current);
+  };
+
   // 渲染消息项
   const renderMessage = (msg, index) => {
     if (msg.type === 'tool') {
@@ -393,6 +467,10 @@ const Coworker = () => {
         />
       );
     }
+    // 在最后一条 assistant 消息中显示任务卡片
+    const isLastAssistant = msg.type === 'assistant' &&
+      index === messages.length - 1 &&
+      tasks.length > 0;
     return (
       <MessageBubble
         key={`msg-${index}`}
@@ -400,6 +478,7 @@ const Coworker = () => {
         content={msg.content}
         timestamp={msg.timestamp}
         aborted={msg.aborted}
+        tasks={isLastAssistant ? tasks : null}
       />
     );
   };
@@ -420,6 +499,11 @@ const Coworker = () => {
           filesLoading={filesLoading}
           onNavigateFile={navigateFile}
           onRefreshFiles={refreshFiles}
+          tasks={tasks}
+          tasksLoading={tasksLoading}
+          onCreateTask={createTask}
+          onUpdateTask={updateTask}
+          onRefreshTasks={refreshTasks}
           wsRef={wsRef}
           userId={userId}
         />

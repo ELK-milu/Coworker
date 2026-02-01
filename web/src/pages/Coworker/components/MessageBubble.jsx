@@ -3,10 +3,11 @@ import { Typography, Toast, Avatar } from '@douyinfe/semi-ui';
 import { IconCopy, IconTick } from '@douyinfe/semi-icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import InlineTaskCard from './InlineTaskCard';
 
 const { Text } = Typography;
 
-const MessageBubble = ({ role, content, timestamp, aborted }) => {
+const MessageBubble = ({ role, content, timestamp, aborted, tasks }) => {
   const [copied, setCopied] = useState(false);
   const isUser = role === 'user';
   const isError = role === 'error';
@@ -59,6 +60,10 @@ const MessageBubble = ({ role, content, timestamp, aborted }) => {
             </ReactMarkdown>
             {aborted && <Text type="warning" size="small">（已中断）</Text>}
           </div>
+          {/* 任务卡片 */}
+          {!isUser && tasks && tasks.length > 0 && (
+            <InlineTaskCard tasks={tasks} />
+          )}
         </div>
         {/* 操作按钮 */}
         <div className="message-actions">

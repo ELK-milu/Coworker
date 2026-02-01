@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
+	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
 	"log"
@@ -19,6 +20,7 @@ type Module struct {
 	Sessions    *session.Manager
 	Tools       *tools.Registry
 	Workspace   *workspace.Manager
+	Tasks       *task.Manager
 	RESTHandler *api.RESTHandler
 	WSHandler   *api.WSHandler
 	FileHandler *api.FileHandler
@@ -63,6 +65,9 @@ func Init() *Module {
 	// 注册所有工具
 	registerTools(toolRegistry, cfg)
 
+	// 创建任务管理器
+	taskManager := task.NewManager(cfg.Security.WorkingDir)
+
 	// 系统提示词
 	systemPrompt := "You are a helpful AI assistant with access to various tools."
 
@@ -70,7 +75,7 @@ func Init() *Module {
 	restHandler := api.NewRESTHandler(sessionManager)
 
 	// 创建 WebSocket 处理器
-	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, systemPrompt)
+	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, systemPrompt)
 
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)
@@ -81,6 +86,7 @@ func Init() *Module {
 		Sessions:    sessionManager,
 		Tools:       toolRegistry,
 		Workspace:   workspaceManager,
+		Tasks:       taskManager,
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
 		FileHandler: fileHandler,

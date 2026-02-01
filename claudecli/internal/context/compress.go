@@ -8,6 +8,24 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
+// Microcompact 配置常量
+const (
+	// KeepRecentToolResults 保留最近的工具结果数量
+	KeepRecentToolResults = 3
+	// MicrocompactPlaceholder 工具结果被清理后的占位符
+	MicrocompactPlaceholder = "[Tool output cleared to save context]"
+)
+
+// MicrocompactWhitelist 不清理的工具白名单
+var MicrocompactWhitelist = map[string]bool{
+	"Read":      true,
+	"Bash":      true,
+	"Grep":      true,
+	"Glob":      true,
+	"WebSearch": true,
+	"WebFetch":  true,
+}
+
 // CompressMessage 压缩消息内容
 func CompressMessage(msg types.Message, maxChars int) types.Message {
 	if msg.Content == nil || len(msg.Content) == 0 {
@@ -159,4 +177,83 @@ func CompressToolOutput(content string, maxChars int) string {
 	omitted := len(content) - maxChars
 
 	return fmt.Sprintf("%s\n\n... [~%d chars omitted] ...\n\n%s", head, omitted, tail)
+}
+
+// ToolCallInfo 工具调用信息
+type ToolCallInfo struct {
+	ToolID   string
+	ToolName string
+	Index    int // 在消息列表中的位置
+}
+
+// Microcompact 轻量级压缩 - 清理旧的工具调用结果
+// 保留最近 KeepRecentToolResults 个工具结果，清理其他的
+func Microcompact(messages []types.Message) []types.Message {
+	// 1. 收集所有工具调用信息
+	toolCalls := collectToolCalls(messages)
+	if len(toolCalls) <= KeepRecentToolResults {
+		return messages
+	}
+
+	// 2. 确定需要清理的工具调用（保留最近的）
+	toClean := toolCalls[:len(toolCalls)-KeepRecentToolResults]
+	cleanSet := make(map[string]bool)
+	for _, tc := range toClean {
+		cleanSet[tc.ToolID] = true
+	}
+
+	// 3. 清理旧的工具结果
+	result := make([]types.Message, len(messages))
+	for i, msg := range messages {
+		result[i] = cleanToolResults(msg, cleanSet)
+	}
+
+	return result
+}
+
+// collectToolCalls 收集所有工具调用信息
+func collectToolCalls(messages []types.Message) []ToolCallInfo {
+	var calls []ToolCallInfo
+
+	for i, msg := range messages {
+		if msg.Role != "user" {
+			continue
+		}
+		for _, block := range msg.Content {
+			if tr, ok := block.(types.ToolResultBlock); ok {
+				calls = append(calls, ToolCallInfo{
+					ToolID:   tr.ToolUseID,
+					ToolName: "", // 工具名称需要从 assistant 消息中获取
+					Index:    i,
+				})
+			}
+		}
+	}
+
+	return calls
+}
+
+// cleanToolResults 清理指定的工具结果
+func cleanToolResults(msg types.Message, cleanSet map[string]bool) types.Message {
+	if msg.Role != "user" || len(msg.Content) == 0 {
+		return msg
+	}
+
+	newContent := make([]interface{}, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		if tr, ok := block.(types.ToolResultBlock); ok {
+			if cleanSet[tr.ToolUseID] {
+				// 清理工具结果，替换为占位符
+				tr.Content = MicrocompactPlaceholder
+			}
+			newContent = append(newContent, tr)
+		} else {
+			newContent = append(newContent, block)
+		}
+	}
+
+	return types.Message{
+		Role:    msg.Role,
+		Content: newContent,
+	}
 }

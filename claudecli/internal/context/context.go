@@ -289,6 +289,12 @@ func (m *Manager) Compact() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// 1. 先执行 Microcompact（清理旧工具结果）
+	messages := m.getMessagesUnsafe()
+	compactedMessages := Microcompact(messages)
+	m.updateMessagesFromCompacted(compactedMessages)
+
+	// 2. 然后执行摘要压缩
 	recentCount := m.config.KeepRecentMessages
 	if len(m.turns) <= recentCount {
 		return
@@ -316,6 +322,38 @@ func (m *Manager) Compact() {
 	afterTokens := EstimateTokens(summary)
 	m.savedTokens += beforeTokens - afterTokens
 	m.compressionCount++
+}
+
+// getMessagesUnsafe 获取消息（不加锁）
+func (m *Manager) getMessagesUnsafe() []types.Message {
+	messages := make([]types.Message, 0)
+	for _, turn := range m.turns {
+		if !turn.Summarized {
+			messages = append(messages, turn.User)
+			messages = append(messages, turn.Assistant)
+		}
+	}
+	return messages
+}
+
+// updateMessagesFromCompacted 从压缩后的消息更新 turns
+func (m *Manager) updateMessagesFromCompacted(messages []types.Message) {
+	msgIndex := 0
+	for i := range m.turns {
+		if m.turns[i].Summarized {
+			continue
+		}
+		if msgIndex < len(messages) {
+			m.turns[i].User = messages[msgIndex]
+			msgIndex++
+		}
+		if msgIndex < len(messages) {
+			m.turns[i].Assistant = messages[msgIndex]
+			msgIndex++
+		}
+		// 重新计算 token
+		m.turns[i].TokenEstimate = EstimateMessageTokens(m.turns[i].User) + EstimateMessageTokens(m.turns[i].Assistant)
+	}
 }
 
 // GetStats 获取统计信息

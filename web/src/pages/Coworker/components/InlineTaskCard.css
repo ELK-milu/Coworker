@@ -1,0 +1,64 @@
+/* InlineTaskCard 样式 */
+.inline-task-card {
+  background: var(--semi-color-bg-1);
+  border: 1px solid var(--semi-color-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+  max-width: 400px;
+}
+
+.inline-task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.inline-task-title {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--semi-color-text-0);
+}
+
+.inline-task-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inline-task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.inline-task-status {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.inline-task-item.completed .inline-task-status {
+  color: var(--semi-color-success);
+}
+
+.inline-task-item.in_progress .inline-task-status {
+  color: var(--semi-color-primary);
+}
+
+.task-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--semi-color-text-2);
+}
+
+.inline-task-subject {
+  flex: 1;
+  font-size: 12px;
+}
