@@ -63,6 +63,7 @@ const Coworker = () => {
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
   const abortedRef = useRef(false);
+  const currentPathRef = useRef(currentPath);  // 用于在闭包中获取最新的 currentPath
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -72,6 +73,11 @@ const Coworker = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  // 同步 currentPath 到 ref，解决闭包问题
+  useEffect(() => {
+    currentPathRef.current = currentPath;
+  }, [currentPath]);
 
   // 加载历史消息
   const loadHistory = useCallback((ws, sessId) => {
@@ -272,10 +278,33 @@ const Coworker = () => {
 
       case 'files_list':
         setFilesLoading(false);
-        if (payload.files) {
-          setFiles(payload.files || []);
-          setCurrentPath(payload.path || '');
-          console.log('[Coworker] Loaded files list:', payload.files?.length || 0);
+        // 即使文件列表为空也要更新状态
+        setFiles(payload.files || []);
+        setCurrentPath(payload.path || '');
+        console.log('[Coworker] Loaded files list:', payload.files?.length || 0, 'path:', payload.path);
+        break;
+
+      case 'folder_created':
+        if (payload.success) {
+          console.log('[Coworker] Folder created:', payload.path);
+          // 刷新文件列表，使用 ref 获取最新的 currentPath
+          loadFilesList(wsRef.current, currentPathRef.current);
+        }
+        break;
+
+      case 'file_deleted':
+        if (payload.success) {
+          console.log('[Coworker] File deleted:', payload.path);
+          // 刷新文件列表，使用 ref 获取最新的 currentPath
+          loadFilesList(wsRef.current, currentPathRef.current);
+        }
+        break;
+
+      case 'file_renamed':
+        if (payload.success) {
+          console.log('[Coworker] File renamed:', payload.old_path, '->', payload.new_name);
+          // 刷新文件列表，使用 ref 获取最新的 currentPath
+          loadFilesList(wsRef.current, currentPathRef.current);
         }
         break;
     }
@@ -391,6 +420,8 @@ const Coworker = () => {
           filesLoading={filesLoading}
           onNavigateFile={navigateFile}
           onRefreshFiles={refreshFiles}
+          wsRef={wsRef}
+          userId={userId}
         />
 
         {/* 主内容区 */}

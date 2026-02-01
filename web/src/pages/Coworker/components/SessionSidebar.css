@@ -1,7 +1,7 @@
 /* 会话侧边栏样式 - DeepSeek 风格 */
 
 .session-sidebar {
-  width: 260px;
+  width: 320px;
   height: 100%;
   background: var(--semi-color-bg-0);
   border-right: 1px solid var(--semi-color-border);

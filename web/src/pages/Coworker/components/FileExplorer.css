@@ -1,90 +1,357 @@
-/* 文件浏览器样式 */
+/* Google Colab 风格文件浏览器样式 */
 
 .file-explorer {
   display: flex;
   flex-direction: column;
   height: 100%;
+  background: var(--semi-color-bg-0);
 }
 
+/* 工具栏 */
 .file-toolbar {
   display: flex;
+  align-items: center;
   gap: 4px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--semi-color-border);
+  background: var(--semi-color-bg-1);
 }
 
+.file-toolbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-right: auto;
+  color: var(--semi-color-text-0);
+}
+
+.file-toolbar .semi-button {
+  padding: 4px 8px;
+}
+
+/* 面包屑导航 */
 .file-breadcrumb {
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--semi-color-border);
+  font-size: 12px;
+  background: var(--semi-color-bg-0);
+  min-height: 32px;
+}
+
+.file-breadcrumb .semi-breadcrumb {
   font-size: 12px;
 }
 
 .file-breadcrumb .semi-breadcrumb-item {
   cursor: pointer;
+  color: var(--semi-color-text-2);
 }
 
 .file-breadcrumb .semi-breadcrumb-item:hover {
   color: var(--semi-color-primary);
 }
 
-.file-list {
+/* 拖拽上传区域 */
+.file-drop-zone {
   flex: 1;
-  overflow-y: auto;
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
 }
 
-.file-list::-webkit-scrollbar {
-  width: 4px;
+.file-drop-zone.dragging {
+  background: var(--semi-color-primary-light-default);
 }
 
-.file-list::-webkit-scrollbar-thumb {
-  background: var(--semi-color-fill-2);
-  border-radius: 2px;
-}
-
-.file-item {
+.file-drop-zone.dragging::after {
+  content: '释放以上传文件';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
-  padding: 8px 12px;
-  border-radius: 6px;
+  justify-content: center;
+  background: rgba(var(--semi-blue-5), 0.1);
+  border: 2px dashed var(--semi-color-primary);
+  font-size: 14px;
+  color: var(--semi-color-primary);
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* 文件列表容器 */
+.file-list-container {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.file-list-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.file-list-container::-webkit-scrollbar-thumb {
+  background: var(--semi-color-fill-2);
+  border-radius: 3px;
+}
+
+.file-list-container::-webkit-scrollbar-thumb:hover {
+  background: var(--semi-color-fill-1);
+}
+
+/* 文件列表头部 */
+.file-list-header {
+  display: grid;
+  grid-template-columns: 1fr 70px 90px 36px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--semi-color-text-2);
+  border-bottom: 1px solid var(--semi-color-border);
+  background: var(--semi-color-bg-1);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* 文件列表 */
+.file-list {
+  padding: 4px 0;
+}
+
+/* 文件项 */
+.file-item {
+  display: grid;
+  grid-template-columns: 1fr 70px 90px 36px;
+  align-items: center;
+  padding: 6px 12px;
   cursor: pointer;
   transition: background 0.15s ease;
-  margin-bottom: 2px;
+  border-bottom: 1px solid transparent;
 }
 
 .file-item:hover {
   background: var(--semi-color-fill-0);
 }
 
-.file-icon {
-  flex-shrink: 0;
-  margin-right: 10px;
-  font-size: 18px;
+.file-item.selected {
+  background: var(--semi-color-primary-light-default);
 }
 
-.file-info {
-  flex: 1;
+.file-item-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+}
+
+.file-item-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.file-item-icon.folder {
+  color: #f5a623;
+}
+
+.file-item-icon.file {
+  color: var(--semi-color-text-2);
+}
+
+.file-item-text {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--semi-color-text-0);
+}
+
+.file-item-size,
+.file-item-time {
+  font-size: 12px;
+  color: var(--semi-color-text-2);
+  text-align: right;
+}
+
+/* 操作按钮 */
+.file-item-actions {
+  display: flex;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.file-item:hover .file-item-actions {
+  opacity: 1;
+}
+
+.file-action-btn {
+  padding: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--semi-color-text-2);
+  transition: all 0.15s ease;
+}
+
+.file-action-btn:hover {
+  background: var(--semi-color-fill-1);
+  color: var(--semi-color-text-0);
+}
+
+/* 空状态和加载状态 */
+.file-loading {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  gap: 12px;
+  color: var(--semi-color-text-2);
 }
 
-.file-name {
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.file-meta {
-  font-size: 11px;
-}
-
-.file-loading,
 .file-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 60px 24px;
+  gap: 16px;
+  height: 100%;
+}
+
+.file-empty-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.file-empty-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: 1px dashed var(--semi-color-border);
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--semi-color-text-2);
+  font-size: 13px;
+  transition: all 0.2s ease;
+}
+
+.file-empty-btn:hover {
+  border-color: var(--semi-color-primary);
+  color: var(--semi-color-primary);
+  background: var(--semi-color-primary-light-default);
+}
+
+.file-empty-icon {
+  font-size: 48px;
+  opacity: 0.3;
+}
+
+/* 右键菜单 */
+.file-context-menu {
+  position: fixed;
+  background: var(--semi-color-bg-2);
+  border: 1px solid var(--semi-color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 160px;
+  z-index: 1000;
+}
+
+.file-context-menu-item {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--semi-color-text-0);
+  transition: background 0.15s ease;
+}
+
+.file-context-menu-item:hover {
+  background: var(--semi-color-fill-0);
+}
+
+.file-context-menu-item.danger {
+  color: var(--semi-color-danger);
+}
+
+.file-context-menu-item.danger:hover {
+  background: var(--semi-color-danger-light-default);
+}
+
+.file-context-menu-divider {
+  height: 1px;
+  background: var(--semi-color-border);
+  margin: 4px 0;
+}
+
+/* 隐藏的文件输入 */
+.file-input-hidden {
+  display: none;
+}
+
+/* 新建文件夹输入框 */
+.new-folder-input {
+  display: grid;
+  grid-template-columns: 1fr 70px 100px;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--semi-color-primary-light-default);
+}
+
+.new-folder-input .file-item-name {
+  gap: 8px;
+}
+
+.new-folder-input input {
+  flex: 1;
+  border: 1px solid var(--semi-color-primary);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+  outline: none;
+  background: var(--semi-color-bg-0);
+}
+
+/* 重命名输入框 */
+.file-rename-input {
+  flex: 1;
+  border: 1px solid var(--semi-color-primary);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  outline: none;
+  background: var(--semi-color-bg-0);
+  min-width: 0;
+}
+
+/* 上传进度 */
+.upload-progress {
+  padding: 8px 12px;
+  background: var(--semi-color-bg-1);
+  border-bottom: 1px solid var(--semi-color-border);
+}
+
+.upload-progress-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.upload-progress-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

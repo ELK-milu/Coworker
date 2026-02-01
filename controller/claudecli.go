@@ -41,3 +41,13 @@ func (ctrl *ClaudeCLIController) DeleteSession(c *gin.Context) {
 func (ctrl *ClaudeCLIController) HandleWebSocket(c *gin.Context) {
 	ctrl.module.WSHandler.Handle(c)
 }
+
+// UploadFile 上传文件
+func (ctrl *ClaudeCLIController) UploadFile(c *gin.Context) {
+	ctrl.module.FileHandler.Upload(c)
+}
+
+// DownloadFile 下载文件
+func (ctrl *ClaudeCLIController) DownloadFile(c *gin.Context) {
+	ctrl.module.FileHandler.Download(c)
+}

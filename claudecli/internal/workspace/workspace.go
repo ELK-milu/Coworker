@@ -1,8 +1,11 @@
 package workspace
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -75,7 +78,13 @@ type FileInfo struct {
 // ListFiles 列出用户工作空间中的文件
 func (m *Manager) ListFiles(userID string, subPath string) ([]FileInfo, error) {
 	basePath := m.GetUserWorkDir(userID)
-	targetPath := filepath.Join(basePath, subPath)
+
+	// 保存原始路径用于返回（使用正斜杠）
+	originalSubPath := subPath
+
+	// 将前端的正斜杠路径转换为系统路径
+	systemSubPath := strings.ReplaceAll(subPath, "/", string(filepath.Separator))
+	targetPath := filepath.Join(basePath, systemSubPath)
 
 	// 安全检查：确保路径在用户工作空间内
 	absTarget, err := filepath.Abs(targetPath)
@@ -93,9 +102,11 @@ func (m *Manager) ListFiles(userID string, subPath string) ([]FileInfo, error) {
 		return nil, os.ErrPermission
 	}
 
-	// 确保目录存在
-	if err := os.MkdirAll(targetPath, 0755); err != nil {
-		return nil, err
+	// 检查目录是否存在，不存在则创建
+	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(targetPath, 0755); err != nil {
+			return nil, err
+		}
 	}
 
 	entries, err := os.ReadDir(targetPath)
@@ -110,8 +121,13 @@ func (m *Manager) ListFiles(userID string, subPath string) ([]FileInfo, error) {
 			continue
 		}
 
-		// 计算相对路径
-		relPath := filepath.Join(subPath, entry.Name())
+		// 计算相对路径，使用正斜杠以保持跨平台一致性
+		var relPath string
+		if originalSubPath == "" {
+			relPath = entry.Name()
+		} else {
+			relPath = originalSubPath + "/" + entry.Name()
+		}
 
 		files = append(files, FileInfo{
 			Name:    entry.Name(),
@@ -156,4 +172,191 @@ func (m *Manager) GetWorkspaceStats(userID string) (map[string]interface{}, erro
 		"dir_count":   dirCount,
 		"workspace":   workDir,
 	}, nil
+}
+
+// CreateFolder 创建文件夹
+func (m *Manager) CreateFolder(userID string, subPath string) error {
+	basePath := m.GetUserWorkDir(userID)
+	targetPath := filepath.Join(basePath, subPath)
+
+	// 安全检查
+	if err := m.validatePath(basePath, targetPath); err != nil {
+		return err
+	}
+
+	return os.MkdirAll(targetPath, 0755)
+}
+
+// DeleteFile 删除文件或文件夹
+func (m *Manager) DeleteFile(userID string, subPath string) error {
+	basePath := m.GetUserWorkDir(userID)
+	targetPath := filepath.Join(basePath, subPath)
+
+	// 安全检查
+	if err := m.validatePath(basePath, targetPath); err != nil {
+		return err
+	}
+
+	// 检查文件是否存在
+	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+		return fmt.Errorf("file not found: %s", subPath)
+	}
+
+	return os.RemoveAll(targetPath)
+}
+
+// RenameFile 重命名文件或文件夹
+func (m *Manager) RenameFile(userID string, oldPath string, newName string) error {
+	basePath := m.GetUserWorkDir(userID)
+	oldFullPath := filepath.Join(basePath, oldPath)
+
+	// 安全检查
+	if err := m.validatePath(basePath, oldFullPath); err != nil {
+		return err
+	}
+
+	// 检查文件是否存在
+	if _, err := os.Stat(oldFullPath); os.IsNotExist(err) {
+		return fmt.Errorf("file not found: %s", oldPath)
+	}
+
+	// 构建新路径
+	dir := filepath.Dir(oldFullPath)
+	newFullPath := filepath.Join(dir, newName)
+
+	// 安全检查新路径
+	if err := m.validatePath(basePath, newFullPath); err != nil {
+		return err
+	}
+
+	return os.Rename(oldFullPath, newFullPath)
+}
+
+// ReadFile 读取文件内容（用于下载）
+func (m *Manager) ReadFile(userID string, subPath string) ([]byte, error) {
+	basePath := m.GetUserWorkDir(userID)
+	targetPath := filepath.Join(basePath, subPath)
+
+	// 安全检查
+	if err := m.validatePath(basePath, targetPath); err != nil {
+		return nil, err
+	}
+
+	// 检查是否是文件
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("cannot read directory")
+	}
+
+	return os.ReadFile(targetPath)
+}
+
+// WriteFile 写入文件内容（用于上传）
+func (m *Manager) WriteFile(userID string, subPath string, content []byte) error {
+	basePath := m.GetUserWorkDir(userID)
+	targetPath := filepath.Join(basePath, subPath)
+
+	// 安全检查
+	if err := m.validatePath(basePath, targetPath); err != nil {
+		return err
+	}
+
+	// 确保父目录存在
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(targetPath, content, 0644)
+}
+
+// SaveUploadedFile 保存上传的文件（从 io.Reader）
+func (m *Manager) SaveUploadedFile(userID string, subPath string, reader io.Reader) error {
+	basePath := m.GetUserWorkDir(userID)
+	targetPath := filepath.Join(basePath, subPath)
+
+	// 安全检查
+	if err := m.validatePath(basePath, targetPath); err != nil {
+		return err
+	}
+
+	// 确保父目录存在
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	// 创建目标文件
+	file, err := os.Create(targetPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// 复制内容
+	_, err = io.Copy(file, reader)
+	return err
+}
+
+// GetFileInfo 获取单个文件信息
+func (m *Manager) GetFileInfo(userID string, subPath string) (*FileInfo, error) {
+	basePath := m.GetUserWorkDir(userID)
+	targetPath := filepath.Join(basePath, subPath)
+
+	// 安全检查
+	if err := m.validatePath(basePath, targetPath); err != nil {
+		return nil, err
+	}
+
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FileInfo{
+		Name:    info.Name(),
+		Path:    subPath,
+		IsDir:   info.IsDir(),
+		Size:    info.Size(),
+		ModTime: info.ModTime().Unix(),
+	}, nil
+}
+
+// GetAbsolutePath 获取文件的绝对路径（用于下载）
+func (m *Manager) GetAbsolutePath(userID string, subPath string) (string, error) {
+	basePath := m.GetUserWorkDir(userID)
+	targetPath := filepath.Join(basePath, subPath)
+
+	// 安全检查
+	if err := m.validatePath(basePath, targetPath); err != nil {
+		return "", err
+	}
+
+	return targetPath, nil
+}
+
+// validatePath 验证路径安全性
+func (m *Manager) validatePath(basePath, targetPath string) error {
+	absTarget, err := filepath.Abs(targetPath)
+	if err != nil {
+		return err
+	}
+	absBase, err := filepath.Abs(basePath)
+	if err != nil {
+		return err
+	}
+
+	// 检查是否在基础路径内
+	rel, err := filepath.Rel(absBase, absTarget)
+	if err != nil {
+		return os.ErrPermission
+	}
+	if strings.HasPrefix(rel, "..") {
+		return os.ErrPermission
+	}
+
+	return nil
 }

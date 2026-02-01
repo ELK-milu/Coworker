@@ -21,6 +21,7 @@ type Module struct {
 	Workspace   *workspace.Manager
 	RESTHandler *api.RESTHandler
 	WSHandler   *api.WSHandler
+	FileHandler *api.FileHandler
 }
 
 var (
@@ -71,6 +72,9 @@ func Init() *Module {
 	// 创建 WebSocket 处理器
 	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, systemPrompt)
 
+	// 创建文件处理器
+	fileHandler := api.NewFileHandler(workspaceManager)
+
 	instance = &Module{
 		Config:      cfg,
 		Client:      claudeClient,
@@ -79,6 +83,7 @@ func Init() *Module {
 		Workspace:   workspaceManager,
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
+		FileHandler: fileHandler,
 	}
 
 	log.Println("[ClaudeCLI] Module initialized successfully")

@@ -115,6 +115,15 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "workspace_stats":
 			log.Printf("[WS] Processing workspace_stats message")
 			h.handleWorkspaceStats(conn, wsMsg.Payload)
+		case "create_folder":
+			log.Printf("[WS] Processing create_folder message")
+			h.handleCreateFolder(conn, wsMsg.Payload)
+		case "delete_file":
+			log.Printf("[WS] Processing delete_file message")
+			h.handleDeleteFile(conn, wsMsg.Payload)
+		case "rename_file":
+			log.Printf("[WS] Processing rename_file message")
+			h.handleRenameFile(conn, wsMsg.Payload)
 		}
 	}
 }
@@ -557,6 +566,131 @@ func (h *WSHandler) handleWorkspaceStats(conn *websocket.Conn, payload json.RawM
 		"payload": map[string]interface{}{
 			"user_id": req.UserID,
 			"stats":   stats,
+		},
+	})
+}
+
+// CreateFolderPayload 创建文件夹载荷
+type CreateFolderPayload struct {
+	UserID string `json:"user_id"`
+	Path   string `json:"path"`
+}
+
+// handleCreateFolder 处理创建文件夹请求
+func (h *WSHandler) handleCreateFolder(conn *websocket.Conn, payload json.RawMessage) {
+	var req CreateFolderPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid create_folder payload")
+		return
+	}
+
+	if req.UserID == "" || req.Path == "" {
+		h.sendError(conn, "user_id and path are required")
+		return
+	}
+
+	if h.workspace == nil {
+		h.sendError(conn, "workspace manager not initialized")
+		return
+	}
+
+	if err := h.workspace.CreateFolder(req.UserID, req.Path); err != nil {
+		h.sendError(conn, "failed to create folder: "+err.Error())
+		return
+	}
+
+	log.Printf("[WS] Created folder for user %s: %s", req.UserID, req.Path)
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "folder_created",
+		"payload": map[string]interface{}{
+			"user_id": req.UserID,
+			"path":    req.Path,
+			"success": true,
+		},
+	})
+}
+
+// DeleteFilePayload 删除文件载荷
+type DeleteFilePayload struct {
+	UserID string `json:"user_id"`
+	Path   string `json:"path"`
+}
+
+// handleDeleteFile 处理删除文件请求
+func (h *WSHandler) handleDeleteFile(conn *websocket.Conn, payload json.RawMessage) {
+	var req DeleteFilePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid delete_file payload")
+		return
+	}
+
+	if req.UserID == "" || req.Path == "" {
+		h.sendError(conn, "user_id and path are required")
+		return
+	}
+
+	if h.workspace == nil {
+		h.sendError(conn, "workspace manager not initialized")
+		return
+	}
+
+	if err := h.workspace.DeleteFile(req.UserID, req.Path); err != nil {
+		h.sendError(conn, "failed to delete file: "+err.Error())
+		return
+	}
+
+	log.Printf("[WS] Deleted file for user %s: %s", req.UserID, req.Path)
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "file_deleted",
+		"payload": map[string]interface{}{
+			"user_id": req.UserID,
+			"path":    req.Path,
+			"success": true,
+		},
+	})
+}
+
+// RenameFilePayload 重命名文件载荷
+type RenameFilePayload struct {
+	UserID  string `json:"user_id"`
+	Path    string `json:"path"`
+	NewName string `json:"new_name"`
+}
+
+// handleRenameFile 处理重命名文件请求
+func (h *WSHandler) handleRenameFile(conn *websocket.Conn, payload json.RawMessage) {
+	var req RenameFilePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid rename_file payload")
+		return
+	}
+
+	if req.UserID == "" || req.Path == "" || req.NewName == "" {
+		h.sendError(conn, "user_id, path and new_name are required")
+		return
+	}
+
+	if h.workspace == nil {
+		h.sendError(conn, "workspace manager not initialized")
+		return
+	}
+
+	if err := h.workspace.RenameFile(req.UserID, req.Path, req.NewName); err != nil {
+		h.sendError(conn, "failed to rename file: "+err.Error())
+		return
+	}
+
+	log.Printf("[WS] Renamed file for user %s: %s -> %s", req.UserID, req.Path, req.NewName)
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "file_renamed",
+		"payload": map[string]interface{}{
+			"user_id":  req.UserID,
+			"old_path": req.Path,
+			"new_name": req.NewName,
+			"success":  true,
 		},
 	})
 }

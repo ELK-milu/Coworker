@@ -50,6 +50,9 @@ const SessionSidebar = ({
   filesLoading = false,
   onNavigateFile,
   onRefreshFiles,
+  // 新增：用于文件操作
+  wsRef,
+  userId,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('history');
@@ -203,8 +206,10 @@ const SessionSidebar = ({
             files={files}
             currentPath={currentPath}
             loading={filesLoading}
+            userId={userId}
             onNavigate={onNavigateFile}
             onRefresh={onRefreshFiles}
+            wsRef={wsRef}
           />
         )}
       </div>

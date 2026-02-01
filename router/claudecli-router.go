@@ -21,6 +21,10 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 		claudecliGroup.GET("/sessions/:id", claudeCLICtrl.GetSession)
 		claudecliGroup.DELETE("/sessions/:id", claudeCLICtrl.DeleteSession)
 
+		// 文件操作
+		claudecliGroup.POST("/files/upload", claudeCLICtrl.UploadFile)
+		claudecliGroup.GET("/files/download", claudeCLICtrl.DownloadFile)
+
 		// WebSocket 连接
 		claudecliGroup.GET("/ws", claudeCLICtrl.HandleWebSocket)
 	}
