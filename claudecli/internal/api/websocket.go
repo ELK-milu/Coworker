@@ -1,16 +1,17 @@
 package api
 
 import (
-	"github.com/QuantumNous/new-api/claudecli/internal/client"
-	"github.com/QuantumNous/new-api/claudecli/internal/loop"
-	"github.com/QuantumNous/new-api/claudecli/internal/session"
-	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"sync"
 
+	"github.com/QuantumNous/new-api/claudecli/internal/client"
+	"github.com/QuantumNous/new-api/claudecli/internal/loop"
+	"github.com/QuantumNous/new-api/claudecli/internal/session"
+	"github.com/QuantumNous/new-api/claudecli/internal/tools"
+	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -95,6 +96,9 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "abort":
 			log.Printf("[WS] Processing abort message")
 			h.handleAbort()
+		case "load_history":
+			log.Printf("[WS] Processing load_history message")
+			h.handleLoadHistory(conn, wsMsg.Payload)
 		}
 	}
 }
@@ -153,6 +157,168 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 	defer close(eventCh)
 	l := loop.NewConversationLoop(h.client, sess, h.tools, h.system, eventCh)
 	l.ProcessMessage(ctx, msg)
+
+	// 对话结束后保存会话
+	if err := h.sessions.Save(sess.ID); err != nil {
+		log.Printf("[WS] Failed to save session %s: %v", sess.ID, err)
+	} else {
+		log.Printf("[WS] Session saved: %s", sess.ID)
+	}
+}
+
+// LoadHistoryPayload 加载历史消息载荷
+type LoadHistoryPayload struct {
+	SessionID string `json:"session_id"`
+}
+
+// handleLoadHistory 处理加载历史消息请求
+func (h *WSHandler) handleLoadHistory(conn *websocket.Conn, payload json.RawMessage) {
+	var req LoadHistoryPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid load_history payload")
+		return
+	}
+
+	if req.SessionID == "" {
+		// 没有 session_id，返回空历史
+		conn.WriteJSON(map[string]interface{}{
+			"type": "history",
+			"payload": map[string]interface{}{
+				"session_id": "",
+				"messages":   []interface{}{},
+			},
+		})
+		return
+	}
+
+	// 获取会话
+	sess := h.sessions.Get(req.SessionID)
+	if sess == nil {
+		// 会话不存在，返回空历史
+		conn.WriteJSON(map[string]interface{}{
+			"type": "history",
+			"payload": map[string]interface{}{
+				"session_id": req.SessionID,
+				"messages":   []interface{}{},
+				"not_found":  true,
+			},
+		})
+		return
+	}
+
+	// 获取会话消息并转换为前端格式
+	messages := sess.GetMessages()
+	frontendMessages := convertMessagesToFrontend(messages)
+
+	log.Printf("[WS] Loaded history for session %s: %d messages", req.SessionID, len(frontendMessages))
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "history",
+		"payload": map[string]interface{}{
+			"session_id": req.SessionID,
+			"messages":   frontendMessages,
+		},
+	})
+}
+
+// convertMessagesToFrontend 将后端消息格式转换为前端格式
+func convertMessagesToFrontend(messages []types.Message) []map[string]interface{} {
+	var result []map[string]interface{}
+
+	for _, msg := range messages {
+		// 解析消息内容
+		content, ok := msg.Content.([]interface{})
+		if !ok {
+			continue
+		}
+
+		for _, block := range content {
+			blockMap, ok := block.(map[string]interface{})
+			if !ok {
+				// 尝试处理结构体类型
+				if textBlock, ok := block.(types.TextBlock); ok {
+					if msg.Role == "user" {
+						result = append(result, map[string]interface{}{
+							"type":    "user",
+							"content": textBlock.Text,
+						})
+					} else if msg.Role == "assistant" {
+						result = append(result, map[string]interface{}{
+							"type":    "assistant",
+							"content": textBlock.Text,
+						})
+					}
+				} else if toolUse, ok := block.(types.ToolUseBlock); ok {
+					result = append(result, map[string]interface{}{
+						"type":     "tool",
+						"toolName": toolUse.Name,
+						"toolId":   toolUse.ID,
+						"input":    string(toolUse.Input),
+						"status":   "completed",
+					})
+				} else if toolResult, ok := block.(types.ToolResultBlock); ok {
+					// 查找对应的工具调用并更新结果
+					for i := len(result) - 1; i >= 0; i-- {
+						if result[i]["toolId"] == toolResult.ToolUseID {
+							result[i]["result"] = toolResult.Content
+							result[i]["isError"] = toolResult.IsError
+							break
+						}
+					}
+				}
+				continue
+			}
+
+			blockType, _ := blockMap["type"].(string)
+
+			switch blockType {
+			case "text":
+				text, _ := blockMap["text"].(string)
+				if msg.Role == "user" {
+					result = append(result, map[string]interface{}{
+						"type":    "user",
+						"content": text,
+					})
+				} else if msg.Role == "assistant" {
+					result = append(result, map[string]interface{}{
+						"type":    "assistant",
+						"content": text,
+					})
+				}
+
+			case "tool_use":
+				name, _ := blockMap["name"].(string)
+				id, _ := blockMap["id"].(string)
+				input, _ := blockMap["input"]
+				inputStr := ""
+				if inputBytes, err := json.Marshal(input); err == nil {
+					inputStr = string(inputBytes)
+				}
+				result = append(result, map[string]interface{}{
+					"type":     "tool",
+					"toolName": name,
+					"toolId":   id,
+					"input":    inputStr,
+					"status":   "completed",
+				})
+
+			case "tool_result":
+				toolUseID, _ := blockMap["tool_use_id"].(string)
+				content, _ := blockMap["content"].(string)
+				isError, _ := blockMap["is_error"].(bool)
+				// 查找对应的工具调用并更新结果
+				for i := len(result) - 1; i >= 0; i-- {
+					if result[i]["toolId"] == toolUseID {
+						result[i]["result"] = content
+						result[i]["isError"] = isError
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 // forwardEvents 转发事件到 WebSocket

@@ -4,7 +4,7 @@ Copyright (C) 2025 QuantumNous
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Typography, Spin, TextArea } from '@douyinfe/semi-ui';
-import { IconSend, IconStop } from '@douyinfe/semi-icons';
+import { IconSend, IconStop, IconPlus } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
 import './styles.css';
@@ -29,6 +29,9 @@ const getModeLabel = (mode) => {
   return labels[mode] || mode;
 };
 
+// 会话存储 key
+const SESSION_STORAGE_KEY = 'coworker_session_id';
+
 const Coworker = () => {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
@@ -37,6 +40,10 @@ const Coworker = () => {
   const [thinking, setThinking] = useState(false);
   const [status, setStatus] = useState(null);
   const [mode, setMode] = useState('normal');
+  const [sessionId, setSessionId] = useState(() => {
+    // 从 localStorage 恢复 session_id
+    return localStorage.getItem(SESSION_STORAGE_KEY) || '';
+  });
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
   const abortedRef = useRef(false);
@@ -50,6 +57,17 @@ const Coworker = () => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
+  // 加载历史消息
+  const loadHistory = useCallback((ws, sessId) => {
+    if (sessId && ws?.readyState === WebSocket.OPEN) {
+      console.log('[Coworker] Loading history for session:', sessId);
+      ws.send(JSON.stringify({
+        type: 'load_history',
+        payload: { session_id: sessId }
+      }));
+    }
+  }, []);
+
   // 连接 WebSocket
   const connectWebSocket = useCallback(() => {
     if (wsRef.current) {
@@ -59,10 +77,18 @@ const Coworker = () => {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/claudecli/ws`;
+    // 获取当前的 sessionId
+    const currentSessionId = localStorage.getItem(SESSION_STORAGE_KEY) || '';
 
     try {
       wsRef.current = new WebSocket(wsUrl);
-      wsRef.current.onopen = () => setConnected(true);
+      wsRef.current.onopen = () => {
+        setConnected(true);
+        // 连接成功后，如果有 session_id，加载历史消息
+        if (currentSessionId) {
+          loadHistory(wsRef.current, currentSessionId);
+        }
+      };
       wsRef.current.onerror = () => setConnected(false);
       wsRef.current.onclose = () => setConnected(false);
       wsRef.current.onmessage = (event) => {
@@ -76,7 +102,7 @@ const Coworker = () => {
     } catch (error) {
       console.error('[Coworker] WebSocket error:', error);
     }
-  }, []);
+  }, [loadHistory]);
 
   useEffect(() => {
     connectWebSocket();
@@ -95,7 +121,26 @@ const Coworker = () => {
 
     const { type, payload } = data;
 
+    // 保存 session_id
+    if (payload?.session_id && payload.session_id !== sessionId) {
+      setSessionId(payload.session_id);
+      localStorage.setItem(SESSION_STORAGE_KEY, payload.session_id);
+    }
+
     switch (type) {
+      case 'history':
+        // 加载历史消息
+        if (payload.messages && payload.messages.length > 0) {
+          setMessages(payload.messages);
+          console.log('[Coworker] Loaded history:', payload.messages.length, 'messages');
+        } else if (payload.not_found) {
+          // 会话不存在，清除本地存储的 session_id
+          setSessionId('');
+          localStorage.removeItem(SESSION_STORAGE_KEY);
+          console.log('[Coworker] Session not found, cleared session_id');
+        }
+        break;
+
       case 'text':
         setThinking(false);
         setMessages(prev => {
@@ -168,7 +213,12 @@ const Coworker = () => {
 
     wsRef.current.send(JSON.stringify({
       type: 'chat',
-      payload: { message: inputValue, user_id: 'user_' + Date.now(), mode }
+      payload: {
+        message: inputValue,
+        session_id: sessionId,
+        user_id: 'user_' + Date.now(),
+        mode
+      }
     }));
   };
 
@@ -187,6 +237,14 @@ const Coworker = () => {
       }
       return prev;
     });
+  };
+
+  // 新建对话
+  const newChat = () => {
+    setSessionId('');
+    setMessages([]);
+    setStatus(null);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
   };
 
   // 渲染消息项
@@ -224,9 +282,18 @@ const Coworker = () => {
             <Title heading={4} style={{ margin: 0 }}>Coworker</Title>
             <Text type="tertiary">AI 编程助手</Text>
           </div>
-          <div className="connection-status">
-            <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
-            <Text size="small">{connected ? '已连接' : '未连接'}</Text>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <Button
+              icon={<IconPlus />}
+              onClick={newChat}
+              disabled={loading}
+            >
+              新建对话
+            </Button>
+            <div className="connection-status">
+              <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
+              <Text size="small">{connected ? '已连接' : '未连接'}</Text>
+            </div>
           </div>
         </div>
 
