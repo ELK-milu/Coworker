@@ -5,6 +5,22 @@ import (
 	"encoding/json"
 )
 
+// ContextKey 用于 context 传递值的 key 类型
+type ContextKey string
+
+const (
+	// WorkingDirKey 工作目录的 context key
+	WorkingDirKey ContextKey = "working_dir"
+)
+
+// GetWorkingDir 从 context 中获取工作目录
+func GetWorkingDir(ctx context.Context, defaultDir string) string {
+	if dir, ok := ctx.Value(WorkingDirKey).(string); ok && dir != "" {
+		return dir
+	}
+	return defaultDir
+}
+
 // ToolDefinition 工具定义
 type ToolDefinition struct {
 	Name        string                 `json:"name"`

@@ -47,6 +47,19 @@ const Coworker = () => {
   });
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  // 文件管理相关状态
+  const [files, setFiles] = useState([]);
+  const [currentPath, setCurrentPath] = useState('');
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [userId] = useState(() => {
+    // 从 localStorage 获取或生成用户ID
+    let uid = localStorage.getItem('coworker_user_id');
+    if (!uid) {
+      uid = 'user_' + Date.now();
+      localStorage.setItem('coworker_user_id', uid);
+    }
+    return uid;
+  });
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
   const abortedRef = useRef(false);
@@ -75,9 +88,20 @@ const Coworker = () => {
   const loadSessionsList = useCallback((ws) => {
     if (ws?.readyState === WebSocket.OPEN) {
       setSessionsLoading(true);
-      ws.send(JSON.stringify({ type: 'list_sessions', payload: {} }));
+      ws.send(JSON.stringify({ type: 'list_sessions', payload: { user_id: userId } }));
     }
-  }, []);
+  }, [userId]);
+
+  // 加载文件列表
+  const loadFilesList = useCallback((ws, path = '') => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      setFilesLoading(true);
+      ws.send(JSON.stringify({
+        type: 'list_files',
+        payload: { user_id: userId, path }
+      }));
+    }
+  }, [userId]);
 
   // 删除会话
   const deleteSession = useCallback((sessId) => {
@@ -105,8 +129,9 @@ const Coworker = () => {
       wsRef.current = new WebSocket(wsUrl);
       wsRef.current.onopen = () => {
         setConnected(true);
-        // 连接成功后加载会话列表
+        // 连接成功后加载会话列表和文件列表
         loadSessionsList(wsRef.current);
+        loadFilesList(wsRef.current, '');
         // 如果有 session_id，加载历史消息
         if (currentSessionId) {
           loadHistory(wsRef.current, currentSessionId);
@@ -125,7 +150,7 @@ const Coworker = () => {
     } catch (error) {
       console.error('[Coworker] WebSocket error:', error);
     }
-  }, [loadHistory, loadSessionsList]);
+  }, [loadHistory, loadSessionsList, loadFilesList]);
 
   useEffect(() => {
     connectWebSocket();
@@ -244,6 +269,15 @@ const Coworker = () => {
           console.log('[Coworker] Session deleted:', payload.session_id);
         }
         break;
+
+      case 'files_list':
+        setFilesLoading(false);
+        if (payload.files) {
+          setFiles(payload.files || []);
+          setCurrentPath(payload.path || '');
+          console.log('[Coworker] Loaded files list:', payload.files?.length || 0);
+        }
+        break;
     }
   };
 
@@ -263,7 +297,7 @@ const Coworker = () => {
       payload: {
         message: inputValue,
         session_id: sessionId,
-        user_id: 'user_' + Date.now(),
+        user_id: userId,
         mode
       }
     }));
@@ -304,6 +338,17 @@ const Coworker = () => {
     loadHistory(wsRef.current, sessId);
   };
 
+  // 文件导航
+  const navigateFile = (path) => {
+    setCurrentPath(path);
+    loadFilesList(wsRef.current, path);
+  };
+
+  // 刷新文件列表
+  const refreshFiles = () => {
+    loadFilesList(wsRef.current, currentPath);
+  };
+
   // 渲染消息项
   const renderMessage = (msg, index) => {
     if (msg.type === 'tool') {
@@ -341,6 +386,11 @@ const Coworker = () => {
           onSelectSession={selectSession}
           onDeleteSession={deleteSession}
           loading={sessionsLoading}
+          files={files}
+          currentPath={currentPath}
+          filesLoading={filesLoading}
+          onNavigateFile={navigateFile}
+          onRefreshFiles={refreshFiles}
         />
 
         {/* 主内容区 */}

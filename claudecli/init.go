@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
+	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
 	"log"
 )
 
@@ -17,6 +18,7 @@ type Module struct {
 	Client      *client.ClaudeClient
 	Sessions    *session.Manager
 	Tools       *tools.Registry
+	Workspace   *workspace.Manager
 	RESTHandler *api.RESTHandler
 	WSHandler   *api.WSHandler
 }
@@ -35,6 +37,12 @@ func Init() *Module {
 
 	// 加载配置
 	cfg := config.Load()
+
+	// 创建工作空间管理器
+	workspaceManager := workspace.NewManager(cfg.Security.WorkingDir)
+
+	// 设置用户会话存储基础目录
+	session.SetUserBaseDir(cfg.Security.WorkingDir)
 
 	// 创建 Claude 客户端
 	claudeClient := client.NewClaudeClient(
@@ -61,13 +69,14 @@ func Init() *Module {
 	restHandler := api.NewRESTHandler(sessionManager)
 
 	// 创建 WebSocket 处理器
-	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, systemPrompt)
+	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, systemPrompt)
 
 	instance = &Module{
 		Config:      cfg,
 		Client:      claudeClient,
 		Sessions:    sessionManager,
 		Tools:       toolRegistry,
+		Workspace:   workspaceManager,
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
 	}

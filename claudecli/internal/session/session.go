@@ -83,3 +83,10 @@ func (s *Session) ClearMessages() {
 		s.Context.Clear()
 	}
 }
+
+// GetWorkingDir 获取工作目录
+func (s *Session) GetWorkingDir() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.WorkingDir
+}

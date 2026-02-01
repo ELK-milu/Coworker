@@ -78,7 +78,8 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	} else {
 		cmd = exec.CommandContext(ctx, "bash", "-c", in.Command)
 	}
-	cmd.Dir = t.workingDir
+	// 从 context 获取工作目录，如果没有则使用默认值
+	cmd.Dir = types.GetWorkingDir(ctx, t.workingDir)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

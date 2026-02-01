@@ -190,3 +190,42 @@
 .collapsed .session-group-title {
   display: none;
 }
+
+/* 标签页样式 */
+.sidebar-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--semi-color-text-2);
+  transition: all 0.15s ease;
+}
+
+.tab-btn:hover {
+  background: var(--semi-color-fill-0);
+  color: var(--semi-color-text-0);
+}
+
+.tab-btn.active {
+  background: var(--semi-color-primary-light-default);
+  color: var(--semi-color-primary);
+}
+
+/* 内容区域 */
+.sidebar-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}

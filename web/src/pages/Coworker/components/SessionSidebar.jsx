@@ -3,14 +3,16 @@ Copyright (C) 2025 QuantumNous
 */
 
 import React, { useState } from 'react';
-import { Button, Typography, Tooltip, Popconfirm } from '@douyinfe/semi-ui';
+import { Button, Typography, Tooltip, Popconfirm, Nav } from '@douyinfe/semi-ui';
 import {
   IconPlus,
   IconChevronLeft,
   IconChevronRight,
   IconDelete,
-  IconHistory
+  IconHistory,
+  IconFolder,
 } from '@douyinfe/semi-icons';
+import FileExplorer from './FileExplorer';
 import './SessionSidebar.css';
 
 const { Text } = Typography;
@@ -22,20 +24,16 @@ const formatTime = (timestamp) => {
   const now = new Date();
   const diff = now - date;
 
-  // 今天
   if (diff < 24 * 60 * 60 * 1000 && date.getDate() === now.getDate()) {
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
   }
-  // 昨天
   if (diff < 48 * 60 * 60 * 1000) {
     return '昨天';
   }
-  // 本周
   if (diff < 7 * 24 * 60 * 60 * 1000) {
     const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     return days[date.getDay()];
   }
-  // 更早
   return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
 };
 
@@ -46,8 +44,15 @@ const SessionSidebar = ({
   onSelectSession,
   onDeleteSession,
   loading = false,
+  // 文件相关
+  files = [],
+  currentPath = '',
+  filesLoading = false,
+  onNavigateFile,
+  onRefreshFiles,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
+  const [activeTab, setActiveTab] = useState('history');
 
   // 按时间分组会话
   const groupSessions = (sessions) => {
@@ -56,24 +61,14 @@ const SessionSidebar = ({
     const yesterday = new Date(today - 24 * 60 * 60 * 1000);
     const weekAgo = new Date(today - 7 * 24 * 60 * 60 * 1000);
 
-    const groups = {
-      today: [],
-      yesterday: [],
-      thisWeek: [],
-      earlier: [],
-    };
+    const groups = { today: [], yesterday: [], thisWeek: [], earlier: [] };
 
     sessions.forEach(session => {
       const date = new Date(session.updated_at * 1000);
-      if (date >= today) {
-        groups.today.push(session);
-      } else if (date >= yesterday) {
-        groups.yesterday.push(session);
-      } else if (date >= weekAgo) {
-        groups.thisWeek.push(session);
-      } else {
-        groups.earlier.push(session);
-      }
+      if (date >= today) groups.today.push(session);
+      else if (date >= yesterday) groups.yesterday.push(session);
+      else if (date >= weekAgo) groups.thisWeek.push(session);
+      else groups.earlier.push(session);
     });
 
     return groups;
@@ -81,6 +76,7 @@ const SessionSidebar = ({
 
   const groupedSessions = groupSessions(sessions);
 
+  // 渲染会话项
   const renderSessionItem = (session) => (
     <div
       key={session.id}
@@ -120,6 +116,7 @@ const SessionSidebar = ({
     </div>
   );
 
+  // 渲染会话分组
   const renderGroup = (title, sessions) => {
     if (sessions.length === 0) return null;
     return (
@@ -130,26 +127,9 @@ const SessionSidebar = ({
     );
   };
 
-  return (
-    <div className={`session-sidebar ${collapsed ? 'collapsed' : ''}`}>
-      {/* 头部 */}
-      <div className="sidebar-header">
-        {!collapsed && (
-          <div className="sidebar-title">
-            <IconHistory style={{ marginRight: 8 }} />
-            <span>历史对话</span>
-          </div>
-        )}
-        <Button
-          icon={collapsed ? <IconChevronRight /> : <IconChevronLeft />}
-          type="tertiary"
-          theme="borderless"
-          onClick={() => setCollapsed(!collapsed)}
-          className="collapse-btn"
-        />
-      </div>
-
-      {/* 新建对话按钮 */}
+  // 渲染历史会话内容
+  const renderHistoryContent = () => (
+    <>
       <div className="new-chat-wrapper">
         <Tooltip content="新建对话" position="right" disabled={!collapsed}>
           <Button
@@ -162,8 +142,6 @@ const SessionSidebar = ({
           </Button>
         </Tooltip>
       </div>
-
-      {/* 会话列表 */}
       <div className="session-list">
         {loading ? (
           <div className="session-loading">
@@ -180,6 +158,54 @@ const SessionSidebar = ({
             {renderGroup('本周', groupedSessions.thisWeek)}
             {renderGroup('更早', groupedSessions.earlier)}
           </>
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <div className={`session-sidebar ${collapsed ? 'collapsed' : ''}`}>
+      {/* 头部导航 */}
+      <div className="sidebar-header">
+        {!collapsed && (
+          <div className="sidebar-tabs">
+            <button
+              className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
+              onClick={() => setActiveTab('history')}
+            >
+              <IconHistory size="small" />
+              <span>历史</span>
+            </button>
+            <button
+              className={`tab-btn ${activeTab === 'files' ? 'active' : ''}`}
+              onClick={() => setActiveTab('files')}
+            >
+              <IconFolder size="small" />
+              <span>文件</span>
+            </button>
+          </div>
+        )}
+        <Button
+          icon={collapsed ? <IconChevronRight /> : <IconChevronLeft />}
+          type="tertiary"
+          theme="borderless"
+          onClick={() => setCollapsed(!collapsed)}
+          className="collapse-btn"
+        />
+      </div>
+
+      {/* 内容区域 */}
+      <div className="sidebar-content">
+        {activeTab === 'history' ? (
+          renderHistoryContent()
+        ) : (
+          <FileExplorer
+            files={files}
+            currentPath={currentPath}
+            loading={filesLoading}
+            onNavigate={onNavigateFile}
+            onRefresh={onRefreshFiles}
+          />
         )}
       </div>
     </div>

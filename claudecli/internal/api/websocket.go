@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/loop"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
+	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -25,6 +26,7 @@ type WSHandler struct {
 	client     *client.ClaudeClient
 	sessions   *session.Manager
 	tools      *tools.Registry
+	workspace  *workspace.Manager
 	system     string
 	mu         sync.Mutex
 	cancelFunc context.CancelFunc
@@ -35,13 +37,15 @@ func NewWSHandler(
 	c *client.ClaudeClient,
 	sm *session.Manager,
 	tr *tools.Registry,
+	wm *workspace.Manager,
 	systemPrompt string,
 ) *WSHandler {
 	return &WSHandler{
-		client:   c,
-		sessions: sm,
-		tools:    tr,
-		system:   systemPrompt,
+		client:    c,
+		sessions:  sm,
+		tools:     tr,
+		workspace: wm,
+		system:    systemPrompt,
 	}
 }
 
@@ -101,10 +105,16 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 			h.handleLoadHistory(conn, wsMsg.Payload)
 		case "list_sessions":
 			log.Printf("[WS] Processing list_sessions message")
-			h.handleListSessions(conn)
+			h.handleListSessions(conn, wsMsg.Payload)
 		case "delete_session":
 			log.Printf("[WS] Processing delete_session message")
 			h.handleDeleteSession(conn, wsMsg.Payload)
+		case "list_files":
+			log.Printf("[WS] Processing list_files message")
+			h.handleListFiles(conn, wsMsg.Payload)
+		case "workspace_stats":
+			log.Printf("[WS] Processing workspace_stats message")
+			h.handleWorkspaceStats(conn, wsMsg.Payload)
 		}
 	}
 }
@@ -227,9 +237,20 @@ func (h *WSHandler) handleLoadHistory(conn *websocket.Conn, payload json.RawMess
 	})
 }
 
+// ListSessionsPayload 获取会话列表载荷
+type ListSessionsPayload struct {
+	UserID string `json:"user_id"`
+}
+
 // handleListSessions 处理获取会话列表请求
-func (h *WSHandler) handleListSessions(conn *websocket.Conn) {
-	sessions := h.sessions.ListAll()
+func (h *WSHandler) handleListSessions(conn *websocket.Conn, payload json.RawMessage) {
+	var req ListSessionsPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		// 兼容旧版本，不传 user_id
+		req.UserID = ""
+	}
+
+	sessions := h.sessions.List(req.UserID)
 
 	// 转换为前端格式
 	var sessionList []map[string]interface{}
@@ -450,4 +471,92 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 			"payload": payload,
 		})
 	}
+}
+
+// ListFilesPayload 文件列表载荷
+type ListFilesPayload struct {
+	UserID string `json:"user_id"`
+	Path   string `json:"path"`
+}
+
+// handleListFiles 处理文件列表请求
+func (h *WSHandler) handleListFiles(conn *websocket.Conn, payload json.RawMessage) {
+	var req ListFilesPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid list_files payload")
+		return
+	}
+
+	if req.UserID == "" {
+		h.sendError(conn, "user_id is required")
+		return
+	}
+
+	if h.workspace == nil {
+		h.sendError(conn, "workspace manager not initialized")
+		return
+	}
+
+	// 确保用户工作空间存在
+	if err := h.workspace.EnsureUserWorkspace(req.UserID); err != nil {
+		h.sendError(conn, "failed to create workspace: "+err.Error())
+		return
+	}
+
+	files, err := h.workspace.ListFiles(req.UserID, req.Path)
+	if err != nil {
+		h.sendError(conn, "failed to list files: "+err.Error())
+		return
+	}
+
+	log.Printf("[WS] Listed %d files for user %s path %s", len(files), req.UserID, req.Path)
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "files_list",
+		"payload": map[string]interface{}{
+			"user_id": req.UserID,
+			"path":    req.Path,
+			"files":   files,
+		},
+	})
+}
+
+// WorkspaceStatsPayload 工作空间统计载荷
+type WorkspaceStatsPayload struct {
+	UserID string `json:"user_id"`
+}
+
+// handleWorkspaceStats 处理工作空间统计请求
+func (h *WSHandler) handleWorkspaceStats(conn *websocket.Conn, payload json.RawMessage) {
+	var req WorkspaceStatsPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid workspace_stats payload")
+		return
+	}
+
+	if req.UserID == "" {
+		h.sendError(conn, "user_id is required")
+		return
+	}
+
+	if h.workspace == nil {
+		h.sendError(conn, "workspace manager not initialized")
+		return
+	}
+
+	stats, err := h.workspace.GetWorkspaceStats(req.UserID)
+	if err != nil {
+		h.sendError(conn, "failed to get workspace stats: "+err.Error())
+		return
+	}
+
+	log.Printf("[WS] Got workspace stats for user %s", req.UserID)
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "workspace_stats",
+		"payload": map[string]interface{}{
+			"user_id": req.UserID,
+			"stats":   stats,
+		},
+	})
 }

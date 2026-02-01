@@ -57,7 +57,15 @@ func FromSessionData(data *SessionData) *Session {
 	}
 }
 
-// getSessionDir 获取会话存储目录
+// 用户工作空间基础目录（可通过 SetUserBaseDir 设置）
+var userBaseDir = ""
+
+// SetUserBaseDir 设置用户工作空间基础目录
+func SetUserBaseDir(dir string) {
+	userBaseDir = dir
+}
+
+// getSessionDir 获取会话存储目录（兼容旧版本）
 func getSessionDir() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -66,9 +74,23 @@ func getSessionDir() string {
 	return filepath.Join(homeDir, ".claude", "sessions")
 }
 
+// getUserSessionDir 获取用户的会话存储目录
+func getUserSessionDir(userID string) string {
+	if userBaseDir != "" && userID != "" {
+		return filepath.Join(userBaseDir, userID, ".claude", "sessions")
+	}
+	return getSessionDir()
+}
+
 // ensureSessionDir 确保会话目录存在
 func ensureSessionDir() error {
 	dir := getSessionDir()
+	return os.MkdirAll(dir, 0755)
+}
+
+// ensureUserSessionDir 确保用户会话目录存在
+func ensureUserSessionDir(userID string) error {
+	dir := getUserSessionDir(userID)
 	return os.MkdirAll(dir, 0755)
 }
 
@@ -77,11 +99,28 @@ func getSessionPath(sessionID string) string {
 	return filepath.Join(getSessionDir(), sessionID+".json")
 }
 
+// getUserSessionPath 获取用户会话文件路径
+func getUserSessionPath(userID, sessionID string) string {
+	return filepath.Join(getUserSessionDir(userID), sessionID+".json")
+}
+
 // SaveSession 保存会话到文件
 func SaveSession(sess *Session) error {
-	if err := ensureSessionDir(); err != nil {
-		return err
+	var dir string
+	var path string
+
+	if userBaseDir != "" && sess.UserID != "" {
+		if err := ensureUserSessionDir(sess.UserID); err != nil {
+			return err
+		}
+		path = getUserSessionPath(sess.UserID, sess.ID)
+	} else {
+		if err := ensureSessionDir(); err != nil {
+			return err
+		}
+		path = getSessionPath(sess.ID)
 	}
+	_ = dir
 
 	data := sess.ToSessionData()
 	jsonData, err := json.MarshalIndent(data, "", "  ")
@@ -89,12 +128,28 @@ func SaveSession(sess *Session) error {
 		return err
 	}
 
-	return os.WriteFile(getSessionPath(sess.ID), jsonData, 0644)
+	return os.WriteFile(path, jsonData, 0644)
 }
 
 // LoadSession 从文件加载会话
 func LoadSession(sessionID string) (*Session, error) {
 	path := getSessionPath(sessionID)
+	jsonData, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var data SessionData
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return nil, err
+	}
+
+	return FromSessionData(&data), nil
+}
+
+// LoadUserSession 从用户目录加载会话
+func LoadUserSession(userID, sessionID string) (*Session, error) {
+	path := getUserSessionPath(userID, sessionID)
 	jsonData, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -130,9 +185,40 @@ func ListSessionFiles() ([]string, error) {
 	return sessionIDs, nil
 }
 
+// ListUserSessionFiles 列出用户的所有会话文件
+func ListUserSessionFiles(userID string) ([]string, error) {
+	dir := getUserSessionDir(userID)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return nil, nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var sessionIDs []string
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			sessionID := entry.Name()[:len(entry.Name())-5]
+			sessionIDs = append(sessionIDs, sessionID)
+		}
+	}
+	return sessionIDs, nil
+}
+
 // DeleteSessionFile 删除会话文件
 func DeleteSessionFile(sessionID string) error {
 	path := getSessionPath(sessionID)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	return os.Remove(path)
+}
+
+// DeleteUserSessionFile 删除用户会话文件
+func DeleteUserSessionFile(userID, sessionID string) error {
+	path := getUserSessionPath(userID, sessionID)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
 	}

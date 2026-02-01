@@ -1,0 +1,90 @@
+/* 文件浏览器样式 */
+
+.file-explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.file-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--semi-color-border);
+}
+
+.file-breadcrumb {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--semi-color-border);
+  font-size: 12px;
+}
+
+.file-breadcrumb .semi-breadcrumb-item {
+  cursor: pointer;
+}
+
+.file-breadcrumb .semi-breadcrumb-item:hover {
+  color: var(--semi-color-primary);
+}
+
+.file-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.file-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.file-list::-webkit-scrollbar-thumb {
+  background: var(--semi-color-fill-2);
+  border-radius: 2px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  margin-bottom: 2px;
+}
+
+.file-item:hover {
+  background: var(--semi-color-fill-0);
+}
+
+.file-icon {
+  flex-shrink: 0;
+  margin-right: 10px;
+  font-size: 18px;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-name {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.file-meta {
+  font-size: 11px;
+}
+
+.file-loading,
+.file-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  gap: 8px;
+}

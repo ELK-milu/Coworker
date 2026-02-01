@@ -245,11 +245,15 @@ func (l *ConversationLoop) saveAssistantMessage(text string, calls []toolCall) {
 func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) error {
 	results := make([]interface{}, 0, len(calls))
 
+	// 将会话的工作目录放入 context
+	workDir := l.session.GetWorkingDir()
+	toolCtx := context.WithValue(ctx, types.WorkingDirKey, workDir)
+
 	for _, tc := range calls {
-		log.Printf("[Tool] Executing: name=%s, id=%s", tc.Name, tc.ID)
+		log.Printf("[Tool] Executing: name=%s, id=%s, workDir=%s", tc.Name, tc.ID, workDir)
 		log.Printf("[Tool] Input: %s", tc.Input)
 
-		result, err := l.tools.Execute(ctx, tc.Name, json.RawMessage(tc.Input))
+		result, err := l.tools.Execute(toolCtx, tc.Name, json.RawMessage(tc.Input))
 
 		var toolResult types.ToolResultBlock
 		if err != nil {

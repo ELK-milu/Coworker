@@ -56,9 +56,10 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	searchPath := t.workingDir
+	workDir := types.GetWorkingDir(ctx, t.workingDir)
+	searchPath := workDir
 	if in.Path != "" {
-		searchPath = filepath.Join(t.workingDir, in.Path)
+		searchPath = filepath.Join(workDir, in.Path)
 	}
 
 	var results []string

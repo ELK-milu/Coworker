@@ -45,14 +45,16 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
+	workDir := types.GetWorkingDir(ctx, t.workingDir)
+
 	var pattern string
 	// 检查 pattern 是否是绝对路径
 	if filepath.IsAbs(in.Pattern) {
 		pattern = in.Pattern
 	} else {
-		searchPath := t.workingDir
+		searchPath := workDir
 		if in.Path != "" {
-			searchPath = filepath.Join(t.workingDir, in.Path)
+			searchPath = filepath.Join(workDir, in.Path)
 		}
 		pattern = filepath.Join(searchPath, in.Pattern)
 	}

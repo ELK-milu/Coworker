@@ -45,7 +45,7 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	path := t.resolvePath(in.FilePath)
+	path := t.resolvePath(ctx, in.FilePath)
 
 	// 确保目录存在
 	dir := filepath.Dir(path)
@@ -60,9 +60,10 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 	return &types.ToolResult{Success: true, Output: "File written successfully"}, nil
 }
 
-func (t *WriteTool) resolvePath(path string) string {
+func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
-	return filepath.Join(t.workingDir, path)
+	workDir := types.GetWorkingDir(ctx, t.workingDir)
+	return filepath.Join(workDir, path)
 }

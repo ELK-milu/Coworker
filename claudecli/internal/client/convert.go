@@ -52,7 +52,6 @@ func convertBetaMessage(msg types.Message) anthropic.BetaMessageParam {
 				},
 			})
 		case types.ToolUseBlock:
-			// 处理 assistant 消息中的 tool_use 块
 			blocks = append(blocks, anthropic.BetaContentBlockParamUnion{
 				OfToolUse: &anthropic.BetaToolUseBlockParam{
 					Type:  "tool_use",
@@ -75,10 +74,61 @@ func convertBetaMessage(msg types.Message) anthropic.BetaMessageParam {
 					IsError: anthropic.Bool(v.IsError),
 				},
 			})
+		case map[string]interface{}:
+			// 处理从 JSON 反序列化后的 map 类型
+			block := convertMapToBlock(v)
+			if block != nil {
+				blocks = append(blocks, *block)
+			}
 		}
 	}
 	return anthropic.BetaMessageParam{
 		Role:    anthropic.BetaMessageParamRole(msg.Role),
 		Content: blocks,
 	}
+}
+
+// convertMapToBlock 将 map 转换为内容块
+func convertMapToBlock(m map[string]interface{}) *anthropic.BetaContentBlockParamUnion {
+	blockType, _ := m["type"].(string)
+	switch blockType {
+	case "text":
+		text, _ := m["text"].(string)
+		return &anthropic.BetaContentBlockParamUnion{
+			OfText: &anthropic.BetaTextBlockParam{
+				Type: "text",
+				Text: text,
+			},
+		}
+	case "tool_use":
+		id, _ := m["id"].(string)
+		name, _ := m["name"].(string)
+		input := m["input"]
+		return &anthropic.BetaContentBlockParamUnion{
+			OfToolUse: &anthropic.BetaToolUseBlockParam{
+				Type:  "tool_use",
+				ID:    id,
+				Name:  name,
+				Input: input,
+			},
+		}
+	case "tool_result":
+		toolUseID, _ := m["tool_use_id"].(string)
+		content, _ := m["content"].(string)
+		isError, _ := m["is_error"].(bool)
+		return &anthropic.BetaContentBlockParamUnion{
+			OfToolResult: &anthropic.BetaToolResultBlockParam{
+				Type:      "tool_result",
+				ToolUseID: toolUseID,
+				Content: []anthropic.BetaToolResultBlockParamContentUnion{
+					{OfText: &anthropic.BetaTextBlockParam{
+						Type: "text",
+						Text: content,
+					}},
+				},
+				IsError: anthropic.Bool(isError),
+			},
+		}
+	}
+	return nil
 }
