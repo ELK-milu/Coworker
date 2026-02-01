@@ -128,3 +128,15 @@ func (m *Manager) List(userID string) []*Session {
 	}
 	return result
 }
+
+// ListAll 列出所有会话
+func (m *Manager) ListAll() []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []*Session
+	for _, s := range m.sessions {
+		result = append(result, s)
+	}
+	return result
+}

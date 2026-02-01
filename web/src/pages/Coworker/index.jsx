@@ -4,9 +4,10 @@ Copyright (C) 2025 QuantumNous
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Typography, Spin, TextArea } from '@douyinfe/semi-ui';
-import { IconSend, IconStop, IconPlus } from '@douyinfe/semi-icons';
+import { IconSend, IconStop } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
+import SessionSidebar from './components/SessionSidebar';
 import './styles.css';
 
 const { Title, Text } = Typography;
@@ -44,6 +45,8 @@ const Coworker = () => {
     // 从 localStorage 恢复 session_id
     return localStorage.getItem(SESSION_STORAGE_KEY) || '';
   });
+  const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
   const abortedRef = useRef(false);
@@ -68,6 +71,24 @@ const Coworker = () => {
     }
   }, []);
 
+  // 加载会话列表
+  const loadSessionsList = useCallback((ws) => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      setSessionsLoading(true);
+      ws.send(JSON.stringify({ type: 'list_sessions', payload: {} }));
+    }
+  }, []);
+
+  // 删除会话
+  const deleteSession = useCallback((sessId) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'delete_session',
+        payload: { session_id: sessId }
+      }));
+    }
+  }, []);
+
   // 连接 WebSocket
   const connectWebSocket = useCallback(() => {
     if (wsRef.current) {
@@ -84,7 +105,9 @@ const Coworker = () => {
       wsRef.current = new WebSocket(wsUrl);
       wsRef.current.onopen = () => {
         setConnected(true);
-        // 连接成功后，如果有 session_id，加载历史消息
+        // 连接成功后加载会话列表
+        loadSessionsList(wsRef.current);
+        // 如果有 session_id，加载历史消息
         if (currentSessionId) {
           loadHistory(wsRef.current, currentSessionId);
         }
@@ -102,7 +125,7 @@ const Coworker = () => {
     } catch (error) {
       console.error('[Coworker] WebSocket error:', error);
     }
-  }, [loadHistory]);
+  }, [loadHistory, loadSessionsList]);
 
   useEffect(() => {
     connectWebSocket();
@@ -197,6 +220,30 @@ const Coworker = () => {
           mode: payload.mode,
         });
         break;
+
+      case 'sessions_list':
+        setSessionsLoading(false);
+        if (payload.sessions) {
+          // 按更新时间排序
+          const sorted = [...payload.sessions].sort((a, b) => b.updated_at - a.updated_at);
+          setSessions(sorted);
+          console.log('[Coworker] Loaded sessions list:', sorted.length);
+        }
+        break;
+
+      case 'session_deleted':
+        if (payload.success) {
+          setSessions(prev => prev.filter(s => s.id !== payload.session_id));
+          // 如果删除的是当前会话，清空
+          if (payload.session_id === sessionId) {
+            setSessionId('');
+            setMessages([]);
+            setStatus(null);
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+          }
+          console.log('[Coworker] Session deleted:', payload.session_id);
+        }
+        break;
     }
   };
 
@@ -247,6 +294,16 @@ const Coworker = () => {
     localStorage.removeItem(SESSION_STORAGE_KEY);
   };
 
+  // 选择会话
+  const selectSession = (sessId) => {
+    if (sessId === sessionId) return;
+    setSessionId(sessId);
+    setMessages([]);
+    setStatus(null);
+    localStorage.setItem(SESSION_STORAGE_KEY, sessId);
+    loadHistory(wsRef.current, sessId);
+  };
+
   // 渲染消息项
   const renderMessage = (msg, index) => {
     if (msg.type === 'tool') {
@@ -276,29 +333,32 @@ const Coworker = () => {
   return (
     <div className='mt-[60px] px-2'>
       <div className="coworker-container">
-        {/* 头部 */}
-        <div className="coworker-header">
-          <div className="coworker-title">
-            <Title heading={4} style={{ margin: 0 }}>Coworker</Title>
-            <Text type="tertiary">AI 编程助手</Text>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <Button
-              icon={<IconPlus />}
-              onClick={newChat}
-              disabled={loading}
-            >
-              新建对话
-            </Button>
+        {/* 会话侧边栏 */}
+        <SessionSidebar
+          sessions={sessions}
+          currentSessionId={sessionId}
+          onNewChat={newChat}
+          onSelectSession={selectSession}
+          onDeleteSession={deleteSession}
+          loading={sessionsLoading}
+        />
+
+        {/* 主内容区 */}
+        <div className="coworker-main">
+          {/* 头部 */}
+          <div className="coworker-header">
+            <div className="coworker-title">
+              <Title heading={4} style={{ margin: 0 }}>Coworker</Title>
+              <Text type="tertiary">AI 编程助手</Text>
+            </div>
             <div className="connection-status">
               <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
               <Text size="small">{connected ? '已连接' : '未连接'}</Text>
             </div>
           </div>
-        </div>
 
-        {/* 消息列表 */}
-        <div className="messages-container">
+          {/* 消息列表 */}
+          <div className="messages-container">
           {messages.map(renderMessage)}
           {thinking && (
             <div className="thinking-indicator">
@@ -307,10 +367,10 @@ const Coworker = () => {
             </div>
           )}
           <div ref={messagesEndRef} />
-        </div>
+          </div>
 
-        {/* 输入区域 */}
-        <div className="input-container">
+          {/* 输入区域 */}
+          <div className="input-container">
           {/* 动态状态栏 - 仅在回复时显示 */}
           {loading && status && (
             <div className="status-bar dynamic">
@@ -380,6 +440,7 @@ const Coworker = () => {
               />
             )}
           </div>
+        </div>
         </div>
       </div>
     </div>

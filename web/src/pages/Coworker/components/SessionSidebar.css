@@ -1,0 +1,192 @@
+/* 会话侧边栏样式 - DeepSeek 风格 */
+
+.session-sidebar {
+  width: 260px;
+  height: 100%;
+  background: var(--semi-color-bg-0);
+  border-right: 1px solid var(--semi-color-border);
+  display: flex;
+  flex-direction: column;
+  transition: width 0.2s ease;
+  flex-shrink: 0;
+}
+
+.session-sidebar.collapsed {
+  width: 60px;
+}
+
+/* 头部 */
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 12px;
+  border-bottom: 1px solid var(--semi-color-border);
+  min-height: 56px;
+}
+
+.sidebar-title {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--semi-color-text-0);
+}
+
+.collapsed .sidebar-header {
+  justify-content: center;
+  padding: 16px 8px;
+}
+
+.collapse-btn {
+  flex-shrink: 0;
+}
+
+/* 新建对话按钮 */
+.new-chat-wrapper {
+  padding: 12px;
+}
+
+.new-chat-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.collapsed .new-chat-btn {
+  width: 36px;
+  padding: 0;
+}
+
+.collapsed .new-chat-btn .semi-button-content {
+  padding: 0;
+}
+
+/* 会话列表 */
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.session-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.session-list::-webkit-scrollbar-thumb {
+  background: var(--semi-color-fill-2);
+  border-radius: 2px;
+}
+
+.session-list::-webkit-scrollbar-thumb:hover {
+  background: var(--semi-color-fill-1);
+}
+
+/* 会话分组 */
+.session-group {
+  margin-bottom: 8px;
+}
+
+.session-group-title {
+  font-size: 12px;
+  color: var(--semi-color-text-2);
+  padding: 8px 12px 4px;
+  font-weight: 500;
+}
+
+/* 会话项 */
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  margin-bottom: 2px;
+  position: relative;
+}
+
+.session-item:hover {
+  background: var(--semi-color-fill-0);
+}
+
+.session-item.active {
+  background: var(--semi-color-primary-light-default);
+}
+
+.session-item.active:hover {
+  background: var(--semi-color-primary-light-hover);
+}
+
+.session-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-title {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--semi-color-text-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-meta {
+  font-size: 11px;
+}
+
+/* 删除按钮 */
+.session-delete-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.session-item:hover .session-delete-btn {
+  opacity: 1;
+}
+
+.session-delete-btn:hover {
+  color: var(--semi-color-danger) !important;
+}
+
+/* 空状态和加载状态 */
+.session-empty,
+.session-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+/* 收起状态下的会话项 */
+.collapsed .session-item {
+  padding: 10px 8px;
+  justify-content: center;
+}
+
+.collapsed .session-item-content {
+  display: none;
+}
+
+.collapsed .session-item::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--semi-color-primary);
+}
+
+.collapsed .session-item.active::before {
+  background: var(--semi-color-primary);
+  box-shadow: 0 0 0 3px var(--semi-color-primary-light-default);
+}
+
+.collapsed .session-group-title {
+  display: none;
+}

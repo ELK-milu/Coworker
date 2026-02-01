@@ -99,6 +99,12 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "load_history":
 			log.Printf("[WS] Processing load_history message")
 			h.handleLoadHistory(conn, wsMsg.Payload)
+		case "list_sessions":
+			log.Printf("[WS] Processing list_sessions message")
+			h.handleListSessions(conn)
+		case "delete_session":
+			log.Printf("[WS] Processing delete_session message")
+			h.handleDeleteSession(conn, wsMsg.Payload)
 		}
 	}
 }
@@ -221,18 +227,97 @@ func (h *WSHandler) handleLoadHistory(conn *websocket.Conn, payload json.RawMess
 	})
 }
 
+// handleListSessions 处理获取会话列表请求
+func (h *WSHandler) handleListSessions(conn *websocket.Conn) {
+	sessions := h.sessions.ListAll()
+
+	// 转换为前端格式
+	var sessionList []map[string]interface{}
+	for _, sess := range sessions {
+		// 获取第一条用户消息作为标题
+		title := "新对话"
+		messages := sess.GetMessages()
+		for _, msg := range messages {
+			if msg.Role == "user" {
+				for _, block := range msg.Content {
+					if textBlock, ok := block.(types.TextBlock); ok {
+						title = textBlock.Text
+						if len(title) > 50 {
+							title = title[:50] + "..."
+						}
+						break
+					}
+					if blockMap, ok := block.(map[string]interface{}); ok {
+						if blockMap["type"] == "text" {
+							if text, ok := blockMap["text"].(string); ok {
+								title = text
+								if len(title) > 50 {
+									title = title[:50] + "..."
+								}
+								break
+							}
+						}
+					}
+				}
+				break
+			}
+		}
+
+		sessionList = append(sessionList, map[string]interface{}{
+			"id":           sess.ID,
+			"title":        title,
+			"created_at":   sess.CreatedAt.Unix(),
+			"updated_at":   sess.UpdatedAt.Unix(),
+			"message_count": len(messages),
+		})
+	}
+
+	log.Printf("[WS] Listed %d sessions", len(sessionList))
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "sessions_list",
+		"payload": map[string]interface{}{
+			"sessions": sessionList,
+		},
+	})
+}
+
+// DeleteSessionPayload 删除会话载荷
+type DeleteSessionPayload struct {
+	SessionID string `json:"session_id"`
+}
+
+// handleDeleteSession 处理删除会话请求
+func (h *WSHandler) handleDeleteSession(conn *websocket.Conn, payload json.RawMessage) {
+	var req DeleteSessionPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid delete_session payload")
+		return
+	}
+
+	if req.SessionID == "" {
+		h.sendError(conn, "session_id is required")
+		return
+	}
+
+	h.sessions.Delete(req.SessionID)
+	log.Printf("[WS] Deleted session: %s", req.SessionID)
+
+	conn.WriteJSON(map[string]interface{}{
+		"type": "session_deleted",
+		"payload": map[string]interface{}{
+			"session_id": req.SessionID,
+			"success":    true,
+		},
+	})
+}
+
 // convertMessagesToFrontend 将后端消息格式转换为前端格式
 func convertMessagesToFrontend(messages []types.Message) []map[string]interface{} {
 	var result []map[string]interface{}
 
 	for _, msg := range messages {
-		// 解析消息内容
-		content, ok := msg.Content.([]interface{})
-		if !ok {
-			continue
-		}
-
-		for _, block := range content {
+		for _, block := range msg.Content {
 			blockMap, ok := block.(map[string]interface{})
 			if !ok {
 				// 尝试处理结构体类型
@@ -249,11 +334,15 @@ func convertMessagesToFrontend(messages []types.Message) []map[string]interface{
 						})
 					}
 				} else if toolUse, ok := block.(types.ToolUseBlock); ok {
+					inputStr := ""
+					if inputBytes, err := json.Marshal(toolUse.Input); err == nil {
+						inputStr = string(inputBytes)
+					}
 					result = append(result, map[string]interface{}{
 						"type":     "tool",
 						"toolName": toolUse.Name,
 						"toolId":   toolUse.ID,
-						"input":    string(toolUse.Input),
+						"input":    inputStr,
 						"status":   "completed",
 					})
 				} else if toolResult, ok := block.(types.ToolResultBlock); ok {
