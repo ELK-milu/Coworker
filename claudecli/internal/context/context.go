@@ -79,6 +79,12 @@ type Stats struct {
 	CompressionRatio   float64 `json:"compression_ratio"`
 	SavedTokens        int     `json:"saved_tokens"`
 	CompressionCount   int     `json:"compression_count"`
+	// 新增字段用于状态栏显示
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+	ContextUsed  int `json:"context_used"`
+	ContextMax   int `json:"context_max"`
 }
 
 // Manager 上下文管理器
@@ -319,11 +325,20 @@ func (m *Manager) GetStats() Stats {
 
 	summarized := 0
 	originalTokens := 0
+	inputTokens := 0
+	outputTokens := 0
+
 	for _, t := range m.turns {
 		if t.Summarized {
 			summarized++
 		}
 		originalTokens += t.OriginalTokens
+
+		// 统计输入输出 token
+		if t.APIUsage != nil {
+			inputTokens += t.APIUsage.InputTokens
+			outputTokens += t.APIUsage.OutputTokens
+		}
 	}
 
 	currentTokens := m.getUsedTokensUnsafe()
@@ -332,6 +347,8 @@ func (m *Manager) GetStats() Stats {
 		ratio = float64(currentTokens) / float64(originalTokens)
 	}
 
+	contextMax := m.config.MaxTokens - m.config.ReserveTokens
+
 	return Stats{
 		TotalMessages:      len(m.turns) * 2,
 		EstimatedTokens:    currentTokens,
@@ -339,6 +356,11 @@ func (m *Manager) GetStats() Stats {
 		CompressionRatio:   ratio,
 		SavedTokens:        m.savedTokens,
 		CompressionCount:   m.compressionCount,
+		InputTokens:        inputTokens,
+		OutputTokens:       outputTokens,
+		TotalTokens:        inputTokens + outputTokens,
+		ContextUsed:        currentTokens,
+		ContextMax:         contextMax,
 	}
 }
 

@@ -72,6 +72,11 @@ func NewClaudeClient(apiKey, authToken, baseURL, model string, maxTokens int) *C
 	}
 }
 
+// GetModel 获取当前模型名称
+func (c *ClaudeClient) GetModel() string {
+	return c.model
+}
+
 // buildBetas 构建 beta 头
 func buildBetas(model string, isOAuth bool) []anthropic.AnthropicBeta {
 	betas := []anthropic.AnthropicBeta{}

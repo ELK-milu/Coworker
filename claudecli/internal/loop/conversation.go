@@ -8,15 +8,18 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"time"
 )
 
 // ConversationLoop 对话循环
 type ConversationLoop struct {
-	client   *client.ClaudeClient
-	session  *session.Session
-	tools    *tools.Registry
-	eventCh  chan<- LoopEvent
-	system   string
+	client    *client.ClaudeClient
+	session   *session.Session
+	tools     *tools.Registry
+	eventCh   chan<- LoopEvent
+	system    string
+	mode      string // normal, plan, acceptEdits, bypassPermissions
+	startTime int64
 }
 
 // LoopEvent 循环事件
@@ -30,6 +33,21 @@ type LoopEvent struct {
 	IsError    bool   `json:"is_error,omitempty"`
 	Error      string `json:"error,omitempty"`
 	Done       bool   `json:"done,omitempty"`
+	// 状态信息
+	Status *StatusInfo `json:"status,omitempty"`
+}
+
+// StatusInfo 状态信息
+type StatusInfo struct {
+	Model           string  `json:"model"`
+	InputTokens     int     `json:"input_tokens"`
+	OutputTokens    int     `json:"output_tokens"`
+	TotalTokens     int     `json:"total_tokens"`
+	ContextUsed     int     `json:"context_used"`
+	ContextMax      int     `json:"context_max"`
+	ContextPercent  float64 `json:"context_percent"`
+	ElapsedMs       int64   `json:"elapsed_ms"`
+	Mode            string  `json:"mode"` // normal, plan, acceptEdits, bypassPermissions
 }
 
 const (
@@ -38,6 +56,7 @@ const (
 	EventTypeToolEnd    = "tool_end"
 	EventTypeDone       = "done"
 	EventTypeError      = "error"
+	EventTypeStatus     = "status"
 )
 
 // NewConversationLoop 创建对话循环
@@ -54,7 +73,13 @@ func NewConversationLoop(
 		tools:   registry,
 		system:  systemPrompt,
 		eventCh: eventCh,
+		mode:    "normal",
 	}
+}
+
+// SetMode 设置模式
+func (l *ConversationLoop) SetMode(mode string) {
+	l.mode = mode
 }
 
 // ProcessMessage 处理用户消息
@@ -71,10 +96,13 @@ func (l *ConversationLoop) ProcessMessage(ctx context.Context, userInput string)
 
 // runLoop 运行对话循环
 func (l *ConversationLoop) runLoop(ctx context.Context) error {
+	l.startTime = time.Now().UnixMilli()
+
 	for {
 		// 检查上下文是否被取消
 		select {
 		case <-ctx.Done():
+			l.sendStatusEvent()
 			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
 			return ctx.Err()
 		default:
@@ -85,6 +113,9 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 			log.Printf("[Loop] Context near limit, compacting...")
 			l.session.CompactContext()
 		}
+
+		// 发送状态事件（开始处理）
+		l.sendStatusEvent()
 
 		// 调用 Claude API
 		streamCh, err := l.client.CreateMessageStream(
@@ -103,6 +134,9 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+
+		// 发送状态事件（处理完成）
+		l.sendStatusEvent()
 
 		// 如果没有工具调用，结束循环
 		if stopReason != "tool_use" || len(toolCalls) == 0 {
@@ -249,4 +283,30 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 	// 添加工具结果消息
 	l.session.AddMessage(types.Message{Role: "user", Content: results})
 	return nil
+}
+
+// sendStatusEvent 发送状态事件
+func (l *ConversationLoop) sendStatusEvent() {
+	stats := l.session.GetContextStats()
+	elapsed := time.Now().UnixMilli() - l.startTime
+
+	contextPercent := 0.0
+	if stats.ContextMax > 0 {
+		contextPercent = float64(stats.ContextUsed) / float64(stats.ContextMax) * 100
+	}
+
+	l.eventCh <- LoopEvent{
+		Type: EventTypeStatus,
+		Status: &StatusInfo{
+			Model:          l.client.GetModel(),
+			InputTokens:    stats.InputTokens,
+			OutputTokens:   stats.OutputTokens,
+			TotalTokens:    stats.TotalTokens,
+			ContextUsed:    stats.ContextUsed,
+			ContextMax:     stats.ContextMax,
+			ContextPercent: contextPercent,
+			ElapsedMs:      elapsed,
+			Mode:           l.mode,
+		},
+	}
 }

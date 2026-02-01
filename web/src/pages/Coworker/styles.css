@@ -334,3 +334,84 @@
   background: var(--semi-color-fill-1);
   color: var(--semi-color-text-0);
 }
+
+/* 状态栏 */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.status-bar.dynamic {
+  background: var(--semi-color-primary-light-default);
+  border: 1px solid var(--semi-color-primary-light-active);
+}
+
+.status-bar.persistent {
+  background: var(--semi-color-bg-2);
+  border: 1px solid var(--semi-color-border);
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-label {
+  color: var(--semi-color-text-2);
+}
+
+.status-value {
+  color: var(--semi-color-text-0);
+  font-family: 'Consolas', monospace;
+}
+
+/* 模式按钮 */
+.mode-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.mode-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--semi-color-border);
+  border-radius: 4px;
+  background: var(--semi-color-bg-1);
+  color: var(--semi-color-text-2);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-btn:hover {
+  background: var(--semi-color-fill-0);
+  color: var(--semi-color-text-0);
+}
+
+.mode-btn.active {
+  background: var(--semi-color-primary);
+  border-color: var(--semi-color-primary);
+  color: #fff;
+}
+
+/* 上下文信息 */
+.context-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-label {
+  color: var(--semi-color-text-2);
+}
+
+.context-value {
+  color: var(--semi-color-success);
+  font-family: 'Consolas', monospace;
+  font-weight: 500;
+}

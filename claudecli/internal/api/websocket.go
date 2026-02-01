@@ -168,6 +168,7 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 		case loop.EventTypeToolStart:
 			payload["name"] = event.ToolName
 			payload["tool_id"] = event.ToolID
+			payload["input"] = event.ToolInput
 		case loop.EventTypeToolEnd:
 			payload["name"] = event.ToolName
 			payload["tool_id"] = event.ToolID
@@ -175,6 +176,18 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 			payload["is_error"] = event.IsError
 		case loop.EventTypeError:
 			payload["error"] = event.Error
+		case loop.EventTypeStatus:
+			if event.Status != nil {
+				payload["model"] = event.Status.Model
+				payload["input_tokens"] = event.Status.InputTokens
+				payload["output_tokens"] = event.Status.OutputTokens
+				payload["total_tokens"] = event.Status.TotalTokens
+				payload["context_used"] = event.Status.ContextUsed
+				payload["context_max"] = event.Status.ContextMax
+				payload["context_percent"] = event.Status.ContextPercent
+				payload["elapsed_ms"] = event.Status.ElapsedMs
+				payload["mode"] = event.Status.Mode
+			}
 		}
 
 		conn.WriteJSON(map[string]interface{}{

@@ -11,15 +11,35 @@ import './styles.css';
 
 const { Title, Text } = Typography;
 
+// 格式化耗时
+const formatElapsed = (ms) => {
+  if (!ms) return '0s';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+};
+
+// 获取模式标签
+const getModeLabel = (mode) => {
+  const labels = {
+    normal: 'normal',
+    acceptEdits: 'accept edits on',
+    planMode: 'plan mode on',
+    bypassPermissions: 'bypass permissions on',
+  };
+  return labels[mode] || mode;
+};
+
 const Coworker = () => {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [status, setStatus] = useState(null);
+  const [mode, setMode] = useState('normal');
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const abortedRef = useRef(false); // 中断标志
+  const abortedRef = useRef(false);
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -42,7 +62,6 @@ const Coworker = () => {
 
     try {
       wsRef.current = new WebSocket(wsUrl);
-
       wsRef.current.onopen = () => setConnected(true);
       wsRef.current.onerror = () => setConnected(false);
       wsRef.current.onclose = () => setConnected(false);
@@ -70,7 +89,6 @@ const Coworker = () => {
 
   // 处理 WebSocket 消息
   const handleWebSocketMessage = (data) => {
-    // 如果已中断，忽略除 done 和 error 外的消息
     if (abortedRef.current && data.type !== 'done' && data.type !== 'error') {
       return;
     }
@@ -94,6 +112,7 @@ const Coworker = () => {
           type: 'tool',
           toolName: payload.name,
           toolId: payload.tool_id,
+          input: payload.input,
           status: 'running',
         }]);
         break;
@@ -119,16 +138,28 @@ const Coworker = () => {
         setThinking(false);
         setMessages(prev => [...prev, { type: 'error', content: payload.error }]);
         break;
+
+      case 'status':
+        setStatus({
+          model: payload.model,
+          inputTokens: payload.input_tokens,
+          outputTokens: payload.output_tokens,
+          totalTokens: payload.total_tokens,
+          contextUsed: payload.context_used,
+          contextMax: payload.context_max,
+          contextPercent: payload.context_percent,
+          elapsedMs: payload.elapsed_ms,
+          mode: payload.mode,
+        });
+        break;
     }
   };
-
-  // 继续下一部分...
 
   // 发送消息
   const sendMessage = () => {
     if (!inputValue.trim() || !connected || loading) return;
 
-    abortedRef.current = false; // 重置中断标志
+    abortedRef.current = false;
     const userMsg = { type: 'user', content: inputValue, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
     setInputValue('');
@@ -137,13 +168,13 @@ const Coworker = () => {
 
     wsRef.current.send(JSON.stringify({
       type: 'chat',
-      payload: { message: inputValue, user_id: 'user_' + Date.now() }
+      payload: { message: inputValue, user_id: 'user_' + Date.now(), mode }
     }));
   };
 
   // 中断对话
   const abortMessage = () => {
-    abortedRef.current = true; // 设置中断标志
+    abortedRef.current = true;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'abort' }));
     }
@@ -184,8 +215,6 @@ const Coworker = () => {
     );
   };
 
-  // 继续渲染部分...
-
   return (
     <div className='mt-[60px] px-2'>
       <div className="coworker-container">
@@ -215,11 +244,50 @@ const Coworker = () => {
 
         {/* 输入区域 */}
         <div className="input-container">
+          {/* 动态状态栏 - 仅在回复时显示 */}
+          {loading && status && (
+            <div className="status-bar dynamic">
+              <span className="status-item">
+                <span className="status-label">Model:</span>
+                <span className="status-value">{status.model || 'claude-sonnet'}</span>
+              </span>
+              <span className="status-item">
+                <span className="status-label">Tokens:</span>
+                <span className="status-value">{status.totalTokens || 0}</span>
+              </span>
+              <span className="status-item">
+                <span className="status-label">Time:</span>
+                <span className="status-value">{formatElapsed(status.elapsedMs)}</span>
+              </span>
+            </div>
+          )}
+
+          {/* 常驻状态栏 */}
+          <div className="status-bar persistent">
+            <div className="mode-buttons">
+              {['normal', 'acceptEdits', 'planMode', 'bypassPermissions'].map((m) => (
+                <button
+                  key={m}
+                  className={`mode-btn ${mode === m ? 'active' : ''}`}
+                  onClick={() => setMode(m)}
+                >
+                  {getModeLabel(m)}
+                </button>
+              ))}
+            </div>
+            <div className="context-info">
+              <span className="context-label">Context left:</span>
+              <span className="context-value">
+                {status ? `${Math.max(0, 100 - (status.contextPercent || 0)).toFixed(0)}%` : '100%'}
+              </span>
+            </div>
+          </div>
+
           <div className="input-wrapper">
             <TextArea
               value={inputValue}
               onChange={setInputValue}
-              placeholder={loading ? "Claude 正在回复，你可以继续输入..." : "输入消息，按 Enter 发送..."}
+              placeholder={loading ? "Claude 正在回复..." : "输入消息，按 Enter 发送..."}
               autosize={{ minRows: 1, maxRows: 5 }}
               onEnterPress={(e) => {
                 if (!e.shiftKey && !loading) {
