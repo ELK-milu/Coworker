@@ -221,6 +221,17 @@ const Coworker = () => {
         });
         break;
 
+      case 'thinking':
+        // 处理 thinking 消息，用不同样式显示
+        setMessages(prev => {
+          const last = prev[prev.length - 1];
+          if (last?.type === 'thinking' && last.streaming) {
+            return [...prev.slice(0, -1), { ...last, content: last.content + payload.content }];
+          }
+          return [...prev, { type: 'thinking', content: payload.content, streaming: true }];
+        });
+        break;
+
       case 'tool_start':
         setMessages(prev => [...prev, {
           type: 'tool',
@@ -237,6 +248,10 @@ const Coworker = () => {
             ? { ...msg, status: 'completed', result: payload.result, isError: payload.is_error }
             : msg
         ));
+        // 如果是 Task 相关工具，刷新任务列表
+        if (payload.name && payload.name.startsWith('Task')) {
+          loadTasksList(wsRef.current);
+        }
         break;
 
       case 'done':
@@ -367,7 +382,8 @@ const Coworker = () => {
         message: inputValue,
         session_id: sessionId,
         user_id: userId,
-        mode
+        mode,
+        working_path: currentPath  // 传递当前文件路径
       }
     }));
   };

@@ -52,6 +52,7 @@ type StatusInfo struct {
 
 const (
 	EventTypeText       = "text"
+	EventTypeThinking   = "thinking"
 	EventTypeToolStart  = "tool_start"
 	EventTypeToolEnd    = "tool_end"
 	EventTypeDone       = "done"
@@ -185,6 +186,10 @@ func (l *ConversationLoop) processStream(ctx context.Context, streamCh <-chan cl
 			case client.EventText:
 				textContent += event.Text
 				l.eventCh <- LoopEvent{Type: EventTypeText, Text: event.Text}
+
+			case client.EventThinking:
+				// 转发 thinking 事件到前端
+				l.eventCh <- LoopEvent{Type: EventTypeThinking, Text: event.Text}
 
 			case client.EventToolStart:
 				currentTool = &toolCall{ID: event.ToolID, Name: event.ToolName}

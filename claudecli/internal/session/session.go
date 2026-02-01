@@ -90,3 +90,10 @@ func (s *Session) GetWorkingDir() string {
 	defer s.mu.RUnlock()
 	return s.WorkingDir
 }
+
+// SetWorkingDir 设置工作目录
+func (s *Session) SetWorkingDir(dir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.WorkingDir = dir
+}

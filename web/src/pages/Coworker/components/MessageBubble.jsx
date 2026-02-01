@@ -9,8 +9,10 @@ const { Text } = Typography;
 
 const MessageBubble = ({ role, content, timestamp, aborted, tasks }) => {
   const [copied, setCopied] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const isUser = role === 'user';
   const isError = role === 'error';
+  const isThinking = role === 'thinking';
 
   const handleCopy = async () => {
     try {
@@ -27,6 +29,39 @@ const MessageBubble = ({ role, content, timestamp, aborted, tasks }) => {
     if (!ts) return new Date().toLocaleTimeString();
     return new Date(ts).toLocaleTimeString();
   };
+
+  // Thinking 消息使用可折叠的样式
+  if (isThinking) {
+    return (
+      <div className="message-bubble assistant thinking">
+        <div className="message-avatar">
+          <Avatar size="small" style={{ backgroundColor: '#9CA3AF' }}>T</Avatar>
+        </div>
+        <div className="message-body">
+          <div className="message-header">
+            <Text strong size="small" className="message-sender" style={{ color: '#6B7280' }}>
+              Thinking
+            </Text>
+            <button
+              className="thinking-toggle"
+              onClick={() => setThinkingExpanded(!thinkingExpanded)}
+            >
+              {thinkingExpanded ? '收起' : '展开'}
+            </button>
+          </div>
+          {thinkingExpanded && (
+            <div className="message-content thinking">
+              <div className="message-text">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {content || ''}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`message-bubble ${isUser ? 'user' : 'assistant'}`}>

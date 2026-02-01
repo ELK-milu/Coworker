@@ -18,12 +18,23 @@ func (c *ClaudeClient) handleBetaStreamEvent(event anthropic.BetaRawMessageStrea
 				ToolID:   event.ContentBlock.ID,
 				ToolName: event.ContentBlock.Name,
 			}
+		} else if event.ContentBlock.Type == "thinking" {
+			log.Printf("[API] Thinking block start")
+			eventCh <- StreamEvent{
+				Type: EventThinking,
+				Text: "", // 开始标记
+			}
 		}
 	case "content_block_delta":
 		if event.Delta.Type == "text_delta" {
 			eventCh <- StreamEvent{
 				Type: EventText,
 				Text: event.Delta.Text,
+			}
+		} else if event.Delta.Type == "thinking_delta" {
+			eventCh <- StreamEvent{
+				Type: EventThinking,
+				Text: event.Delta.Thinking,
 			}
 		} else if event.Delta.Type == "input_json_delta" {
 			eventCh <- StreamEvent{

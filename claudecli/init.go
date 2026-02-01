@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/api"
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
+	"github.com/QuantumNous/new-api/claudecli/internal/prompt"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
@@ -68,8 +69,21 @@ func Init() *Module {
 	// 创建任务管理器
 	taskManager := task.NewManager(cfg.Security.WorkingDir)
 
-	// 系统提示词
-	systemPrompt := "You are a helpful AI assistant with access to various tools."
+	// 构建系统提示词
+	promptCtx := &prompt.PromptContext{
+		WorkingDir:     cfg.Security.WorkingDir,
+		Model:          cfg.Claude.Model,
+		PermissionMode: "normal",
+		IsGitRepo:      prompt.IsGitRepo(cfg.Security.WorkingDir),
+		Language:       "中文", // 默认使用中文
+		ClaudeMdPath:   prompt.FindClaudeMd(cfg.Security.WorkingDir),
+	}
+	// 获取 Git 状态
+	if promptCtx.IsGitRepo {
+		promptCtx.GitStatus = prompt.GetGitStatus(cfg.Security.WorkingDir)
+	}
+	systemPrompt := prompt.BuildSystemPrompt(promptCtx)
+	log.Printf("[ClaudeCLI] System prompt built, length: %d chars", len(systemPrompt))
 
 	// 创建 REST 处理器
 	restHandler := api.NewRESTHandler(sessionManager)

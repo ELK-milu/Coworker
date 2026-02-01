@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -46,6 +47,7 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 	}
 
 	path := t.resolvePath(ctx, in.FilePath)
+	log.Printf("[Write] Input path: %s, Resolved path: %s", in.FilePath, path)
 
 	// 确保目录存在
 	dir := filepath.Dir(path)
@@ -57,7 +59,7 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	return &types.ToolResult{Success: true, Output: "File written successfully"}, nil
+	return &types.ToolResult{Success: true, Output: "File written successfully to " + path}, nil
 }
 
 func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
@@ -65,5 +67,6 @@ func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
 		return path
 	}
 	workDir := types.GetWorkingDir(ctx, t.workingDir)
+	log.Printf("[Write] resolvePath: defaultWorkDir=%s, contextWorkDir=%s", t.workingDir, workDir)
 	return filepath.Join(workDir, path)
 }

@@ -139,6 +139,34 @@
   border-color: var(--semi-color-danger-light-active);
 }
 
+/* Thinking 消息样式 */
+.message-bubble.thinking {
+  opacity: 0.85;
+}
+
+.message-content.thinking {
+  background: #F3F4F6;
+  border-color: #E5E7EB;
+  border-left: 3px solid #9CA3AF;
+  font-size: 0.9em;
+  color: #6B7280;
+}
+
+.thinking-toggle {
+  background: none;
+  border: 1px solid #D1D5DB;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #6B7280;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.thinking-toggle:hover {
+  background: #F3F4F6;
+}
+
 .message-text {
   line-height: 1.6;
   word-break: break-word;

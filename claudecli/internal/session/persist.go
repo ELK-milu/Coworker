@@ -46,6 +46,11 @@ func (s *Session) ToSessionData() *SessionData {
 
 // FromSessionData 从持久化数据恢复Session
 func FromSessionData(data *SessionData) *Session {
+	workingDir := data.WorkingDir
+	// 如果 WorkingDir 为空，根据 UserID 重新计算
+	if workingDir == "" && userBaseDir != "" && data.UserID != "" {
+		workingDir = filepath.Join(userBaseDir, data.UserID, "workspace")
+	}
 	return &Session{
 		ID:         data.ID,
 		UserID:     data.UserID,
@@ -53,7 +58,7 @@ func FromSessionData(data *SessionData) *Session {
 		CreatedAt:  data.CreatedAt,
 		UpdatedAt:  data.UpdatedAt,
 		TotalCost:  data.TotalCost,
-		WorkingDir: data.WorkingDir,
+		WorkingDir: workingDir,
 	}
 }
 

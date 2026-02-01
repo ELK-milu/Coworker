@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"path/filepath"
 	"sync"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
@@ -62,9 +63,10 @@ type WSMessage struct {
 
 // ChatPayload 聊天消息载荷
 type ChatPayload struct {
-	Message   string `json:"message"`
-	SessionID string `json:"session_id"`
-	UserID    string `json:"user_id"`
+	Message     string `json:"message"`
+	SessionID   string `json:"session_id"`
+	UserID      string `json:"user_id"`
+	WorkingPath string `json:"working_path"` // 前端当前选择的工作路径（相对于 workspace）
 }
 
 // Handle 处理 WebSocket 连接
@@ -191,6 +193,14 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	sess := h.sessions.Get(chat.SessionID)
 	if sess == nil {
 		sess = h.sessions.Create(chat.UserID)
+	}
+
+	// 如果前端指定了工作路径，更新会话的工作目录
+	if chat.WorkingPath != "" {
+		baseWorkDir := h.workspace.GetUserWorkDir(chat.UserID)
+		newWorkDir := filepath.Join(baseWorkDir, chat.WorkingPath)
+		sess.SetWorkingDir(newWorkDir)
+		log.Printf("[WS] Updated working dir for session %s: %s", sess.ID, newWorkDir)
 	}
 
 	// 创建可取消的 context
@@ -481,6 +491,8 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 
 		switch event.Type {
 		case loop.EventTypeText:
+			payload["content"] = event.Text
+		case loop.EventTypeThinking:
 			payload["content"] = event.Text
 		case loop.EventTypeToolStart:
 			payload["name"] = event.ToolName
