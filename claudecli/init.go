@@ -6,8 +6,11 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/api"
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
+	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
+	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
 	"github.com/QuantumNous/new-api/claudecli/internal/prompt"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
+	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
@@ -69,6 +72,15 @@ func Init() *Module {
 	// 创建任务管理器
 	taskManager := task.NewManager(cfg.Security.WorkingDir)
 
+	// 创建权限检查器
+	permChecker := permissions.NewChecker()
+
+	// 创建技能注册表
+	skillRegistry := skills.NewRegistry()
+
+	// 创建 MCP 管理器
+	mcpManager := mcp.NewManager()
+
 	// 构建系统提示词
 	promptCtx := &prompt.PromptContext{
 		WorkingDir:     cfg.Security.WorkingDir,
@@ -89,7 +101,7 @@ func Init() *Module {
 	restHandler := api.NewRESTHandler(sessionManager)
 
 	// 创建 WebSocket 处理器
-	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, systemPrompt)
+	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, permChecker, skillRegistry, mcpManager, systemPrompt)
 
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)
@@ -122,8 +134,10 @@ func registerTools(registry *tools.Registry, cfg *config.Config) {
 	registry.Register(tools.NewEditTool(workingDir))
 	registry.Register(tools.NewGlobTool(workingDir))
 	registry.Register(tools.NewGrepTool(workingDir))
+	registry.Register(tools.NewWebFetchTool())
+	registry.Register(tools.NewAskUserQuestionTool())
 
-	log.Printf("[ClaudeCLI] Registered %d tools", 6)
+	log.Printf("[ClaudeCLI] Registered %d tools", 8)
 }
 
 // GetInstance 获取模块实例

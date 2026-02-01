@@ -6,11 +6,15 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/loop"
+	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
+	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
+	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
@@ -25,15 +29,19 @@ var upgrader = websocket.Upgrader{
 
 // WSHandler WebSocket 处理器
 type WSHandler struct {
-	client     *client.ClaudeClient
-	sessions   *session.Manager
-	tools      *tools.Registry
-	workspace  *workspace.Manager
-	tasks      *task.Manager
-	system     string
-	mu         sync.Mutex
-	cancelFunc context.CancelFunc
-	connMu     sync.Mutex // 保护 WebSocket 连接的并发写入
+	client      *client.ClaudeClient
+	sessions    *session.Manager
+	tools       *tools.Registry
+	workspace   *workspace.Manager
+	tasks       *task.Manager
+	permissions *permissions.Checker
+	skills      *skills.Registry
+	skillExec   *skills.Executor
+	mcp         *mcp.Manager
+	system      string
+	mu          sync.Mutex
+	cancelFunc  context.CancelFunc
+	connMu      sync.Mutex
 }
 
 // NewWSHandler 创建 WebSocket 处理器
@@ -43,15 +51,22 @@ func NewWSHandler(
 	tr *tools.Registry,
 	wm *workspace.Manager,
 	tm *task.Manager,
+	perm *permissions.Checker,
+	sk *skills.Registry,
+	mcpMgr *mcp.Manager,
 	systemPrompt string,
 ) *WSHandler {
 	return &WSHandler{
-		client:    c,
-		sessions:  sm,
-		tools:     tr,
-		workspace: wm,
-		tasks:     tm,
-		system:    systemPrompt,
+		client:      c,
+		sessions:    sm,
+		tools:       tr,
+		workspace:   wm,
+		tasks:       tm,
+		permissions: perm,
+		skills:      sk,
+		skillExec:   skills.NewExecutor(sk),
+		mcp:         mcpMgr,
+		system:      systemPrompt,
 	}
 }
 
@@ -151,6 +166,37 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "context_stats":
 			log.Printf("[WS] Processing context_stats message")
 			h.handleContextStats(conn, wsMsg.Payload)
+		// Permission 相关消息
+		case "set_permission_mode":
+			log.Printf("[WS] Processing set_permission_mode message")
+			h.handleSetPermissionMode(conn, wsMsg.Payload)
+		case "get_permission_mode":
+			log.Printf("[WS] Processing get_permission_mode message")
+			h.handleGetPermissionMode(conn)
+		// Skill 相关消息
+		case "skill_call":
+			log.Printf("[WS] Processing skill_call message")
+			h.handleSkillCall(conn, wsMsg.Payload)
+		case "list_skills":
+			log.Printf("[WS] Processing list_skills message")
+			h.handleListSkills(conn)
+		// AskUser 响应消息
+		case "ask_user_response":
+			log.Printf("[WS] Processing ask_user_response message")
+			h.handleAskUserResponse(conn, wsMsg.Payload)
+		// MCP 相关消息
+		case "mcp_connect":
+			log.Printf("[WS] Processing mcp_connect message")
+			h.handleMCPConnect(conn, wsMsg.Payload)
+		case "mcp_disconnect":
+			log.Printf("[WS] Processing mcp_disconnect message")
+			h.handleMCPDisconnect(conn, wsMsg.Payload)
+		case "mcp_list":
+			log.Printf("[WS] Processing mcp_list message")
+			h.handleMCPList(conn)
+		case "mcp_call":
+			log.Printf("[WS] Processing mcp_call message")
+			h.handleMCPCall(conn, wsMsg.Payload)
 		}
 	}
 }
@@ -1062,4 +1108,268 @@ func (h *WSHandler) handleContextStats(conn *websocket.Conn, payload json.RawMes
 			"stats":      stats,
 		},
 	})
+}
+
+// ========== Permission 相关处理 ==========
+
+// SetPermissionModePayload 设置权限模式载荷
+type SetPermissionModePayload struct {
+	Mode string `json:"mode"`
+}
+
+// handleSetPermissionMode 处理设置权限模式请求
+func (h *WSHandler) handleSetPermissionMode(conn *websocket.Conn, payload json.RawMessage) {
+	var req SetPermissionModePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid set_permission_mode payload")
+		return
+	}
+
+	if req.Mode == "" {
+		h.sendError(conn, "mode is required")
+		return
+	}
+
+	mode := permissions.PermissionMode(req.Mode)
+	h.permissions.SetMode(mode)
+
+	log.Printf("[WS] Permission mode set to: %s", req.Mode)
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "permission_mode_changed",
+		"payload": map[string]interface{}{
+			"mode":    req.Mode,
+			"success": true,
+		},
+	})
+}
+
+// handleGetPermissionMode 处理获取权限模式请求
+func (h *WSHandler) handleGetPermissionMode(conn *websocket.Conn) {
+	mode := h.permissions.GetMode()
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "permission_mode",
+		"payload": map[string]interface{}{
+			"mode": string(mode),
+		},
+	})
+}
+
+// ========== Skill 相关处理 ==========
+
+// SkillCallPayload 技能调用载荷
+type SkillCallPayload struct {
+	Name string   `json:"name"`
+	Args []string `json:"args"`
+}
+
+// handleSkillCall 处理技能调用请求
+func (h *WSHandler) handleSkillCall(conn *websocket.Conn, payload json.RawMessage) {
+	var req SkillCallPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid skill_call payload")
+		return
+	}
+
+	// 移除前导斜杠
+	name := strings.TrimPrefix(req.Name, "/")
+
+	content, err := h.skillExec.Execute(name, req.Args)
+	if err != nil {
+		h.sendError(conn, err.Error())
+		return
+	}
+
+	log.Printf("[WS] Skill expanded: %s", name)
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "skill_expanded",
+		"payload": map[string]interface{}{
+			"name":    name,
+			"content": content,
+		},
+	})
+}
+
+// handleListSkills 处理列出技能请求
+func (h *WSHandler) handleListSkills(conn *websocket.Conn) {
+	skillList := h.skills.GetAll()
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "skills_list",
+		"payload": map[string]interface{}{
+			"skills": skillList,
+		},
+	})
+}
+
+// ========== AskUser 相关处理 ==========
+
+// AskUserResponsePayload 用户响应载荷
+type AskUserResponsePayload struct {
+	RequestID string            `json:"request_id"`
+	Answers   map[string]string `json:"answers"`
+	Cancelled bool              `json:"cancelled"`
+}
+
+// handleAskUserResponse 处理用户响应
+func (h *WSHandler) handleAskUserResponse(conn *websocket.Conn, payload json.RawMessage) {
+	var req AskUserResponsePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid ask_user_response payload")
+		return
+	}
+
+	// 获取 AskUserQuestionTool 实例
+	tool, found := h.tools.Get("AskUserQuestion")
+	if !found {
+		h.sendError(conn, "AskUserQuestion tool not found")
+		return
+	}
+
+	askTool, ok := tool.(*tools.AskUserQuestionTool)
+	if !ok {
+		h.sendError(conn, "invalid AskUserQuestion tool type")
+		return
+	}
+
+	// 转发响应到工具
+	resp := &tools.UserResponse{
+		RequestID: req.RequestID,
+		Answers:   req.Answers,
+		Cancelled: req.Cancelled,
+	}
+
+	if askTool.HandleResponse(resp) {
+		log.Printf("[WS] AskUser response handled: %s", req.RequestID)
+	} else {
+		log.Printf("[WS] AskUser response not found: %s", req.RequestID)
+	}
+}
+
+// ========== MCP 相关处理 ==========
+
+// MCPConnectPayload MCP 连接载荷
+type MCPConnectPayload struct {
+	Name    string   `json:"name"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+	Env     []string `json:"env"`
+	Cwd     string   `json:"cwd"`
+}
+
+// handleMCPConnect 处理 MCP 连接请求
+func (h *WSHandler) handleMCPConnect(conn *websocket.Conn, payload json.RawMessage) {
+	var req MCPConnectPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid mcp_connect payload")
+		return
+	}
+
+	go func() {
+		cfg := &mcp.TransportConfig{
+			Command: req.Command,
+			Args:    req.Args,
+			Env:     req.Env,
+			Cwd:     req.Cwd,
+		}
+
+		mcpConn, err := h.mcp.Connect(context.Background(), req.Name, cfg)
+		if err != nil {
+			h.sendError(conn, "mcp connect failed: "+err.Error())
+			return
+		}
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "mcp_connected",
+			"payload": map[string]interface{}{
+				"id":     mcpConn.ID,
+				"name":   mcpConn.Name,
+				"server": mcpConn.Server,
+				"tools":  mcpConn.Tools,
+			},
+		})
+	}()
+}
+
+// MCPDisconnectPayload MCP 断开载荷
+type MCPDisconnectPayload struct {
+	ID string `json:"id"`
+}
+
+// handleMCPDisconnect 处理 MCP 断开请求
+func (h *WSHandler) handleMCPDisconnect(conn *websocket.Conn, payload json.RawMessage) {
+	var req MCPDisconnectPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid mcp_disconnect payload")
+		return
+	}
+
+	if err := h.mcp.Disconnect(req.ID); err != nil {
+		h.sendError(conn, err.Error())
+		return
+	}
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "mcp_disconnected",
+		"payload": map[string]interface{}{
+			"id": req.ID,
+		},
+	})
+}
+
+// handleMCPList 处理 MCP 列表请求
+func (h *WSHandler) handleMCPList(conn *websocket.Conn) {
+	connections := h.mcp.List()
+
+	list := make([]map[string]interface{}, 0, len(connections))
+	for _, c := range connections {
+		list = append(list, map[string]interface{}{
+			"id":     c.ID,
+			"name":   c.Name,
+			"server": c.Server,
+			"tools":  c.Tools,
+		})
+	}
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "mcp_list",
+		"payload": map[string]interface{}{
+			"connections": list,
+		},
+	})
+}
+
+// MCPCallPayload MCP 工具调用载荷
+type MCPCallPayload struct {
+	ConnID   string          `json:"conn_id"`
+	ToolName string          `json:"tool_name"`
+	Args     json.RawMessage `json:"args"`
+}
+
+// handleMCPCall 处理 MCP 工具调用请求
+func (h *WSHandler) handleMCPCall(conn *websocket.Conn, payload json.RawMessage) {
+	var req MCPCallPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid mcp_call payload")
+		return
+	}
+
+	go func() {
+		result, err := h.mcp.CallTool(context.Background(), req.ConnID, req.ToolName, req.Args)
+		if err != nil {
+			h.sendError(conn, "mcp call failed: "+err.Error())
+			return
+		}
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "mcp_result",
+			"payload": map[string]interface{}{
+				"conn_id":   req.ConnID,
+				"tool_name": req.ToolName,
+				"result":    result,
+			},
+		})
+	}()
 }
