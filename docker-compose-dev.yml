@@ -49,6 +49,8 @@ services:
       - .:/app
       # 排除构建产物
       - /app/tmp
+      # 用户数据目录
+      - ./userdata:/app/userdata
     environment:
       - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api
       - REDIS_CONN_STRING=redis://redis
@@ -60,7 +62,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
       - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
-      - WORKSPACE_BASE_PATH=/data/users
+      - WORKSPACE_BASE_PATH=/app/userdata
     depends_on:
       - redis
       - postgres

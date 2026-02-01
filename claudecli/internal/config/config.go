@@ -55,7 +55,7 @@ func Load() *Config {
 				MaxTokens: 16000,
 			},
 			Security: SecurityConfig{
-				WorkingDir:  getEnv("WORKING_DIR", "."),
+				WorkingDir:  getEnv("WORKSPACE_BASE_PATH", getEnv("WORKING_DIR", "./userdata")),
 				AllowedDirs: []string{"."},
 				BlockedCommands: []string{
 					"rm -rf /", "mkfs", "dd if=",

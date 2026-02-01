@@ -30,3 +30,4 @@ data/
 .gopath
 vendor/
 tmp/
+userdata/
