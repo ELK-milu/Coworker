@@ -360,3 +360,36 @@ func (m *Manager) validatePath(basePath, targetPath string) error {
 
 	return nil
 }
+
+// LoadConfig 加载用户配置文件 (COWORKER.md)
+func (m *Manager) LoadConfig(userID string) (string, error) {
+	configPath := filepath.Join(m.GetUserClaudeDir(userID), "COWORKER.md")
+
+	// 确保用户目录存在
+	if err := m.EnsureUserWorkspace(userID); err != nil {
+		return "", err
+	}
+
+	// 检查文件是否存在
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return "", nil // 文件不存在返回空字符串
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	return string(content), nil
+}
+
+// SaveConfig 保存用户配置文件 (COWORKER.md)
+func (m *Manager) SaveConfig(userID string, content string) error {
+	// 确保用户目录存在
+	if err := m.EnsureUserWorkspace(userID); err != nil {
+		return err
+	}
+
+	configPath := filepath.Join(m.GetUserClaudeDir(userID), "COWORKER.md")
+	return os.WriteFile(configPath, []byte(content), 0644)
+}

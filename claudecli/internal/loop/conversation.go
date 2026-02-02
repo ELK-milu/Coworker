@@ -145,8 +145,15 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 
 		// 如果没有工具调用，结束循环
 		if stopReason != "tool_use" || len(toolCalls) == 0 {
+			log.Printf("[Loop] Conversation ended: stopReason=%s, toolCalls=%d", stopReason, len(toolCalls))
 			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
 			return nil
+		}
+
+		// 记录 Claude 请求的工具调用
+		log.Printf("[Loop] Claude requested %d tool calls:", len(toolCalls))
+		for i, tc := range toolCalls {
+			log.Printf("[Loop]   [%d] %s (id=%s)", i+1, tc.Name, tc.ID)
 		}
 
 		// 执行工具调用

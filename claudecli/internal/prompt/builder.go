@@ -105,7 +105,10 @@ func (b *SystemPromptBuilder) Build(ctx *PromptContext, opts BuildOptions) strin
 	// 8. 代码引用
 	parts = append(parts, CodeReferences)
 
-	// 9. 权限模式
+	// 9. 任务边界约束（防止自主扩展任务）
+	parts = append(parts, TaskBoundary)
+
+	// 10. 权限模式
 	parts = append(parts, b.getPermissionMode(ctx.PermissionMode))
 
 	// 10. 环境信息

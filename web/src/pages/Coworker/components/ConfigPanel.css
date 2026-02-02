@@ -1,0 +1,39 @@
+.config-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+  gap: 12px;
+}
+
+.config-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.config-editor {
+  flex: 1;
+  overflow: hidden;
+}
+
+.config-editor .semi-input-textarea-wrapper {
+  height: 100%;
+}
+
+.config-editor textarea {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.config-footer {
+  padding-top: 8px;
+  border-top: 1px solid var(--semi-color-border);
+}

@@ -12,9 +12,11 @@ import {
   IconHistory,
   IconFolder,
   IconList,
+  IconSetting,
 } from '@douyinfe/semi-icons';
 import FileExplorer from './FileExplorer';
 import TaskList from './TaskList';
+import ConfigPanel from './ConfigPanel';
 import './SessionSidebar.css';
 
 const { Text } = Typography;
@@ -58,6 +60,11 @@ const SessionSidebar = ({
   onCreateTask,
   onUpdateTask,
   onRefreshTasks,
+  // 配置相关
+  configContent = '',
+  configLoading = false,
+  onConfigChange,
+  onConfigLoadingChange,
   // 新增：用于文件操作
   wsRef,
   userId,
@@ -201,6 +208,13 @@ const SessionSidebar = ({
               <IconFolder size="small" />
               <span>文件</span>
             </button>
+            <button
+              className={`tab-btn ${activeTab === 'config' ? 'active' : ''}`}
+              onClick={() => setActiveTab('config')}
+            >
+              <IconSetting size="small" />
+              <span>配置</span>
+            </button>
           </div>
         )}
         <Button
@@ -223,6 +237,15 @@ const SessionSidebar = ({
             onCreateTask={onCreateTask}
             onUpdateTask={onUpdateTask}
             onRefresh={onRefreshTasks}
+          />
+        ) : activeTab === 'config' ? (
+          <ConfigPanel
+            wsRef={wsRef}
+            userId={userId}
+            content={configContent}
+            loading={configLoading}
+            onContentChange={onConfigChange}
+            onLoadingChange={onConfigLoadingChange}
           />
         ) : (
           <FileExplorer
