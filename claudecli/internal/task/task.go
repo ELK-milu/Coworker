@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +19,20 @@ const (
 	StatusCompleted  Status = "completed"
 	StatusDeleted    Status = "deleted"
 )
+
+// 约束常量 - 参考 learn-claude-code v2 设计哲学
+const (
+	MaxTasks = 20 // 最多 20 条任务，防止无限任务列表
+)
+
+// ErrMaxTasksReached 达到最大任务数
+var ErrMaxTasksReached = fmt.Errorf("max %d tasks allowed", MaxTasks)
+
+// ErrOnlyOneInProgress 只能有一个进行中的任务
+var ErrOnlyOneInProgress = fmt.Errorf("only one task can be in_progress at a time")
+
+// ErrActiveFormRequired activeForm 必填
+var ErrActiveFormRequired = fmt.Errorf("activeForm is required for task creation")
 
 // Task 任务
 type Task struct {
@@ -97,6 +112,25 @@ func (m *Manager) saveHighWaterMark(userID, listID string, hwm int) error {
 func (m *Manager) Create(userID, listID string, subject, description, activeForm string) (*Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// 约束检查 1: activeForm 必填
+	if activeForm == "" {
+		return nil, ErrActiveFormRequired
+	}
+
+	// 加载现有任务以检查约束
+	existingTasks := m.listTasksLocked(userID, listID)
+
+	// 约束检查 2: 最多 20 条任务
+	activeCount := 0
+	for _, t := range existingTasks {
+		if t.Status != StatusCompleted && t.Status != StatusDeleted {
+			activeCount++
+		}
+	}
+	if activeCount >= MaxTasks {
+		return nil, ErrMaxTasksReached
+	}
 
 	// 获取下一个 ID
 	hwm := m.loadHighWaterMark(userID, listID)
@@ -215,7 +249,17 @@ func (m *Manager) Update(userID, listID, taskID string, updates map[string]inter
 		task.ActiveForm = activeForm
 	}
 	if status, ok := updates["status"].(string); ok {
-		task.Status = Status(status)
+		newStatus := Status(status)
+		// 约束检查: 只能有一个 in_progress 任务
+		if newStatus == StatusInProgress && task.Status != StatusInProgress {
+			// 检查是否已有其他 in_progress 任务
+			for _, t := range m.tasks[key] {
+				if t.ID != taskID && t.Status == StatusInProgress {
+					return nil, ErrOnlyOneInProgress
+				}
+			}
+		}
+		task.Status = newStatus
 	}
 	if owner, ok := updates["owner"].(string); ok {
 		task.Owner = owner
@@ -274,6 +318,11 @@ func (m *Manager) List(userID, listID string) []*Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	return m.listTasksLocked(userID, listID)
+}
+
+// listTasksLocked 内部方法，列出所有任务（调用者需持有锁）
+func (m *Manager) listTasksLocked(userID, listID string) []*Task {
 	key := userID + ":" + listID
 
 	// 从文件加载所有任务
@@ -351,6 +400,43 @@ func (m *Manager) ClearCompleted(userID, listID string) int {
 	}
 
 	return count
+}
+
+// Render 渲染任务列表为人类可读的文本格式
+// 格式参考 learn-claude-code v2 设计:
+//   [x] 已完成任务
+//   [>] 进行中任务 <- 正在做什么...
+//   [ ] 待办任务
+//   (2/3 completed)
+func (m *Manager) Render(userID, listID string) string {
+	tasks := m.List(userID, listID)
+	if len(tasks) == 0 {
+		return "No todos."
+	}
+
+	var lines []string
+	completed := 0
+
+	for _, t := range tasks {
+		var line string
+		switch t.Status {
+		case StatusCompleted:
+			line = fmt.Sprintf("[x] %s", t.Subject)
+			completed++
+		case StatusInProgress:
+			if t.ActiveForm != "" {
+				line = fmt.Sprintf("[>] %s <- %s", t.Subject, t.ActiveForm)
+			} else {
+				line = fmt.Sprintf("[>] %s", t.Subject)
+			}
+		default:
+			line = fmt.Sprintf("[ ] %s", t.Subject)
+		}
+		lines = append(lines, line)
+	}
+
+	lines = append(lines, fmt.Sprintf("\n(%d/%d completed)", completed, len(tasks)))
+	return strings.Join(lines, "\n")
 }
 
 // contains 检查切片是否包含元素

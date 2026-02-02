@@ -89,12 +89,13 @@ type Stats struct {
 
 // Manager 上下文管理器
 type Manager struct {
-	config           Config
-	turns            []ConversationTurn
-	systemPrompt     string
-	compressionCount int
-	savedTokens      int
-	mu               sync.RWMutex
+	config             Config
+	turns              []ConversationTurn
+	systemPrompt       string
+	compressionCount   int
+	savedTokens        int
+	boundaryMessages   []types.Message // 压缩边界消息（append-only）
+	mu                 sync.RWMutex
 }
 
 // NewManager 创建上下文管理器
@@ -158,33 +159,17 @@ func (m *Manager) AddTurn(user, assistant types.Message, usage *TokenUsage) {
 }
 
 // GetMessages 获取当前上下文的消息
+// 使用 append-only 策略：不修改历史消息，只追加边界消息
 func (m *Manager) GetMessages() []types.Message {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	messages := make([]types.Message, 0)
 
-	// 添加摘要消息（如果有）
-	var summarizedTurns []ConversationTurn
-	for _, t := range m.turns {
-		if t.Summarized {
-			summarizedTurns = append(summarizedTurns, t)
-		}
-	}
+	// 1. 添加压缩边界消息（如果有）
+	messages = append(messages, m.boundaryMessages...)
 
-	if len(summarizedTurns) > 0 {
-		summary := CreateSummary(summarizedTurns)
-		messages = append(messages, types.Message{
-			Role:    "user",
-			Content: []interface{}{types.TextBlock{Type: "text", Text: summary}},
-		})
-		messages = append(messages, types.Message{
-			Role:    "assistant",
-			Content: []interface{}{types.TextBlock{Type: "text", Text: "I understand. I'll keep this context in mind."}},
-		})
-	}
-
-	// 添加非摘要的消息
+	// 2. 添加非摘要的消息
 	for _, turn := range m.turns {
 		if !turn.Summarized {
 			messages = append(messages, turn.User)
@@ -285,6 +270,7 @@ func (m *Manager) getUsedTokensUnsafe() int {
 }
 
 // Compact 强制压缩
+// 使用 append-only 策略：不修改历史消息，追加压缩边界消息
 func (m *Manager) Compact() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -294,7 +280,7 @@ func (m *Manager) Compact() {
 	compactedMessages := Microcompact(messages)
 	m.updateMessagesFromCompacted(compactedMessages)
 
-	// 2. 然后执行摘要压缩
+	// 2. 执行摘要压缩
 	recentCount := m.config.KeepRecentMessages
 	if len(m.turns) <= recentCount {
 		return
@@ -305,21 +291,37 @@ func (m *Manager) Compact() {
 		return
 	}
 
+	// 检查是否已经有摘要
+	alreadySummarized := true
+	for _, t := range toSummarize {
+		if !t.Summarized {
+			alreadySummarized = false
+			break
+		}
+	}
+	if alreadySummarized {
+		return
+	}
+
 	beforeTokens := 0
 	for _, t := range toSummarize {
 		beforeTokens += t.TokenEstimate
 	}
 
+	// 生成摘要
 	summary := CreateSummary(toSummarize)
 
+	// 标记为已摘要
 	for i := range toSummarize {
-		if !m.turns[i].Summarized {
-			m.turns[i].Summarized = true
-			m.turns[i].Summary = summary
-		}
+		m.turns[i].Summarized = true
+		m.turns[i].Summary = summary
 	}
 
-	afterTokens := EstimateTokens(summary)
+	// 3. 追加压缩边界消息（append-only 策略）
+	userBoundary, assistantBoundary := CreateCompressionBoundary(summary)
+	m.boundaryMessages = []types.Message{userBoundary, assistantBoundary}
+
+	afterTokens := EstimateTokens(summary) + EstimateMessageTokens(userBoundary) + EstimateMessageTokens(assistantBoundary)
 	m.savedTokens += beforeTokens - afterTokens
 	m.compressionCount++
 }
@@ -407,6 +409,7 @@ func (m *Manager) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.turns = make([]ConversationTurn, 0)
+	m.boundaryMessages = nil
 	m.compressionCount = 0
 	m.savedTokens = 0
 }

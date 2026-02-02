@@ -14,6 +14,9 @@ const (
 	KeepRecentToolResults = 3
 	// MicrocompactPlaceholder 工具结果被清理后的占位符
 	MicrocompactPlaceholder = "[Tool output cleared to save context]"
+	// CompressionBoundaryMarker 压缩边界标记
+	// 参考 learn-claude-code 设计：标记压缩边界，让 AI 知道之前的内容已被压缩
+	CompressionBoundaryMarker = "<context-compression-boundary>"
 )
 
 // MicrocompactWhitelist 不清理的工具白名单
@@ -256,4 +259,33 @@ func cleanToolResults(msg types.Message, cleanSet map[string]bool) types.Message
 		Role:    msg.Role,
 		Content: newContent,
 	}
+}
+
+// CreateCompressionBoundary 创建压缩边界消息
+// 参考 learn-claude-code 设计：在压缩后追加边界标记，而不是修改历史消息
+func CreateCompressionBoundary(summary string) (types.Message, types.Message) {
+	boundaryText := fmt.Sprintf(`%s
+
+The conversation above has been summarized to save context space.
+
+Summary of previous conversation:
+%s
+
+Continue from here with full context awareness.`, CompressionBoundaryMarker, summary)
+
+	userMsg := types.Message{
+		Role: "user",
+		Content: []interface{}{
+			types.TextBlock{Type: "text", Text: boundaryText},
+		},
+	}
+
+	assistantMsg := types.Message{
+		Role: "assistant",
+		Content: []interface{}{
+			types.TextBlock{Type: "text", Text: "I understand. I have the context from the summary and will continue accordingly."},
+		},
+	}
+
+	return userMsg, assistantMsg
 }
