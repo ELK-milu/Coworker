@@ -5,8 +5,15 @@ import { IconChevronDown, IconChevronRight, IconTick, IconClose, IconTerminal } 
 const { Text } = Typography;
 
 // 工具调用卡片组件
-const ToolCallCard = ({ toolName, toolId, input, result, status, isError }) => {
+const ToolCallCard = ({ toolName, toolId, input, result, status, isError, elapsedMs, timeoutMs, timedOut }) => {
   const [expanded, setExpanded] = useState(false);
+
+  // 格式化执行时间
+  const formatElapsed = (ms) => {
+    if (!ms) return '';
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
+  };
 
   // 获取简短的工具调用描述
   const getToolSummary = () => {
@@ -40,10 +47,20 @@ const ToolCallCard = ({ toolName, toolId, input, result, status, isError }) => {
       return <Spin size="small" />;
     }
     if (status === 'completed') {
-      return isError ? (
-        <Tag color="red" size="small"><IconClose size="small" /> 失败</Tag>
-      ) : (
-        <Tag color="green" size="small"><IconTick size="small" /> 完成</Tag>
+      return (
+        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {elapsedMs > 0 && (
+            <Text type="tertiary" size="small">{formatElapsed(elapsedMs)}</Text>
+          )}
+          {timedOut && (
+            <Tag color="orange" size="small">超时</Tag>
+          )}
+          {isError ? (
+            <Tag color="red" size="small"><IconClose size="small" /> 失败</Tag>
+          ) : (
+            <Tag color="green" size="small"><IconTick size="small" /> 完成</Tag>
+          )}
+        </span>
       );
     }
     return null;

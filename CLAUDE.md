@@ -554,6 +554,46 @@ Pay-per-use billing with configurable model pricing:
 
 ---
 
+## Recent Changes (2026-02-02)
+
+### Tool Execution Enhancement
+
+增强了工具执行功能，添加执行时间显示和失败日志。
+
+**修改文件:**
+- `claudecli/pkg/types/tool.go` - 扩展 ToolResult 结构，添加 ElapsedMs、TimeoutMs、TimedOut、Metadata 字段
+- `claudecli/internal/tools/bash.go` - Bash 工具返回执行时间信息
+- `claudecli/internal/loop/conversation.go` - 扩展 LoopEvent，添加工具失败日志
+- `claudecli/internal/api/websocket.go` - tool_end 消息添加执行时间字段
+- `web/src/pages/Coworker/components/ToolCallCard.jsx` - 显示执行时间和超时标签
+- `web/src/pages/Coworker/index.jsx` - 处理新的 WebSocket 字段
+
+**功能:**
+- Bash 工具返回执行时间 (elapsed_ms)、超时设置 (timeout_ms)、是否超时 (timed_out)
+- 前端工具卡片显示执行耗时
+- 超时命令显示橙色"超时"标签
+- 后端日志记录工具执行失败详情
+
+### Structured Output Tool
+
+新增结构化输出验证工具，支持 JSON Schema 验证。
+
+**新增文件:**
+- `claudecli/internal/tools/structured_output.go` - JSON Schema 验证工具
+
+**修改文件:**
+- `claudecli/internal/tools/registry.go` - 添加 SetStructuredOutputSchema、ClearStructuredOutputSchema 方法
+- `claudecli/internal/api/websocket.go` - 添加 set_output_schema、clear_output_schema 消息处理
+- `claudecli/init.go` - 注册 StructuredOutputTool
+- `go.mod` - 添加 github.com/santhosh-tekuri/jsonschema/v5 依赖
+
+**功能:**
+- 动态设置 JSON Schema
+- 验证 AI 输出是否符合指定格式
+- WebSocket 消息支持设置/清除 schema
+
+---
+
 ## Recent Changes (2026-02-01)
 
 ### Task Management Feature (Claude Code Style)
@@ -699,4 +739,164 @@ func (h *WSHandler) sendJSON(conn *websocket.Conn, data interface{}) {
 
 ---
 
-*Last updated: 2026-02-01*
+## Project Statistics (2026-02-01 Scan)
+
+### File Count Summary
+
+| Category | Count | Location |
+|----------|-------|----------|
+| Go Files | 488 | Backend |
+| JS/JSX/TS/TSX Files | 421 | Frontend |
+| Frontend Pages | 62 | `web/src/pages/` |
+| Relay Channels | 148 | `relay/channel/` |
+| Service Files | 41 | `service/` |
+| Model Files | 29 | `model/` |
+| Controller Files | 30+ | `controller/` |
+| Middleware Files | 18 | `middleware/` |
+| Router Files | 7 | `router/` |
+| ClaudeCLI Files | 30+ | `claudecli/` |
+
+### Module Structure
+
+```
+E:\PythonWorks\Coworker\
+├── main.go                 # Application entry point
+├── router/                 # Route definitions (7 files)
+│   ├── main.go            # Main router setup
+│   ├── api-router.go      # Core API routes
+│   ├── claudecli-router.go # ClaudeCLI WebSocket routes
+│   ├── relay-router.go    # LLM API relay routes
+│   ├── video-router.go    # Video API routes
+│   ├── dashboard.go       # Dashboard routes
+│   └── web-router.go      # Static file serving
+├── controller/            # HTTP handlers (30+ files)
+├── service/               # Business logic (41 files)
+├── model/                 # Database models (29 files)
+├── middleware/            # Request middleware (18 files)
+├── common/                # Shared utilities (20+ files)
+├── dto/                   # Data transfer objects (20+ files)
+├── relay/                 # LLM API relay system
+│   └── channel/           # Provider adapters (148 files)
+│       ├── ali/           # Alibaba Cloud
+│       ├── aws/           # AWS Bedrock
+│       ├── baidu/         # Baidu Wenxin
+│       ├── claude/        # Anthropic Claude
+│       ├── cloudflare/    # Cloudflare Workers AI
+│       ├── codex/         # GitHub Copilot
+│       └── ...            # 20+ providers
+├── claudecli/             # Claude Code CLI module (30+ files)
+│   ├── init.go            # Module initialization
+│   └── internal/
+│       ├── api/           # REST & WebSocket handlers
+│       ├── client/        # Anthropic API client
+│       ├── context/       # Context compression
+│       ├── session/       # Session management
+│       ├── task/          # Task management
+│       ├── workspace/     # User workspace
+│       ├── tools/         # CLI tools (bash, read, write, etc.)
+│       ├── loop/          # Conversation loop
+│       └── prompt/        # System prompt builder
+└── web/                   # React frontend
+    └── src/
+        ├── pages/         # 35 page directories
+        │   ├── Coworker/  # Claude Code CLI UI
+        │   ├── Channel/   # Channel management
+        │   ├── Token/     # Token management
+        │   ├── Dashboard/ # Analytics dashboard
+        │   ├── Playground/# API playground
+        │   └── ...
+        ├── components/    # Reusable components
+        ├── hooks/         # Custom React hooks
+        ├── helpers/       # Utility functions
+        └── context/       # React Context providers
+```
+
+### Supported LLM Providers (relay/channel/)
+
+| Provider | Directory | Features |
+|----------|-----------|----------|
+| OpenAI | `openai/` | Chat, Embeddings, Images, Audio |
+| Anthropic Claude | `claude/` | Chat, Vision |
+| Google Gemini | `gemini/` | Chat, Vision |
+| AWS Bedrock | `aws/` | Claude, Titan |
+| Azure OpenAI | `azure/` | All OpenAI models |
+| Alibaba Qwen | `ali/` | Chat, Images |
+| Baidu Wenxin | `baidu/`, `baidu_v2/` | Chat |
+| Tencent Hunyuan | `tencent/` | Chat |
+| Zhipu GLM | `zhipu/` | Chat |
+| Moonshot | `moonshot/` | Chat |
+| DeepSeek | `deepseek/` | Chat |
+| Mistral | `mistral/` | Chat |
+| Cohere | `cohere/` | Chat, Rerank |
+| Cloudflare | `cloudflare/` | Workers AI |
+| Ollama | `ollama/` | Local models |
+| GitHub Copilot | `codex/` | Code completion |
+| Midjourney | `midjourney/` | Image generation |
+| Suno | `suno/` | Music generation |
+
+### Frontend Pages (web/src/pages/)
+
+| Page | Route | Access |
+|------|-------|--------|
+| Home | `/` | Public |
+| Dashboard | `/console` | Private |
+| Coworker | `/console/coworker` | Private |
+| Channel | `/console/channel` | Admin |
+| Token | `/console/token` | Private |
+| User | `/console/user` | Admin |
+| Log | `/console/log` | Private |
+| Pricing | `/pricing` | Configurable |
+| Playground | `/console/playground` | Private |
+| Midjourney | `/console/midjourney` | Private |
+| Task | `/console/task` | Private |
+| Setting | `/console/setting` | Admin |
+| Model | `/console/models` | Admin |
+| Deployment | `/console/deployment` | Admin |
+
+---
+
+## Coverage Report
+
+### Well-Documented Modules
+
+| Module | Coverage | Notes |
+|--------|----------|-------|
+| ClaudeCLI | 95% | Fully documented with WebSocket protocol |
+| Coworker Frontend | 90% | Components and features documented |
+| Router | 85% | All routes documented |
+| Architecture | 80% | Request flow and layers documented |
+
+### Areas Needing Documentation
+
+| Area | Priority | Recommendation |
+|------|----------|----------------|
+| Relay Channel Adapters | Medium | Add per-provider configuration docs |
+| Billing/Quota System | Medium | Document pricing calculation logic |
+| Model Deployment | Low | Document io.net integration |
+| OAuth Providers | Low | Document each OAuth flow |
+
+---
+
+## Recommended Next Steps
+
+### Immediate (High Priority)
+
+1. **Test Coverage**: Add unit tests for `claudecli/internal/` modules
+2. **Error Handling**: Improve error messages in WebSocket handlers
+3. **Logging**: Add structured logging for debugging
+
+### Short-term (Medium Priority)
+
+1. **Documentation**: Add API documentation for relay endpoints
+2. **Performance**: Profile and optimize context compression
+3. **Security**: Audit workspace isolation implementation
+
+### Long-term (Low Priority)
+
+1. **Refactoring**: Extract common patterns in relay channel adapters
+2. **Monitoring**: Add Prometheus metrics for ClaudeCLI usage
+3. **Testing**: Add integration tests for WebSocket protocol
+
+---
+
+*Last updated: 2026-02-01 19:55:59*

@@ -197,6 +197,20 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "mcp_call":
 			log.Printf("[WS] Processing mcp_call message")
 			h.handleMCPCall(conn, wsMsg.Payload)
+		// Config 相关消息
+		case "load_config":
+			log.Printf("[WS] Processing load_config message")
+			h.handleLoadConfig(conn, wsMsg.Payload)
+		case "save_config":
+			log.Printf("[WS] Processing save_config message")
+			h.handleSaveConfig(conn, wsMsg.Payload)
+		// Structured Output 相关消息
+		case "set_output_schema":
+			log.Printf("[WS] Processing set_output_schema message")
+			h.handleSetOutputSchema(conn, wsMsg.Payload)
+		case "clear_output_schema":
+			log.Printf("[WS] Processing clear_output_schema message")
+			h.handleClearOutputSchema(conn)
 		}
 	}
 }
@@ -549,6 +563,9 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 			payload["tool_id"] = event.ToolID
 			payload["result"] = event.ToolResult
 			payload["is_error"] = event.IsError
+			payload["elapsed_ms"] = event.ElapsedMs
+			payload["timeout_ms"] = event.TimeoutMs
+			payload["timed_out"] = event.TimedOut
 		case loop.EventTypeError:
 			payload["error"] = event.Error
 		case loop.EventTypeStatus:
@@ -1372,4 +1389,116 @@ func (h *WSHandler) handleMCPCall(conn *websocket.Conn, payload json.RawMessage)
 			},
 		})
 	}()
+}
+
+// ========== Config 相关处理 ==========
+
+// ConfigPayload 配置载荷
+type ConfigPayload struct {
+	UserID  string `json:"user_id"`
+	Content string `json:"content"`
+}
+
+// handleLoadConfig 处理加载配置请求
+func (h *WSHandler) handleLoadConfig(conn *websocket.Conn, payload json.RawMessage) {
+	var req ConfigPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid load_config payload")
+		return
+	}
+
+	go func() {
+		content, err := h.workspace.LoadConfig(req.UserID)
+		if err != nil {
+			h.sendJSON(conn, map[string]interface{}{
+				"type": "config_loaded",
+				"payload": map[string]interface{}{
+					"success": true,
+					"content": "",
+				},
+			})
+			return
+		}
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "config_loaded",
+			"payload": map[string]interface{}{
+				"success": true,
+				"content": content,
+			},
+		})
+	}()
+}
+
+// handleSaveConfig 处理保存配置请求
+func (h *WSHandler) handleSaveConfig(conn *websocket.Conn, payload json.RawMessage) {
+	var req ConfigPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid save_config payload")
+		return
+	}
+
+	go func() {
+		err := h.workspace.SaveConfig(req.UserID, req.Content)
+		if err != nil {
+			h.sendError(conn, "save config failed: "+err.Error())
+			return
+		}
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "config_saved",
+			"payload": map[string]interface{}{
+				"success": true,
+			},
+		})
+	}()
+}
+
+// ========== Structured Output 相关处理 ==========
+
+// SetOutputSchemaPayload 设置输出 schema 载荷
+type SetOutputSchemaPayload struct {
+	Schema map[string]interface{} `json:"schema"`
+}
+
+// handleSetOutputSchema 处理设置输出 schema 请求
+func (h *WSHandler) handleSetOutputSchema(conn *websocket.Conn, payload json.RawMessage) {
+	var req SetOutputSchemaPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid set_output_schema payload")
+		return
+	}
+
+	if req.Schema == nil {
+		h.sendError(conn, "schema is required")
+		return
+	}
+
+	if err := h.tools.SetStructuredOutputSchema(req.Schema); err != nil {
+		h.sendError(conn, "failed to set schema: "+err.Error())
+		return
+	}
+
+	log.Printf("[WS] Output schema set successfully")
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "output_schema_set",
+		"payload": map[string]interface{}{
+			"success": true,
+		},
+	})
+}
+
+// handleClearOutputSchema 处理清除输出 schema 请求
+func (h *WSHandler) handleClearOutputSchema(conn *websocket.Conn) {
+	h.tools.ClearStructuredOutputSchema()
+
+	log.Printf("[WS] Output schema cleared")
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "output_schema_cleared",
+		"payload": map[string]interface{}{
+			"success": true,
+		},
+	})
 }

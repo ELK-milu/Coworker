@@ -68,23 +68,43 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	if in.Timeout > 0 {
 		timeout = time.Duration(in.Timeout) * time.Millisecond
 	}
+	timeoutMs := timeout.Milliseconds()
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/C", in.Command)
+		cmd = exec.CommandContext(execCtx, "cmd", "/C", in.Command)
 	} else {
-		cmd = exec.CommandContext(ctx, "bash", "-c", in.Command)
+		cmd = exec.CommandContext(execCtx, "bash", "-c", in.Command)
 	}
 	// 从 context 获取工作目录，如果没有则使用默认值
 	cmd.Dir = types.GetWorkingDir(ctx, t.workingDir)
 
+	startTime := time.Now()
 	output, err := cmd.CombinedOutput()
+	elapsedMs := time.Since(startTime).Milliseconds()
+
+	// 检查是否超时
+	timedOut := execCtx.Err() == context.DeadlineExceeded
+
 	if err != nil {
-		return &types.ToolResult{Success: false, Output: string(output), Error: err.Error()}, nil
+		return &types.ToolResult{
+			Success:   false,
+			Output:    string(output),
+			Error:     err.Error(),
+			ElapsedMs: elapsedMs,
+			TimeoutMs: timeoutMs,
+			TimedOut:  timedOut,
+		}, nil
 	}
 
-	return &types.ToolResult{Success: true, Output: string(output)}, nil
+	return &types.ToolResult{
+		Success:   true,
+		Output:    string(output),
+		ElapsedMs: elapsedMs,
+		TimeoutMs: timeoutMs,
+		TimedOut:  false,
+	}, nil
 }

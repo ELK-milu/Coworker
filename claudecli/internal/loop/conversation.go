@@ -33,6 +33,10 @@ type LoopEvent struct {
 	IsError    bool   `json:"is_error,omitempty"`
 	Error      string `json:"error,omitempty"`
 	Done       bool   `json:"done,omitempty"`
+	// 工具执行时间信息
+	ElapsedMs int64 `json:"elapsed_ms,omitempty"`
+	TimeoutMs int64 `json:"timeout_ms,omitempty"`
+	TimedOut  bool  `json:"timed_out,omitempty"`
 	// 状态信息
 	Status *StatusInfo `json:"status,omitempty"`
 }
@@ -261,8 +265,11 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 		result, err := l.tools.Execute(toolCtx, tc.Name, json.RawMessage(tc.Input))
 
 		var toolResult types.ToolResultBlock
+		var elapsedMs, timeoutMs int64
+		var timedOut bool
+
 		if err != nil {
-			log.Printf("[Tool] Error: %v", err)
+			log.Printf("[Tool] %s failed: %v", tc.Name, err)
 			toolResult = types.ToolResultBlock{
 				Type:      "tool_result",
 				ToolUseID: tc.ID,
@@ -270,7 +277,18 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 				IsError:   true,
 			}
 		} else {
-			log.Printf("[Tool] Success: %v, Output length: %d", result.Success, len(result.Output))
+			elapsedMs = result.ElapsedMs
+			timeoutMs = result.TimeoutMs
+			timedOut = result.TimedOut
+
+			if !result.Success {
+				log.Printf("[Tool] %s failed: %s (elapsed: %dms, timedOut: %v)",
+					tc.Name, result.Error, elapsedMs, timedOut)
+			} else {
+				log.Printf("[Tool] %s success (elapsed: %dms, output length: %d)",
+					tc.Name, elapsedMs, len(result.Output))
+			}
+
 			toolResult = types.ToolResultBlock{
 				Type:      "tool_result",
 				ToolUseID: tc.ID,
@@ -286,6 +304,9 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 			ToolName:   tc.Name,
 			ToolResult: toolResult.Content,
 			IsError:    toolResult.IsError,
+			ElapsedMs:  elapsedMs,
+			TimeoutMs:  timeoutMs,
+			TimedOut:   timedOut,
 		}
 	}
 

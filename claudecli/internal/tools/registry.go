@@ -60,3 +60,40 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 	}
 	return tool.Execute(ctx, input)
 }
+
+// Unregister 注销工具
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+}
+
+// SetStructuredOutputSchema 设置结构化输出 schema
+func (r *Registry) SetStructuredOutputSchema(schema map[string]interface{}) error {
+	tool, ok := r.Get("StructuredOutput")
+	if !ok {
+		return fmt.Errorf("StructuredOutput tool not registered")
+	}
+
+	soTool, ok := tool.(*StructuredOutputTool)
+	if !ok {
+		return fmt.Errorf("invalid StructuredOutput tool type")
+	}
+
+	return soTool.SetSchema(schema)
+}
+
+// ClearStructuredOutputSchema 清除结构化输出 schema
+func (r *Registry) ClearStructuredOutputSchema() {
+	tool, ok := r.Get("StructuredOutput")
+	if !ok {
+		return
+	}
+
+	soTool, ok := tool.(*StructuredOutputTool)
+	if !ok {
+		return
+	}
+
+	soTool.ClearSchema()
+}

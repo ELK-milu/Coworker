@@ -3,7 +3,7 @@ Copyright (C) 2025 QuantumNous
 */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Button, Typography, Spin, TextArea } from '@douyinfe/semi-ui';
+import { Button, Typography, Spin, TextArea, Toast } from '@douyinfe/semi-ui';
 import { IconSend, IconStop } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
@@ -54,6 +54,9 @@ const Coworker = () => {
   // 任务管理相关状态
   const [tasks, setTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(false);
+  // 配置相关状态
+  const [configContent, setConfigContent] = useState('');
+  const [configLoading, setConfigLoading] = useState(false);
   const [userId] = useState(() => {
     // 从 localStorage 获取或生成用户ID
     let uid = localStorage.getItem('coworker_user_id');
@@ -245,7 +248,15 @@ const Coworker = () => {
       case 'tool_end':
         setMessages(prev => prev.map(msg =>
           msg.toolId === payload.tool_id
-            ? { ...msg, status: 'completed', result: payload.result, isError: payload.is_error }
+            ? {
+                ...msg,
+                status: 'completed',
+                result: payload.result,
+                isError: payload.is_error,
+                elapsedMs: payload.elapsed_ms,
+                timeoutMs: payload.timeout_ms,
+                timedOut: payload.timed_out,
+              }
             : msg
         ));
         // 如果是 Task 相关工具，刷新任务列表
@@ -360,6 +371,23 @@ const Coworker = () => {
             setTasks(prev => prev.map(t => t.id === payload.task.id ? payload.task : t));
           }
           console.log('[Coworker] Task updated:', payload.task.id);
+        }
+        break;
+
+      // 配置相关消息
+      case 'config_loaded':
+        setConfigLoading(false);
+        setConfigContent(payload.content || '');
+        console.log('[Coworker] Config loaded');
+        break;
+
+      case 'config_saved':
+        setConfigLoading(false);
+        if (payload.success) {
+          Toast.success('配置已保存');
+          console.log('[Coworker] Config saved');
+        } else {
+          Toast.error('保存失败: ' + (payload.error || '未知错误'));
         }
         break;
     }
@@ -480,6 +508,9 @@ const Coworker = () => {
           result={msg.result}
           status={msg.status}
           isError={msg.isError}
+          elapsedMs={msg.elapsedMs}
+          timeoutMs={msg.timeoutMs}
+          timedOut={msg.timedOut}
         />
       );
     }
@@ -520,6 +551,10 @@ const Coworker = () => {
           onCreateTask={createTask}
           onUpdateTask={updateTask}
           onRefreshTasks={refreshTasks}
+          configContent={configContent}
+          configLoading={configLoading}
+          onConfigChange={setConfigContent}
+          onConfigLoadingChange={setConfigLoading}
           wsRef={wsRef}
           userId={userId}
         />

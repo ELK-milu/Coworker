@@ -136,8 +136,9 @@ func registerTools(registry *tools.Registry, cfg *config.Config) {
 	registry.Register(tools.NewGrepTool(workingDir))
 	registry.Register(tools.NewWebFetchTool())
 	registry.Register(tools.NewAskUserQuestionTool())
+	registry.Register(tools.NewStructuredOutputTool())
 
-	log.Printf("[ClaudeCLI] Registered %d tools", 8)
+	log.Printf("[ClaudeCLI] Registered %d tools", 9)
 }
 
 // GetInstance 获取模块实例

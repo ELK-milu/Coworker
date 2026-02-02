@@ -30,9 +30,13 @@ type ToolDefinition struct {
 
 // ToolResult 工具执行结果
 type ToolResult struct {
-	Success bool   `json:"success"`
-	Output  string `json:"output,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Success   bool                   `json:"success"`
+	Output    string                 `json:"output,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+	ElapsedMs int64                  `json:"elapsed_ms,omitempty"`
+	TimeoutMs int64                  `json:"timeout_ms,omitempty"`
+	TimedOut  bool                   `json:"timed_out,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Tool 工具接口
