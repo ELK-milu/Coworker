@@ -3,7 +3,7 @@ Copyright (C) 2025 QuantumNous
 任务列表组件 - Claude Code 风格
 */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { Typography, Spin, Button, Tooltip, Progress } from '@douyinfe/semi-ui';
 import {
   IconPlus,
@@ -12,6 +12,7 @@ import {
   IconClose,
   IconPlay,
   IconDelete,
+  IconHandle,
 } from '@douyinfe/semi-icons';
 import './TaskList.css';
 
@@ -30,11 +31,15 @@ const TaskList = ({
   onCreateTask,
   onUpdateTask,
   onRefresh,
+  onReorder,
 }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [newTaskSubject, setNewTaskSubject] = useState('');
   const [newTaskDescription, setNewTaskDescription] = useState('');
   const [expandedTask, setExpandedTask] = useState(null);
+  const [draggedId, setDraggedId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const dragNodeRef = useRef(null);
 
   // 计算任务统计
   const stats = {
@@ -69,19 +74,67 @@ const TaskList = ({
     onUpdateTask(task.id, { status: 'deleted' });
   };
 
+  // 拖拽处理
+  const handleDragStart = (e, taskId) => {
+    setDraggedId(taskId);
+    dragNodeRef.current = e.target;
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e, taskId) => {
+    e.preventDefault();
+    if (taskId !== draggedId) {
+      setDragOverId(taskId);
+    }
+  };
+
+  const handleDragEnd = () => {
+    if (draggedId && dragOverId && draggedId !== dragOverId && onReorder) {
+      // 计算新顺序
+      const taskIds = tasks.map(t => t.id);
+      const draggedIndex = taskIds.indexOf(draggedId);
+      const targetIndex = taskIds.indexOf(dragOverId);
+
+      // 移动元素
+      taskIds.splice(draggedIndex, 1);
+      taskIds.splice(targetIndex, 0, draggedId);
+
+      onReorder(taskIds);
+    }
+    setDraggedId(null);
+    setDragOverId(null);
+    dragNodeRef.current = null;
+  };
+
+  const handleDragLeave = () => {
+    setDragOverId(null);
+  };
+
   // 渲染任务项
   const renderTaskItem = (task) => {
     const config = statusConfig[task.status] || statusConfig.pending;
     const isExpanded = expandedTask === task.id;
     const StatusIcon = config.icon;
+    const isDragging = draggedId === task.id;
+    const isDragOver = dragOverId === task.id;
 
     return (
       <div
         key={task.id}
-        className={`task-item ${task.status}`}
+        className={`task-item ${task.status} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''}`}
         onClick={() => setExpandedTask(isExpanded ? null : task.id)}
+        draggable={!!onReorder}
+        onDragStart={(e) => handleDragStart(e, task.id)}
+        onDragOver={(e) => handleDragOver(e, task.id)}
+        onDragEnd={handleDragEnd}
+        onDragLeave={handleDragLeave}
       >
         <div className="task-item-header">
+          {onReorder && (
+            <span className="task-drag-handle">
+              <IconHandle size="small" />
+            </span>
+          )}
           <div className="task-status-indicator" style={{ backgroundColor: config.color }}>
             {StatusIcon && <StatusIcon size="small" />}
             {!StatusIcon && <span className="task-number">{task.id}</span>}
@@ -234,12 +287,12 @@ const TaskList = ({
           </div>
         ) : (
           <>
-            {/* 进行中的任务 */}
-            {tasks.filter(t => t.status === 'in_progress').map(renderTaskItem)}
-            {/* 待处理的任务 */}
-            {tasks.filter(t => t.status === 'pending').map(renderTaskItem)}
-            {/* 已完成的任务 */}
-            {tasks.filter(t => t.status === 'completed').map(renderTaskItem)}
+            {/* 进行中的任务 - 按 order 排序 */}
+            {tasks.filter(t => t.status === 'in_progress').sort((a, b) => a.order - b.order).map(renderTaskItem)}
+            {/* 待处理的任务 - 按 order 排序 */}
+            {tasks.filter(t => t.status === 'pending').sort((a, b) => a.order - b.order).map(renderTaskItem)}
+            {/* 已完成的任务 - 按 order 排序 */}
+            {tasks.filter(t => t.status === 'completed').sort((a, b) => a.order - b.order).map(renderTaskItem)}
           </>
         )}
       </div>

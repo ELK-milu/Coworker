@@ -60,6 +60,7 @@ const SessionSidebar = ({
   onCreateTask,
   onUpdateTask,
   onRefreshTasks,
+  onReorderTasks,
   // 配置相关
   configContent = '',
   configLoading = false,
@@ -237,6 +238,7 @@ const SessionSidebar = ({
             onCreateTask={onCreateTask}
             onUpdateTask={onUpdateTask}
             onRefresh={onRefreshTasks}
+            onReorder={onReorderTasks}
           />
         ) : activeTab === 'config' ? (
           <ConfigPanel

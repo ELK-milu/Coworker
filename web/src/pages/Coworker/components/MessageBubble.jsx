@@ -7,7 +7,7 @@ import InlineTaskCard from './InlineTaskCard';
 
 const { Text } = Typography;
 
-const MessageBubble = ({ role, content, timestamp, aborted, tasks }) => {
+const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask }) => {
   const [copied, setCopied] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const isUser = role === 'user';
@@ -97,7 +97,7 @@ const MessageBubble = ({ role, content, timestamp, aborted, tasks }) => {
           </div>
           {/* 任务卡片 */}
           {!isUser && tasks && tasks.length > 0 && (
-            <InlineTaskCard tasks={tasks} />
+            <InlineTaskCard tasks={tasks} editable={true} onUpdateTask={onUpdateTask} />
           )}
         </div>
         {/* 操作按钮 */}

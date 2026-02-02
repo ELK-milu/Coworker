@@ -159,6 +159,9 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "task_list":
 			log.Printf("[WS] Processing task_list message")
 			h.handleTaskList(conn, wsMsg.Payload)
+		case "task_reorder":
+			log.Printf("[WS] Processing task_reorder message")
+			h.handleTaskReorder(conn, wsMsg.Payload)
 		// Compact 相关消息
 		case "compact":
 			log.Printf("[WS] Processing compact message")
@@ -273,16 +276,16 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	eventCh := make(chan loop.LoopEvent, 100)
 
 	// 启动对话循环
-	go h.runConversation(ctx, sess, chat.Message, eventCh)
+	go h.runConversation(ctx, sess, chat.UserID, chat.Message, eventCh)
 
 	// 异步转发事件到 WebSocket（不阻塞消息读取循环）
 	go h.forwardEvents(conn, sess.ID, eventCh)
 }
 
 // runConversation 运行对话
-func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, msg string, eventCh chan loop.LoopEvent) {
+func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, eventCh chan loop.LoopEvent) {
 	defer close(eventCh)
-	l := loop.NewConversationLoop(h.client, sess, h.tools, h.system, eventCh)
+	l := loop.NewConversationLoop(h.client, sess, h.tools, h.system, userID, eventCh)
 	l.ProcessMessage(ctx, msg)
 
 	// 对话结束后保存会话
@@ -580,6 +583,10 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 				payload["elapsed_ms"] = event.Status.ElapsedMs
 				payload["mode"] = event.Status.Mode
 			}
+		case loop.EventTypeTaskChanged:
+			// 任务变更事件
+			payload["action"] = event.TaskAction
+			payload["task"] = event.TaskData
 		}
 
 		h.sendJSON(conn, map[string]interface{}{
@@ -1035,6 +1042,55 @@ func (h *WSHandler) handleTaskList(conn *websocket.Conn, payload json.RawMessage
 				"user_id": req.UserID,
 				"list_id": req.ListID,
 				"tasks":   tasks,
+			},
+		})
+	}()
+}
+
+// TaskReorderPayload 任务排序载荷
+type TaskReorderPayload struct {
+	UserID  string   `json:"user_id"`
+	ListID  string   `json:"list_id"`
+	TaskIDs []string `json:"task_ids"`
+}
+
+// handleTaskReorder 处理任务排序请求
+func (h *WSHandler) handleTaskReorder(conn *websocket.Conn, payload json.RawMessage) {
+	var req TaskReorderPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid task_reorder payload")
+		return
+	}
+
+	if req.UserID == "" || len(req.TaskIDs) == 0 {
+		h.sendError(conn, "user_id and task_ids are required")
+		return
+	}
+
+	if req.ListID == "" {
+		req.ListID = "default"
+	}
+
+	if h.tasks == nil {
+		h.sendError(conn, "task manager not initialized")
+		return
+	}
+
+	go func() {
+		if err := h.tasks.UpdateOrder(req.UserID, req.ListID, req.TaskIDs); err != nil {
+			h.sendError(conn, "failed to reorder tasks: "+err.Error())
+			return
+		}
+
+		log.Printf("[WS] Reordered tasks for user %s", req.UserID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "tasks_reordered",
+			"payload": map[string]interface{}{
+				"user_id":  req.UserID,
+				"list_id":  req.ListID,
+				"task_ids": req.TaskIDs,
+				"success":  true,
 			},
 		})
 	}()

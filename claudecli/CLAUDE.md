@@ -213,6 +213,14 @@ func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
 
 ## 已完成功能
 
+### 2026-02-02
+
+- [x] AI 任务工具集 (TaskCreate, TaskUpdate, TaskList, TaskGet)
+- [x] 任务变更实时同步到前端 (task_changed 事件)
+- [x] 任务拖拽排序功能
+- [x] InlineTaskCard 交互增强 (状态切换、展开详情)
+- [x] Task 模型添加 Order 字段支持排序
+
 ### 2026-02-01
 
 - [x] 系统提示词模块 (`prompt/`)

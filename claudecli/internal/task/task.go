@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,7 +37,8 @@ var ErrActiveFormRequired = fmt.Errorf("activeForm is required for task creation
 
 // Task 任务
 type Task struct {
-	ID          string                 `json:"id"`
+	ID          string                 `json:"id"`                    // 动态计算的显示序号，基于列表位置
+	InternalID  string                 `json:"internalId,omitempty"`  // 内部标识，用于文件存储
 	Subject     string                 `json:"subject"`
 	Description string                 `json:"description"`
 	ActiveForm  string                 `json:"activeForm,omitempty"`
@@ -45,24 +47,23 @@ type Task struct {
 	BlockedBy   []string               `json:"blockedBy"`
 	Owner       string                 `json:"owner,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Order       int                    `json:"order"`
 	CreatedAt   int64                  `json:"createdAt"`
 	UpdatedAt   int64                  `json:"updatedAt"`
 }
 
 // Manager 任务管理器
 type Manager struct {
-	baseDir       string
-	tasks         map[string]map[string]*Task // listId -> taskId -> Task
-	highWaterMark map[string]int              // listId -> highest ID
-	mu            sync.RWMutex
+	baseDir string
+	tasks   map[string]map[string]*Task // userID:listID -> internalID -> Task
+	mu      sync.RWMutex
 }
 
 // NewManager 创建任务管理器
 func NewManager(baseDir string) *Manager {
 	m := &Manager{
-		baseDir:       baseDir,
-		tasks:         make(map[string]map[string]*Task),
-		highWaterMark: make(map[string]int),
+		baseDir: baseDir,
+		tasks:   make(map[string]map[string]*Task),
 	}
 	return m
 }
@@ -70,42 +71,6 @@ func NewManager(baseDir string) *Manager {
 // getTaskDir 获取任务存储目录
 func (m *Manager) getTaskDir(userID, listID string) string {
 	return filepath.Join(m.baseDir, userID, ".claude", "tasks", listID)
-}
-
-// loadHighWaterMark 加载高水位线
-func (m *Manager) loadHighWaterMark(userID, listID string) int {
-	key := userID + ":" + listID
-	if hwm, ok := m.highWaterMark[key]; ok {
-		return hwm
-	}
-
-	hwmFile := filepath.Join(m.getTaskDir(userID, listID), ".high-water-mark")
-	data, err := os.ReadFile(hwmFile)
-	if err != nil {
-		return 0
-	}
-
-	var hwm int
-	if _, err := fmt.Sscanf(string(data), "%d", &hwm); err != nil {
-		return 0
-	}
-
-	m.highWaterMark[key] = hwm
-	return hwm
-}
-
-// saveHighWaterMark 保存高水位线
-func (m *Manager) saveHighWaterMark(userID, listID string, hwm int) error {
-	key := userID + ":" + listID
-	m.highWaterMark[key] = hwm
-
-	taskDir := m.getTaskDir(userID, listID)
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
-		return err
-	}
-
-	hwmFile := filepath.Join(taskDir, ".high-water-mark")
-	return os.WriteFile(hwmFile, []byte(fmt.Sprintf("%d", hwm)), 0644)
 }
 
 // Create 创建任务
@@ -123,21 +88,26 @@ func (m *Manager) Create(userID, listID string, subject, description, activeForm
 
 	// 约束检查 2: 最多 20 条任务
 	activeCount := 0
+	maxOrder := 0
 	for _, t := range existingTasks {
 		if t.Status != StatusCompleted && t.Status != StatusDeleted {
 			activeCount++
+		}
+		if t.Order > maxOrder {
+			maxOrder = t.Order
 		}
 	}
 	if activeCount >= MaxTasks {
 		return nil, ErrMaxTasksReached
 	}
 
-	// 获取下一个 ID
-	hwm := m.loadHighWaterMark(userID, listID)
-	newID := hwm + 1
+	// 使用时间戳作为内部标识
+	internalID := fmt.Sprintf("%d", time.Now().UnixNano())
+	newOrder := maxOrder + 1
 
 	task := &Task{
-		ID:          fmt.Sprintf("%d", newID),
+		ID:          "",  // 动态计算，创建时不设置
+		InternalID:  internalID,
 		Subject:     subject,
 		Description: description,
 		ActiveForm:  activeForm,
@@ -145,6 +115,7 @@ func (m *Manager) Create(userID, listID string, subject, description, activeForm
 		Blocks:      []string{},
 		BlockedBy:   []string{},
 		Metadata:    make(map[string]interface{}),
+		Order:       newOrder,
 		CreatedAt:   time.Now().UnixMilli(),
 		UpdatedAt:   time.Now().UnixMilli(),
 	}
@@ -154,18 +125,15 @@ func (m *Manager) Create(userID, listID string, subject, description, activeForm
 	if m.tasks[key] == nil {
 		m.tasks[key] = make(map[string]*Task)
 	}
-	m.tasks[key][task.ID] = task
+	m.tasks[key][internalID] = task
 
 	// 保存到文件
 	if err := m.saveTask(userID, listID, task); err != nil {
 		return nil, err
 	}
 
-	// 更新高水位线
-	if err := m.saveHighWaterMark(userID, listID, newID); err != nil {
-		return nil, err
-	}
-
+	// 计算动态 ID 并返回
+	task.ID = fmt.Sprintf("%d", len(existingTasks)+1)
 	return task, nil
 }
 
@@ -176,8 +144,14 @@ func (m *Manager) saveTask(userID, listID string, task *Task) error {
 		return err
 	}
 
-	taskFile := filepath.Join(taskDir, task.ID+".json")
-	data, err := json.MarshalIndent(task, "", "  ")
+	// 使用 InternalID 作为文件名
+	taskFile := filepath.Join(taskDir, task.InternalID+".json")
+
+	// 保存时清空动态 ID，只保存 InternalID
+	taskToSave := *task
+	taskToSave.ID = ""
+
+	data, err := json.MarshalIndent(taskToSave, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -185,57 +159,57 @@ func (m *Manager) saveTask(userID, listID string, task *Task) error {
 	return os.WriteFile(taskFile, data, 0644)
 }
 
-// Get 获取任务
+// Get 获取任务 - taskID 是动态 ID（列表位置）
 func (m *Manager) Get(userID, listID, taskID string) *Task {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	key := userID + ":" + listID
-	if tasks, ok := m.tasks[key]; ok {
-		if task, ok := tasks[taskID]; ok {
+	// 获取排序后的任务列表
+	tasks := m.listTasksLocked(userID, listID)
+
+	// 按 Order 排序并分配动态 ID
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].Order < tasks[j].Order
+	})
+
+	// 查找匹配的任务
+	for i, task := range tasks {
+		dynamicID := fmt.Sprintf("%d", i+1)
+		if dynamicID == taskID {
+			task.ID = dynamicID
 			return task
 		}
 	}
 
-	// 尝试从文件加载
-	taskFile := filepath.Join(m.getTaskDir(userID, listID), taskID+".json")
-	data, err := os.ReadFile(taskFile)
-	if err != nil {
-		return nil
-	}
-
-	var task Task
-	if err := json.Unmarshal(data, &task); err != nil {
-		return nil
-	}
-
-	return &task
+	return nil
 }
 
-// Update 更新任务
+// Update 更新任务 - taskID 是动态 ID（列表位置）
 func (m *Manager) Update(userID, listID, taskID string, updates map[string]interface{}) (*Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	key := userID + ":" + listID
-	if m.tasks[key] == nil {
-		m.tasks[key] = make(map[string]*Task)
+
+	// 获取排序后的任务列表，找到对应的任务
+	tasks := m.listTasksLocked(userID, listID)
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].Order < tasks[j].Order
+	})
+
+	// 查找匹配的任务
+	var task *Task
+	var dynamicID string
+	for i, t := range tasks {
+		dynamicID = fmt.Sprintf("%d", i+1)
+		if dynamicID == taskID {
+			task = t
+			break
+		}
 	}
 
-	task := m.tasks[key][taskID]
 	if task == nil {
-		// 尝试从文件加载
-		taskFile := filepath.Join(m.getTaskDir(userID, listID), taskID+".json")
-		data, err := os.ReadFile(taskFile)
-		if err != nil {
-			return nil, fmt.Errorf("task not found: %s", taskID)
-		}
-
-		task = &Task{}
-		if err := json.Unmarshal(data, task); err != nil {
-			return nil, err
-		}
-		m.tasks[key][taskID] = task
+		return nil, fmt.Errorf("task not found: %s", taskID)
 	}
 
 	// 应用更新
@@ -252,9 +226,8 @@ func (m *Manager) Update(userID, listID, taskID string, updates map[string]inter
 		newStatus := Status(status)
 		// 约束检查: 只能有一个 in_progress 任务
 		if newStatus == StatusInProgress && task.Status != StatusInProgress {
-			// 检查是否已有其他 in_progress 任务
-			for _, t := range m.tasks[key] {
-				if t.ID != taskID && t.Status == StatusInProgress {
+			for _, t := range tasks {
+				if t.InternalID != task.InternalID && t.Status == StatusInProgress {
 					return nil, ErrOnlyOneInProgress
 				}
 			}
@@ -265,43 +238,14 @@ func (m *Manager) Update(userID, listID, taskID string, updates map[string]inter
 		task.Owner = owner
 	}
 
-	// 处理依赖关系
-	if addBlocks, ok := updates["addBlocks"].([]string); ok {
-		for _, blockID := range addBlocks {
-			if !contains(task.Blocks, blockID) {
-				task.Blocks = append(task.Blocks, blockID)
-			}
-			// 更新被阻塞任务的 blockedBy
-			if blockedTask := m.tasks[key][blockID]; blockedTask != nil {
-				if !contains(blockedTask.BlockedBy, taskID) {
-					blockedTask.BlockedBy = append(blockedTask.BlockedBy, taskID)
-					m.saveTask(userID, listID, blockedTask)
-				}
-			}
-		}
-	}
-	if addBlockedBy, ok := updates["addBlockedBy"].([]string); ok {
-		for _, blockerID := range addBlockedBy {
-			if !contains(task.BlockedBy, blockerID) {
-				task.BlockedBy = append(task.BlockedBy, blockerID)
-			}
-			// 更新阻塞任务的 blocks
-			if blockerTask := m.tasks[key][blockerID]; blockerTask != nil {
-				if !contains(blockerTask.Blocks, taskID) {
-					blockerTask.Blocks = append(blockerTask.Blocks, taskID)
-					m.saveTask(userID, listID, blockerTask)
-				}
-			}
-		}
-	}
-
 	task.UpdatedAt = time.Now().UnixMilli()
 
 	// 如果状态是 deleted，删除文件
 	if task.Status == StatusDeleted {
-		taskFile := filepath.Join(m.getTaskDir(userID, listID), taskID+".json")
+		taskFile := filepath.Join(m.getTaskDir(userID, listID), task.InternalID+".json")
 		os.Remove(taskFile)
-		delete(m.tasks[key], taskID)
+		delete(m.tasks[key], task.InternalID)
+		task.ID = dynamicID
 		return task, nil
 	}
 
@@ -310,6 +254,7 @@ func (m *Manager) Update(userID, listID, taskID string, updates map[string]inter
 		return nil, err
 	}
 
+	task.ID = dynamicID
 	return task, nil
 }
 
@@ -318,7 +263,19 @@ func (m *Manager) List(userID, listID string) []*Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.listTasksLocked(userID, listID)
+	tasks := m.listTasksLocked(userID, listID)
+
+	// 按 Order 排序后分配动态 ID
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].Order < tasks[j].Order
+	})
+
+	// 分配动态 ID（基于列表位置）
+	for i, task := range tasks {
+		task.ID = fmt.Sprintf("%d", i+1)
+	}
+
+	return tasks
 }
 
 // listTasksLocked 内部方法，列出所有任务（调用者需持有锁）
@@ -350,8 +307,9 @@ func (m *Manager) listTasksLocked(userID, listID string) []*Task {
 			continue
 		}
 
-		taskID := entry.Name()[:len(entry.Name())-5] // 去掉 .json
-		if _, ok := m.tasks[key][taskID]; ok {
+		// 文件名就是 InternalID
+		internalID := entry.Name()[:len(entry.Name())-5] // 去掉 .json
+		if _, ok := m.tasks[key][internalID]; ok {
 			continue
 		}
 
@@ -366,7 +324,12 @@ func (m *Manager) listTasksLocked(userID, listID string) []*Task {
 			continue
 		}
 
-		m.tasks[key][taskID] = &task
+		// 确保 InternalID 被设置
+		if task.InternalID == "" {
+			task.InternalID = internalID
+		}
+
+		m.tasks[key][internalID] = &task
 	}
 
 	tasks := make([]*Task, 0, len(m.tasks[key]))
@@ -390,11 +353,11 @@ func (m *Manager) ClearCompleted(userID, listID string) int {
 	}
 
 	count := 0
-	for taskID, task := range m.tasks[key] {
+	for internalID, task := range m.tasks[key] {
 		if task.Status == StatusCompleted {
-			taskFile := filepath.Join(m.getTaskDir(userID, listID), taskID+".json")
+			taskFile := filepath.Join(m.getTaskDir(userID, listID), internalID+".json")
 			os.Remove(taskFile)
-			delete(m.tasks[key], taskID)
+			delete(m.tasks[key], internalID)
 			count++
 		}
 	}
@@ -447,4 +410,36 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// UpdateOrder 更新任务排序 - taskIDs 是动态 ID 列表
+func (m *Manager) UpdateOrder(userID, listID string, taskIDs []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 获取当前任务列表，建立动态 ID 到 InternalID 的映射
+	tasks := m.listTasksLocked(userID, listID)
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].Order < tasks[j].Order
+	})
+
+	// 建立动态 ID -> Task 的映射
+	dynamicIDToTask := make(map[string]*Task)
+	for i, task := range tasks {
+		dynamicID := fmt.Sprintf("%d", i+1)
+		dynamicIDToTask[dynamicID] = task
+	}
+
+	// 按照传入的顺序更新 Order 字段
+	for i, dynamicID := range taskIDs {
+		if task, ok := dynamicIDToTask[dynamicID]; ok {
+			task.Order = i + 1
+			task.UpdatedAt = time.Now().UnixMilli()
+			if err := m.saveTask(userID, listID, task); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

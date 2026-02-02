@@ -352,13 +352,15 @@ const Coworker = () => {
       // 任务相关消息
       case 'tasks_list':
         setTasksLoading(false);
-        setTasks(payload.tasks || []);
+        // 按 order 排序
+        setTasks((payload.tasks || []).sort((a, b) => a.order - b.order));
         console.log('[Coworker] Loaded tasks:', payload.tasks?.length || 0);
         break;
 
       case 'task_created':
         if (payload.success && payload.task) {
-          setTasks(prev => [...prev, payload.task]);
+          // 添加新任务并按 order 排序
+          setTasks(prev => [...prev, payload.task].sort((a, b) => a.order - b.order));
           console.log('[Coworker] Task created:', payload.task.id);
         }
         break;
@@ -371,6 +373,30 @@ const Coworker = () => {
             setTasks(prev => prev.map(t => t.id === payload.task.id ? payload.task : t));
           }
           console.log('[Coworker] Task updated:', payload.task.id);
+        }
+        break;
+
+      // AI 工具触发的任务变更事件
+      case 'task_changed':
+        if (payload.action === 'created' && payload.task) {
+          // 添加新任务并按 order 排序
+          setTasks(prev => [...prev, payload.task].sort((a, b) => a.order - b.order));
+          console.log('[Coworker] Task created by AI:', payload.task.id);
+        } else if (payload.action === 'updated' && payload.task) {
+          setTasks(prev => prev.map(t => t.id === payload.task.id ? payload.task : t));
+          console.log('[Coworker] Task updated by AI:', payload.task.id);
+        } else if (payload.action === 'deleted' && payload.task) {
+          setTasks(prev => prev.filter(t => t.id !== payload.task.id));
+          console.log('[Coworker] Task deleted by AI:', payload.task.id);
+        }
+        break;
+
+      // 任务排序响应
+      case 'tasks_reordered':
+        if (payload.success) {
+          console.log('[Coworker] Tasks reordered');
+          // 刷新任务列表以获取最新排序
+          loadTasksList(wsRef.current);
         }
         break;
 
@@ -496,6 +522,20 @@ const Coworker = () => {
     loadTasksList(wsRef.current);
   };
 
+  // 任务排序
+  const reorderTasks = (taskIds) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'task_reorder',
+        payload: {
+          user_id: userId,
+          list_id: 'default',
+          task_ids: taskIds
+        }
+      }));
+    }
+  };
+
   // 渲染消息项
   const renderMessage = (msg, index) => {
     if (msg.type === 'tool') {
@@ -526,6 +566,7 @@ const Coworker = () => {
         timestamp={msg.timestamp}
         aborted={msg.aborted}
         tasks={isLastAssistant ? tasks : null}
+        onUpdateTask={updateTask}
       />
     );
   };
@@ -551,6 +592,7 @@ const Coworker = () => {
           onCreateTask={createTask}
           onUpdateTask={updateTask}
           onRefreshTasks={refreshTasks}
+          onReorderTasks={reorderTasks}
           configContent={configContent}
           configLoading={configLoading}
           onConfigChange={setConfigContent}

@@ -66,11 +66,11 @@ func Init() *Module {
 	// 创建工具注册表
 	toolRegistry := tools.NewRegistry()
 
-	// 注册所有工具
-	registerTools(toolRegistry, cfg)
-
 	// 创建任务管理器
 	taskManager := task.NewManager(cfg.Security.WorkingDir)
+
+	// 注册所有工具
+	registerTools(toolRegistry, cfg, taskManager)
 
 	// 创建权限检查器
 	permChecker := permissions.NewChecker()
@@ -123,7 +123,7 @@ func Init() *Module {
 }
 
 // registerTools 注册所有工具
-func registerTools(registry *tools.Registry, cfg *config.Config) {
+func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager) {
 	workingDir := cfg.Security.WorkingDir
 	blockedCommands := cfg.Security.BlockedCommands
 
@@ -138,7 +138,13 @@ func registerTools(registry *tools.Registry, cfg *config.Config) {
 	registry.Register(tools.NewAskUserQuestionTool())
 	registry.Register(tools.NewStructuredOutputTool())
 
-	log.Printf("[ClaudeCLI] Registered %d tools", 9)
+	// 注册任务工具
+	registry.Register(tools.NewTaskCreateTool(taskManager))
+	registry.Register(tools.NewTaskUpdateTool(taskManager))
+	registry.Register(tools.NewTaskListTool(taskManager))
+	registry.Register(tools.NewTaskGetTool(taskManager))
+
+	log.Printf("[ClaudeCLI] Registered %d tools", 13)
 }
 
 // GetInstance 获取模块实例

@@ -19,6 +19,7 @@ type ConversationLoop struct {
 	eventCh   chan<- LoopEvent
 	system    string
 	mode      string // normal, plan, acceptEdits, bypassPermissions
+	userID    string // 用户 ID，用于任务工具
 	startTime int64
 }
 
@@ -39,6 +40,9 @@ type LoopEvent struct {
 	TimedOut  bool  `json:"timed_out,omitempty"`
 	// 状态信息
 	Status *StatusInfo `json:"status,omitempty"`
+	// 任务变更信息
+	TaskAction string      `json:"task_action,omitempty"`
+	TaskData   interface{} `json:"task_data,omitempty"`
 }
 
 // StatusInfo 状态信息
@@ -55,13 +59,14 @@ type StatusInfo struct {
 }
 
 const (
-	EventTypeText       = "text"
-	EventTypeThinking   = "thinking"
-	EventTypeToolStart  = "tool_start"
-	EventTypeToolEnd    = "tool_end"
-	EventTypeDone       = "done"
-	EventTypeError      = "error"
-	EventTypeStatus     = "status"
+	EventTypeText        = "text"
+	EventTypeThinking    = "thinking"
+	EventTypeToolStart   = "tool_start"
+	EventTypeToolEnd     = "tool_end"
+	EventTypeDone        = "done"
+	EventTypeError       = "error"
+	EventTypeStatus      = "status"
+	EventTypeTaskChanged = "task_changed"
 )
 
 // NewConversationLoop 创建对话循环
@@ -70,6 +75,7 @@ func NewConversationLoop(
 	sess *session.Session,
 	registry *tools.Registry,
 	systemPrompt string,
+	userID string,
 	eventCh chan<- LoopEvent,
 ) *ConversationLoop {
 	return &ConversationLoop{
@@ -79,6 +85,7 @@ func NewConversationLoop(
 		system:  systemPrompt,
 		eventCh: eventCh,
 		mode:    "normal",
+		userID:  userID,
 	}
 }
 
@@ -245,11 +252,17 @@ func (l *ConversationLoop) saveAssistantMessage(text string, calls []toolCall) {
 		content = append(content, types.TextBlock{Type: "text", Text: text})
 	}
 	for _, tc := range calls {
+		// 验证 Input 是否为有效 JSON，如果无效则使用空对象
+		inputJSON := tc.Input
+		if inputJSON == "" || !json.Valid([]byte(inputJSON)) {
+			inputJSON = "{}"
+			log.Printf("[Loop] Warning: Invalid tool input for %s, using empty object", tc.Name)
+		}
 		content = append(content, types.ToolUseBlock{
 			Type:  "tool_use",
 			ID:    tc.ID,
 			Name:  tc.Name,
-			Input: json.RawMessage(tc.Input),
+			Input: json.RawMessage(inputJSON),
 		})
 	}
 	if len(content) > 0 {
@@ -261,9 +274,10 @@ func (l *ConversationLoop) saveAssistantMessage(text string, calls []toolCall) {
 func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) error {
 	results := make([]interface{}, 0, len(calls))
 
-	// 将会话的工作目录放入 context
+	// 将会话的工作目录和用户 ID 放入 context
 	workDir := l.session.GetWorkingDir()
 	toolCtx := context.WithValue(ctx, types.WorkingDirKey, workDir)
+	toolCtx = context.WithValue(toolCtx, types.UserIDKey, l.userID)
 
 	for _, tc := range calls {
 		log.Printf("[Tool] Executing: name=%s, id=%s, workDir=%s", tc.Name, tc.ID, workDir)
@@ -314,6 +328,19 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 			ElapsedMs:  elapsedMs,
 			TimeoutMs:  timeoutMs,
 			TimedOut:   timedOut,
+		}
+
+		// 检测任务变更并发送事件
+		if result != nil && result.Metadata != nil {
+			if taskChanged, ok := result.Metadata["task_changed"].(bool); ok && taskChanged {
+				action, _ := result.Metadata["action"].(string)
+				taskData := result.Metadata["task"]
+				l.eventCh <- LoopEvent{
+					Type:       EventTypeTaskChanged,
+					TaskAction: action,
+					TaskData:   taskData,
+				}
+			}
 		}
 	}
 

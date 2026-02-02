@@ -204,3 +204,35 @@
   text-align: center;
 }
 
+/* 拖拽手柄 */
+.task-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--semi-color-text-2);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.task-item:hover .task-drag-handle {
+  opacity: 1;
+}
+
+.task-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* 拖拽状态 */
+.task-item.dragging {
+  opacity: 0.5;
+  background: var(--semi-color-fill-1);
+}
+
+.task-item.drag-over {
+  border-color: var(--semi-color-primary);
+  background: var(--semi-color-primary-light-default);
+}
+

@@ -11,6 +11,8 @@ type ContextKey string
 const (
 	// WorkingDirKey 工作目录的 context key
 	WorkingDirKey ContextKey = "working_dir"
+	// UserIDKey 用户 ID 的 context key
+	UserIDKey ContextKey = "user_id"
 )
 
 // GetWorkingDir 从 context 中获取工作目录
