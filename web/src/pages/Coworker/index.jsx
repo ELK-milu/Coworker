@@ -71,6 +71,7 @@ const Coworker = () => {
   const messagesEndRef = useRef(null);
   const abortedRef = useRef(false);
   const currentPathRef = useRef(currentPath);  // 用于在闭包中获取最新的 currentPath
+  const pendingMessageRef = useRef(null);  // 待发送的消息（用于 WS 重连后发送）
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -85,17 +86,6 @@ const Coworker = () => {
   useEffect(() => {
     currentPathRef.current = currentPath;
   }, [currentPath]);
-
-  // 加载历史消息
-  const loadHistory = useCallback((ws, sessId) => {
-    if (sessId && ws?.readyState === WebSocket.OPEN) {
-      console.log('[Coworker] Loading history for session:', sessId);
-      ws.send(JSON.stringify({
-        type: 'load_history',
-        payload: { session_id: sessId }
-      }));
-    }
-  }, []);
 
   // 加载会话列表 (REST API)
   const loadSessionsList = useCallback(async () => {
@@ -180,9 +170,24 @@ const Coworker = () => {
         loadSessionsList();
         loadFilesList('');
         loadTasksList();
-        // 如果有 session_id，加载历史消息
+        // 如果有 session_id，使用 REST API 加载历史消息
         if (currentSessionId) {
-          loadHistory(wsRef.current, currentSessionId);
+          api.getSessionHistory(currentSessionId).then(data => {
+            if (data.messages && data.messages.length > 0) {
+              setMessages(data.messages);
+              console.log('[Coworker] Loaded history on connect:', data.messages.length, 'messages');
+            }
+          }).catch(err => console.error('[Coworker] Failed to load history:', err));
+        }
+        // 如果有待发送的消息，发送它
+        if (pendingMessageRef.current) {
+          const pending = pendingMessageRef.current;
+          pendingMessageRef.current = null;
+          wsRef.current.send(JSON.stringify({
+            type: 'chat',
+            payload: pending
+          }));
+          console.log('[Coworker] Sent pending message after reconnect');
         }
       };
       wsRef.current.onerror = () => setConnected(false);
@@ -198,7 +203,7 @@ const Coworker = () => {
     } catch (error) {
       console.error('[Coworker] WebSocket error:', error);
     }
-  }, [loadHistory, loadSessionsList, loadFilesList, loadTasksList]);
+  }, [loadSessionsList, loadFilesList, loadTasksList]);
 
   useEffect(() => {
     connectWebSocket();
@@ -346,25 +351,36 @@ const Coworker = () => {
 
   // 发送消息
   const sendMessage = () => {
-    if (!inputValue.trim() || !connected || loading) return;
+    if (!inputValue.trim() || loading) return;
 
     abortedRef.current = false;
     const userMsg = { type: 'user', content: inputValue, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
+    const messageToSend = inputValue;
     setInputValue('');
     setLoading(true);
     setThinking(true);
 
-    wsRef.current.send(JSON.stringify({
-      type: 'chat',
-      payload: {
-        message: inputValue,
-        session_id: sessionId,
-        user_id: userId,
-        mode,
-        working_path: currentPath  // 传递当前文件路径
-      }
-    }));
+    const payload = {
+      message: messageToSend,
+      session_id: sessionId,
+      user_id: userId,
+      mode,
+      working_path: currentPath  // 传递当前文件路径
+    };
+
+    // 如果 WS 已连接，直接发送
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'chat',
+        payload
+      }));
+    } else {
+      // WS 断开，存储待发送消息并重连
+      pendingMessageRef.current = payload;
+      Toast.info('正在重新连接...');
+      connectWebSocket();
+    }
   };
 
   // 中断对话
@@ -392,14 +408,28 @@ const Coworker = () => {
     localStorage.removeItem(SESSION_STORAGE_KEY);
   };
 
-  // 选择会话
-  const selectSession = (sessId) => {
+  // 选择会话 (REST API)
+  const selectSession = async (sessId) => {
     if (sessId === sessionId) return;
     setSessionId(sessId);
     setMessages([]);
     setStatus(null);
     localStorage.setItem(SESSION_STORAGE_KEY, sessId);
-    loadHistory(wsRef.current, sessId);
+
+    // 使用 REST API 加载历史消息
+    try {
+      const data = await api.getSessionHistory(sessId);
+      if (data.messages && data.messages.length > 0) {
+        setMessages(data.messages);
+        console.log('[Coworker] Loaded history via REST:', data.messages.length, 'messages');
+      } else if (data.not_found) {
+        setSessionId('');
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        console.log('[Coworker] Session not found, cleared session_id');
+      }
+    } catch (error) {
+      console.error('[Coworker] Failed to load history:', error);
+    }
   };
 
   // 文件导航 (REST API)
@@ -627,7 +657,6 @@ const Coworker = () => {
                   sendMessage();
                 }
               }}
-              disabled={!connected}
             />
             {loading ? (
               <Button
@@ -641,7 +670,7 @@ const Coworker = () => {
                 icon={<IconSend />}
                 theme="solid"
                 onClick={sendMessage}
-                disabled={!connected || !inputValue.trim()}
+                disabled={!inputValue.trim()}
               />
             )}
           </div>

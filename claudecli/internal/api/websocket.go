@@ -338,7 +338,7 @@ func (h *WSHandler) handleLoadHistory(conn *websocket.Conn, payload json.RawMess
 
 	// 获取会话消息并转换为前端格式
 	messages := sess.GetMessages()
-	frontendMessages := convertMessagesToFrontend(messages)
+	frontendMessages := ConvertMessagesToFrontend(messages)
 
 	log.Printf("[WS] Loaded history for session %s: %d messages", req.SessionID, len(frontendMessages))
 
@@ -447,8 +447,8 @@ func (h *WSHandler) handleDeleteSession(conn *websocket.Conn, payload json.RawMe
 	})
 }
 
-// convertMessagesToFrontend 将后端消息格式转换为前端格式
-func convertMessagesToFrontend(messages []types.Message) []map[string]interface{} {
+// ConvertMessagesToFrontend 将后端消息格式转换为前端格式
+func ConvertMessagesToFrontend(messages []types.Message) []map[string]interface{} {
 	var result []map[string]interface{}
 
 	for _, msg := range messages {

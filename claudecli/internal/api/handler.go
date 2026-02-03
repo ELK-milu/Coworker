@@ -56,6 +56,37 @@ func (h *RESTHandler) GetSession(c *gin.Context) {
 	c.JSON(http.StatusOK, sess)
 }
 
+// GetSessionHistory 获取会话历史消息（前端格式）
+func (h *RESTHandler) GetSessionHistory(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"session_id": "",
+			"messages":   []interface{}{},
+		})
+		return
+	}
+
+	sess := h.sessions.Get(id)
+	if sess == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"session_id": id,
+			"messages":   []interface{}{},
+			"not_found":  true,
+		})
+		return
+	}
+
+	// 获取会话消息并转换为前端格式
+	messages := sess.GetMessages()
+	frontendMessages := ConvertMessagesToFrontend(messages)
+
+	c.JSON(http.StatusOK, gin.H{
+		"session_id": id,
+		"messages":   frontendMessages,
+	})
+}
+
 // DeleteSession 删除会话
 func (h *RESTHandler) DeleteSession(c *gin.Context) {
 	id := c.Param("id")

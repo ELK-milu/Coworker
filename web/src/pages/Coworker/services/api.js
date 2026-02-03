@@ -44,6 +44,10 @@ export async function getSession(sessionId) {
   return request(`/sessions/${encodeURIComponent(sessionId)}`);
 }
 
+export async function getSessionHistory(sessionId) {
+  return request(`/sessions/${encodeURIComponent(sessionId)}/history`);
+}
+
 export async function deleteSession(sessionId) {
   return request(`/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',

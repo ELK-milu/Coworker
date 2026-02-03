@@ -59,6 +59,11 @@ func (ctrl *ClaudeCLIController) ListSessions(c *gin.Context) {
 	ctrl.module.RESTHandler.ListSessions(c)
 }
 
+// GetSessionHistory 获取会话历史消息（前端格式）
+func (ctrl *ClaudeCLIController) GetSessionHistory(c *gin.Context) {
+	ctrl.module.RESTHandler.GetSessionHistory(c)
+}
+
 // ========== 任务管理 ==========
 
 // ListTasks 获取任务列表

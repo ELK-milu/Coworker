@@ -20,6 +20,7 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 		coworkerGroup.GET("/sessions", claudeCLICtrl.ListSessions)
 		coworkerGroup.POST("/sessions", claudeCLICtrl.CreateSession)
 		coworkerGroup.GET("/sessions/:id", claudeCLICtrl.GetSession)
+		coworkerGroup.GET("/sessions/:id/history", claudeCLICtrl.GetSessionHistory)
 		coworkerGroup.DELETE("/sessions/:id", claudeCLICtrl.DeleteSession)
 
 		// 任务管理
