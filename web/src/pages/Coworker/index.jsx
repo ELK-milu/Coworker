@@ -8,6 +8,7 @@ import { IconSend, IconStop } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
 import SessionSidebar from './components/SessionSidebar';
+import * as api from './services/api';
 import './styles.css';
 
 const { Title, Text } = Typography;
@@ -96,45 +97,68 @@ const Coworker = () => {
     }
   }, []);
 
-  // 加载会话列表
-  const loadSessionsList = useCallback((ws) => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      setSessionsLoading(true);
-      ws.send(JSON.stringify({ type: 'list_sessions', payload: { user_id: userId } }));
+  // 加载会话列表 (REST API)
+  const loadSessionsList = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      const data = await api.listSessions(userId);
+      const sorted = [...(data.sessions || [])].sort((a, b) => b.updated_at - a.updated_at);
+      setSessions(sorted);
+      console.log('[Coworker] Loaded sessions list:', sorted.length);
+    } catch (error) {
+      console.error('[Coworker] Failed to load sessions:', error);
+    } finally {
+      setSessionsLoading(false);
     }
   }, [userId]);
 
-  // 加载文件列表
-  const loadFilesList = useCallback((ws, path = '') => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      setFilesLoading(true);
-      ws.send(JSON.stringify({
-        type: 'list_files',
-        payload: { user_id: userId, path }
-      }));
+  // 加载文件列表 (REST API)
+  const loadFilesList = useCallback(async (path = '') => {
+    setFilesLoading(true);
+    try {
+      const data = await api.listFiles(userId, path);
+      setFiles(data.files || []);
+      setCurrentPath(data.path || '');
+      console.log('[Coworker] Loaded files list:', data.files?.length || 0, 'path:', data.path);
+    } catch (error) {
+      console.error('[Coworker] Failed to load files:', error);
+    } finally {
+      setFilesLoading(false);
     }
   }, [userId]);
 
-  // 加载任务列表
-  const loadTasksList = useCallback((ws) => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      setTasksLoading(true);
-      ws.send(JSON.stringify({
-        type: 'task_list',
-        payload: { user_id: userId, list_id: 'default' }
-      }));
+  // 加载任务列表 (REST API)
+  const loadTasksList = useCallback(async () => {
+    setTasksLoading(true);
+    try {
+      const data = await api.listTasks(userId);
+      setTasks((data.tasks || []).sort((a, b) => a.order - b.order));
+      console.log('[Coworker] Loaded tasks:', data.tasks?.length || 0);
+    } catch (error) {
+      console.error('[Coworker] Failed to load tasks:', error);
+    } finally {
+      setTasksLoading(false);
     }
   }, [userId]);
 
-  // 删除会话
-  const deleteSession = useCallback((sessId) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'delete_session',
-        payload: { session_id: sessId }
-      }));
+  // 删除会话 (REST API)
+  const deleteSession = useCallback(async (sessId) => {
+    try {
+      await api.deleteSession(sessId);
+      setSessions(prev => prev.filter(s => s.id !== sessId));
+      // 如果删除的是当前会话，清空
+      if (sessId === sessionId) {
+        setSessionId('');
+        setMessages([]);
+        setStatus(null);
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+      console.log('[Coworker] Session deleted:', sessId);
+    } catch (error) {
+      console.error('[Coworker] Failed to delete session:', error);
+      Toast.error('删除会话失败');
     }
-  }, []);
+  }, [sessionId]);
 
   // 连接 WebSocket
   const connectWebSocket = useCallback(() => {
@@ -144,7 +168,7 @@ const Coworker = () => {
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/claudecli/ws`;
+    const wsUrl = `${protocol}//${window.location.host}/coworker/ws`;
     // 获取当前的 sessionId
     const currentSessionId = localStorage.getItem(SESSION_STORAGE_KEY) || '';
 
@@ -152,10 +176,10 @@ const Coworker = () => {
       wsRef.current = new WebSocket(wsUrl);
       wsRef.current.onopen = () => {
         setConnected(true);
-        // 连接成功后加载会话列表、文件列表和任务列表
-        loadSessionsList(wsRef.current);
-        loadFilesList(wsRef.current, '');
-        loadTasksList(wsRef.current);
+        // 连接成功后使用 REST API 加载侧边栏数据
+        loadSessionsList();
+        loadFilesList('');
+        loadTasksList();
         // 如果有 session_id，加载历史消息
         if (currentSessionId) {
           loadHistory(wsRef.current, currentSessionId);
@@ -184,6 +208,16 @@ const Coworker = () => {
       }
     };
   }, [connectWebSocket]);
+
+  // 断开 WebSocket 连接（用于测试 REST API）
+  const disconnectWebSocket = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+      setConnected(false);
+      Toast.info('WebSocket 已断开，侧边栏功能仍可通过 REST API 使用');
+    }
+  }, []);
 
   // 处理 WebSocket 消息
   const handleWebSocketMessage = (data) => {
@@ -259,9 +293,9 @@ const Coworker = () => {
               }
             : msg
         ));
-        // 如果是 Task 相关工具，刷新任务列表
+        // 如果是 Task 相关工具，刷新任务列表 (REST API)
         if (payload.name && payload.name.startsWith('Task')) {
-          loadTasksList(wsRef.current);
+          loadTasksList();
         }
         break;
 
@@ -293,90 +327,7 @@ const Coworker = () => {
         });
         break;
 
-      case 'sessions_list':
-        setSessionsLoading(false);
-        if (payload.sessions) {
-          // 按更新时间排序
-          const sorted = [...payload.sessions].sort((a, b) => b.updated_at - a.updated_at);
-          setSessions(sorted);
-          console.log('[Coworker] Loaded sessions list:', sorted.length);
-        }
-        break;
-
-      case 'session_deleted':
-        if (payload.success) {
-          setSessions(prev => prev.filter(s => s.id !== payload.session_id));
-          // 如果删除的是当前会话，清空
-          if (payload.session_id === sessionId) {
-            setSessionId('');
-            setMessages([]);
-            setStatus(null);
-            localStorage.removeItem(SESSION_STORAGE_KEY);
-          }
-          console.log('[Coworker] Session deleted:', payload.session_id);
-        }
-        break;
-
-      case 'files_list':
-        setFilesLoading(false);
-        // 即使文件列表为空也要更新状态
-        setFiles(payload.files || []);
-        setCurrentPath(payload.path || '');
-        console.log('[Coworker] Loaded files list:', payload.files?.length || 0, 'path:', payload.path);
-        break;
-
-      case 'folder_created':
-        if (payload.success) {
-          console.log('[Coworker] Folder created:', payload.path);
-          // 刷新文件列表，使用 ref 获取最新的 currentPath
-          loadFilesList(wsRef.current, currentPathRef.current);
-        }
-        break;
-
-      case 'file_deleted':
-        if (payload.success) {
-          console.log('[Coworker] File deleted:', payload.path);
-          // 刷新文件列表，使用 ref 获取最新的 currentPath
-          loadFilesList(wsRef.current, currentPathRef.current);
-        }
-        break;
-
-      case 'file_renamed':
-        if (payload.success) {
-          console.log('[Coworker] File renamed:', payload.old_path, '->', payload.new_name);
-          // 刷新文件列表，使用 ref 获取最新的 currentPath
-          loadFilesList(wsRef.current, currentPathRef.current);
-        }
-        break;
-
-      // 任务相关消息
-      case 'tasks_list':
-        setTasksLoading(false);
-        // 按 order 排序
-        setTasks((payload.tasks || []).sort((a, b) => a.order - b.order));
-        console.log('[Coworker] Loaded tasks:', payload.tasks?.length || 0);
-        break;
-
-      case 'task_created':
-        if (payload.success && payload.task) {
-          // 添加新任务并按 order 排序
-          setTasks(prev => [...prev, payload.task].sort((a, b) => a.order - b.order));
-          console.log('[Coworker] Task created:', payload.task.id);
-        }
-        break;
-
-      case 'task_updated':
-        if (payload.success && payload.task) {
-          if (payload.task.status === 'deleted') {
-            setTasks(prev => prev.filter(t => t.id !== payload.task.id));
-          } else {
-            setTasks(prev => prev.map(t => t.id === payload.task.id ? payload.task : t));
-          }
-          console.log('[Coworker] Task updated:', payload.task.id);
-        }
-        break;
-
-      // AI 工具触发的任务变更事件
+      // AI 工具触发的任务变更事件 (保留，用于实时同步)
       case 'task_changed':
         if (payload.action === 'created' && payload.task) {
           // 添加新任务并按 order 排序
@@ -388,32 +339,6 @@ const Coworker = () => {
         } else if (payload.action === 'deleted' && payload.task) {
           setTasks(prev => prev.filter(t => t.id !== payload.task.id));
           console.log('[Coworker] Task deleted by AI:', payload.task.id);
-        }
-        break;
-
-      // 任务排序响应
-      case 'tasks_reordered':
-        if (payload.success) {
-          console.log('[Coworker] Tasks reordered');
-          // 刷新任务列表以获取最新排序
-          loadTasksList(wsRef.current);
-        }
-        break;
-
-      // 配置相关消息
-      case 'config_loaded':
-        setConfigLoading(false);
-        setConfigContent(payload.content || '');
-        console.log('[Coworker] Config loaded');
-        break;
-
-      case 'config_saved':
-        setConfigLoading(false);
-        if (payload.success) {
-          Toast.success('配置已保存');
-          console.log('[Coworker] Config saved');
-        } else {
-          Toast.error('保存失败: ' + (payload.error || '未知错误'));
         }
         break;
     }
@@ -477,62 +402,63 @@ const Coworker = () => {
     loadHistory(wsRef.current, sessId);
   };
 
-  // 文件导航
+  // 文件导航 (REST API)
   const navigateFile = (path) => {
     setCurrentPath(path);
-    loadFilesList(wsRef.current, path);
+    loadFilesList(path);
   };
 
-  // 刷新文件列表
+  // 刷新文件列表 (REST API)
   const refreshFiles = () => {
-    loadFilesList(wsRef.current, currentPath);
+    loadFilesList(currentPath);
   };
 
-  // 创建任务
-  const createTask = (taskData) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'task_create',
-        payload: {
-          user_id: userId,
-          list_id: 'default',
-          ...taskData
-        }
-      }));
+  // 创建任务 (REST API)
+  const createTask = async (taskData) => {
+    try {
+      const data = await api.createTask(userId, taskData);
+      if (data.success && data.task) {
+        setTasks(prev => [...prev, data.task].sort((a, b) => a.order - b.order));
+        console.log('[Coworker] Task created:', data.task.id);
+      }
+    } catch (error) {
+      console.error('[Coworker] Failed to create task:', error);
+      Toast.error('创建任务失败');
     }
   };
 
-  // 更新任务
-  const updateTask = (taskId, updates) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'task_update',
-        payload: {
-          user_id: userId,
-          list_id: 'default',
-          task_id: taskId,
-          ...updates
+  // 更新任务 (REST API)
+  const updateTask = async (taskId, updates) => {
+    try {
+      const data = await api.updateTask(userId, taskId, updates);
+      if (data.success && data.task) {
+        if (data.task.status === 'deleted') {
+          setTasks(prev => prev.filter(t => t.id !== data.task.id));
+        } else {
+          setTasks(prev => prev.map(t => t.id === data.task.id ? data.task : t));
         }
-      }));
+        console.log('[Coworker] Task updated:', data.task.id);
+      }
+    } catch (error) {
+      console.error('[Coworker] Failed to update task:', error);
+      Toast.error('更新任务失败');
     }
   };
 
-  // 刷新任务列表
+  // 刷新任务列表 (REST API)
   const refreshTasks = () => {
-    loadTasksList(wsRef.current);
+    loadTasksList();
   };
 
-  // 任务排序
-  const reorderTasks = (taskIds) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'task_reorder',
-        payload: {
-          user_id: userId,
-          list_id: 'default',
-          task_ids: taskIds
-        }
-      }));
+  // 任务排序 (REST API)
+  const reorderTasks = async (taskIds) => {
+    try {
+      await api.reorderTasks(userId, taskIds);
+      console.log('[Coworker] Tasks reordered');
+      loadTasksList();
+    } catch (error) {
+      console.error('[Coworker] Failed to reorder tasks:', error);
+      Toast.error('排序失败');
     }
   };
 
@@ -597,7 +523,6 @@ const Coworker = () => {
           configLoading={configLoading}
           onConfigChange={setConfigContent}
           onConfigLoadingChange={setConfigLoading}
-          wsRef={wsRef}
           userId={userId}
         />
 
@@ -612,6 +537,27 @@ const Coworker = () => {
             <div className="connection-status">
               <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
               <Text size="small">{connected ? '已连接' : '未连接'}</Text>
+              {connected ? (
+                <Button
+                  size="small"
+                  type="tertiary"
+                  theme="borderless"
+                  onClick={disconnectWebSocket}
+                  style={{ marginLeft: 8 }}
+                >
+                  断开WS
+                </Button>
+              ) : (
+                <Button
+                  size="small"
+                  type="primary"
+                  theme="solid"
+                  onClick={connectWebSocket}
+                  style={{ marginLeft: 8 }}
+                >
+                  重连WS
+                </Button>
+              )}
             </div>
           </div>
 
@@ -652,6 +598,7 @@ const Coworker = () => {
             <div className="mode-buttons">
               {['normal', 'acceptEdits', 'planMode', 'bypassPermissions'].map((m) => (
                 <button
+                  type="button"
                   key={m}
                   className={`mode-btn ${mode === m ? 'active' : ''}`}
                   onClick={() => setMode(m)}

@@ -51,3 +51,71 @@ func (ctrl *ClaudeCLIController) UploadFile(c *gin.Context) {
 func (ctrl *ClaudeCLIController) DownloadFile(c *gin.Context) {
 	ctrl.module.FileHandler.Download(c)
 }
+
+// ========== 会话管理 ==========
+
+// ListSessions 获取会话列表
+func (ctrl *ClaudeCLIController) ListSessions(c *gin.Context) {
+	ctrl.module.RESTHandler.ListSessions(c)
+}
+
+// ========== 任务管理 ==========
+
+// ListTasks 获取任务列表
+func (ctrl *ClaudeCLIController) ListTasks(c *gin.Context) {
+	ctrl.module.RESTHandler.ListTasks(c)
+}
+
+// CreateTask 创建任务
+func (ctrl *ClaudeCLIController) CreateTask(c *gin.Context) {
+	ctrl.module.RESTHandler.CreateTask(c)
+}
+
+// UpdateTask 更新任务
+func (ctrl *ClaudeCLIController) UpdateTask(c *gin.Context) {
+	ctrl.module.RESTHandler.UpdateTask(c)
+}
+
+// DeleteTask 删除任务
+func (ctrl *ClaudeCLIController) DeleteTask(c *gin.Context) {
+	ctrl.module.RESTHandler.DeleteTask(c)
+}
+
+// ReorderTasks 批量排序任务
+func (ctrl *ClaudeCLIController) ReorderTasks(c *gin.Context) {
+	ctrl.module.RESTHandler.ReorderTasks(c)
+}
+
+// ========== 文件管理 ==========
+
+// ListFiles 获取文件列表
+func (ctrl *ClaudeCLIController) ListFiles(c *gin.Context) {
+	ctrl.module.RESTHandler.ListFiles(c)
+}
+
+// CreateFolder 创建文件夹
+func (ctrl *ClaudeCLIController) CreateFolder(c *gin.Context) {
+	ctrl.module.RESTHandler.CreateFolder(c)
+}
+
+// DeleteFile 删除文件
+func (ctrl *ClaudeCLIController) DeleteFile(c *gin.Context) {
+	ctrl.module.RESTHandler.DeleteFile(c)
+}
+
+// RenameFile 重命名文件
+func (ctrl *ClaudeCLIController) RenameFile(c *gin.Context) {
+	ctrl.module.RESTHandler.RenameFile(c)
+}
+
+// ========== 配置管理 ==========
+
+// GetConfig 获取配置
+func (ctrl *ClaudeCLIController) GetConfig(c *gin.Context) {
+	ctrl.module.RESTHandler.GetConfig(c)
+}
+
+// SaveConfig 保存配置
+func (ctrl *ClaudeCLIController) SaveConfig(c *gin.Context) {
+	ctrl.module.RESTHandler.SaveConfig(c)
+}

@@ -99,6 +99,8 @@ func Init() *Module {
 
 	// 创建 REST 处理器
 	restHandler := api.NewRESTHandler(sessionManager)
+	restHandler.SetTaskManager(taskManager)
+	restHandler.SetWorkspaceManager(workspaceManager)
 
 	// 创建 WebSocket 处理器
 	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, permChecker, skillRegistry, mcpManager, systemPrompt)

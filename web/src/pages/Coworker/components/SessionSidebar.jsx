@@ -66,8 +66,7 @@ const SessionSidebar = ({
   configLoading = false,
   onConfigChange,
   onConfigLoadingChange,
-  // 新增：用于文件操作
-  wsRef,
+  // 用户ID
   userId,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
@@ -189,6 +188,7 @@ const SessionSidebar = ({
         {!collapsed && (
           <div className="sidebar-tabs">
             <button
+              type="button"
               className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
               onClick={() => setActiveTab('history')}
             >
@@ -196,6 +196,7 @@ const SessionSidebar = ({
               <span>历史</span>
             </button>
             <button
+              type="button"
               className={`tab-btn ${activeTab === 'tasks' ? 'active' : ''}`}
               onClick={() => setActiveTab('tasks')}
             >
@@ -203,6 +204,7 @@ const SessionSidebar = ({
               <span>任务</span>
             </button>
             <button
+              type="button"
               className={`tab-btn ${activeTab === 'files' ? 'active' : ''}`}
               onClick={() => setActiveTab('files')}
             >
@@ -210,6 +212,7 @@ const SessionSidebar = ({
               <span>文件</span>
             </button>
             <button
+              type="button"
               className={`tab-btn ${activeTab === 'config' ? 'active' : ''}`}
               onClick={() => setActiveTab('config')}
             >
@@ -242,7 +245,6 @@ const SessionSidebar = ({
           />
         ) : activeTab === 'config' ? (
           <ConfigPanel
-            wsRef={wsRef}
             userId={userId}
             content={configContent}
             loading={configLoading}
@@ -257,7 +259,6 @@ const SessionSidebar = ({
             userId={userId}
             onNavigate={onNavigateFile}
             onRefresh={onRefreshFiles}
-            wsRef={wsRef}
           />
         )}
       </div>

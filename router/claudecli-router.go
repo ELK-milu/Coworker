@@ -10,22 +10,45 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 	// 创建 ClaudeCLI 控制器实例
 	claudeCLICtrl := controller.NewClaudeCLIController()
 
-	// ClaudeCLI API 路由组
-	claudecliGroup := router.Group("/claudecli")
+	// Coworker API 路由组 (新的 REST API)
+	coworkerGroup := router.Group("/coworker")
 	{
 		// 健康检查
-		claudecliGroup.GET("/health", claudeCLICtrl.Health)
+		coworkerGroup.GET("/health", claudeCLICtrl.Health)
 
 		// 会话管理
-		claudecliGroup.POST("/sessions", claudeCLICtrl.CreateSession)
-		claudecliGroup.GET("/sessions/:id", claudeCLICtrl.GetSession)
-		claudecliGroup.DELETE("/sessions/:id", claudeCLICtrl.DeleteSession)
+		coworkerGroup.GET("/sessions", claudeCLICtrl.ListSessions)
+		coworkerGroup.POST("/sessions", claudeCLICtrl.CreateSession)
+		coworkerGroup.GET("/sessions/:id", claudeCLICtrl.GetSession)
+		coworkerGroup.DELETE("/sessions/:id", claudeCLICtrl.DeleteSession)
 
-		// 文件操作
-		claudecliGroup.POST("/files/upload", claudeCLICtrl.UploadFile)
-		claudecliGroup.GET("/files/download", claudeCLICtrl.DownloadFile)
+		// 任务管理
+		coworkerGroup.GET("/tasks", claudeCLICtrl.ListTasks)
+		coworkerGroup.POST("/tasks", claudeCLICtrl.CreateTask)
+		coworkerGroup.PUT("/tasks/reorder", claudeCLICtrl.ReorderTasks)
+		coworkerGroup.PUT("/tasks/:id", claudeCLICtrl.UpdateTask)
+		coworkerGroup.DELETE("/tasks/:id", claudeCLICtrl.DeleteTask)
+
+		// 文件管理
+		coworkerGroup.GET("/files", claudeCLICtrl.ListFiles)
+		coworkerGroup.POST("/files/folder", claudeCLICtrl.CreateFolder)
+		coworkerGroup.PUT("/files/rename", claudeCLICtrl.RenameFile)
+		coworkerGroup.DELETE("/files", claudeCLICtrl.DeleteFile)
+		coworkerGroup.POST("/files/upload", claudeCLICtrl.UploadFile)
+		coworkerGroup.GET("/files/download", claudeCLICtrl.DownloadFile)
+
+		// 配置管理
+		coworkerGroup.GET("/config", claudeCLICtrl.GetConfig)
+		coworkerGroup.PUT("/config", claudeCLICtrl.SaveConfig)
 
 		// WebSocket 连接
+		coworkerGroup.GET("/ws", claudeCLICtrl.HandleWebSocket)
+	}
+
+	// 保留旧的 /claudecli 路由以兼容
+	claudecliGroup := router.Group("/claudecli")
+	{
+		claudecliGroup.GET("/health", claudeCLICtrl.Health)
 		claudecliGroup.GET("/ws", claudeCLICtrl.HandleWebSocket)
 	}
 }

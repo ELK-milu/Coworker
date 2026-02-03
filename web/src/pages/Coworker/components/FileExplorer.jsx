@@ -3,7 +3,7 @@ Copyright (C) 2025 QuantumNous
 Google Colab 风格文件浏览器
 */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Typography, Spin, Button, Breadcrumb, Toast, Modal } from '@douyinfe/semi-ui';
 import {
   IconFolder,
@@ -22,9 +22,10 @@ import {
   IconArticle,
   IconSetting,
   IconLink,
-  IconMore,
   IconCopy,
+  IconMore,
 } from '@douyinfe/semi-icons';
+import * as api from '../services/api';
 import './FileExplorer.css';
 
 const { Text } = Typography;
@@ -166,7 +167,6 @@ const FileExplorer = ({
   userId,
   onNavigate,
   onRefresh,
-  wsRef,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -249,7 +249,7 @@ const FileExplorer = ({
 
   // 下载文件（文件夹会自动打包为zip）
   const handleDownload = (file) => {
-    const url = `/claudecli/files/download?user_id=${userId}&path=${encodeURIComponent(file.path)}`;
+    const url = api.getDownloadUrl(userId, file.path);
     // 创建临时链接触发下载，不弹出新窗口
     const link = document.createElement('a');
     link.href = url;
@@ -259,18 +259,19 @@ const FileExplorer = ({
     document.body.removeChild(link);
   };
 
-  // 删除文件
+  // 删除文件 (REST API)
   const handleDelete = (file) => {
     Modal.confirm({
       title: '确认删除',
       content: `确定要删除 "${file.name}" 吗？${file.is_dir ? '文件夹内的所有内容也将被删除。' : ''}`,
       okType: 'danger',
-      onOk: () => {
-        if (wsRef?.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: 'delete_file',
-            payload: { user_id: userId, path: file.path }
-          }));
+      onOk: async () => {
+        try {
+          await api.deleteFile(userId, file.path);
+          Toast.success('删除成功');
+          onRefresh();
+        } catch (error) {
+          Toast.error('删除失败: ' + error.message);
         }
       }
     });
@@ -283,18 +284,19 @@ const FileExplorer = ({
     setTimeout(() => renameInputRef.current?.focus(), 100);
   };
 
-  // 确认重命名
-  const confirmRename = () => {
+  // 确认重命名 (REST API)
+  const confirmRename = async () => {
     if (!renamingFile || !renameValue.trim()) {
       setRenamingFile(null);
       return;
     }
     if (renameValue !== renamingFile.name) {
-      if (wsRef?.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: 'rename_file',
-          payload: { user_id: userId, path: renamingFile.path, new_name: renameValue }
-        }));
+      try {
+        await api.renameFile(userId, renamingFile.path, renameValue);
+        Toast.success('重命名成功');
+        onRefresh();
+      } catch (error) {
+        Toast.error('重命名失败: ' + error.message);
       }
     }
     setRenamingFile(null);
@@ -316,19 +318,20 @@ const FileExplorer = ({
     setTimeout(() => newFolderInputRef.current?.focus(), 100);
   };
 
-  // 确认创建文件夹
-  const confirmCreateFolder = () => {
+  // 确认创建文件夹 (REST API)
+  const confirmCreateFolder = async () => {
     if (!newFolderName.trim()) {
       setIsCreatingFolder(false);
       return;
     }
 
     const folderPath = currentPath ? `${currentPath}/${newFolderName}` : newFolderName;
-    if (wsRef?.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'create_folder',
-        payload: { user_id: userId, path: folderPath }
-      }));
+    try {
+      await api.createFolder(userId, folderPath);
+      Toast.success('文件夹创建成功');
+      onRefresh();
+    } catch (error) {
+      Toast.error('创建失败: ' + error.message);
     }
     setIsCreatingFolder(false);
     setNewFolderName('');
@@ -343,28 +346,15 @@ const FileExplorer = ({
     }
   };
 
-  // 上传文件
+  // 上传文件 (REST API)
   const uploadFiles = async (fileList) => {
     if (!fileList || fileList.length === 0) return;
 
     setUploading(true);
 
     for (const file of fileList) {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('user_id', userId);
-      formData.append('path', currentPath);
-
       try {
-        const response = await fetch('/claudecli/files/upload', {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!response.ok) {
-          throw new Error('Upload failed');
-        }
-
+        await api.uploadFile(userId, currentPath, file);
         Toast.success(`上传成功: ${file.name}`);
       } catch (error) {
         Toast.error(`上传失败: ${file.name}`);

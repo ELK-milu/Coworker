@@ -5,37 +5,38 @@ Copyright (C) 2025 QuantumNous
 import React, { useRef, useEffect } from 'react';
 import { Button, Typography, Toast, TextArea } from '@douyinfe/semi-ui';
 import { IconUpload, IconDownload, IconSave, IconRefresh } from '@douyinfe/semi-icons';
+import * as api from '../services/api';
 import './ConfigPanel.css';
 
 const { Text, Title } = Typography;
 
-const ConfigPanel = ({ wsRef, userId, content, loading, onContentChange, onLoadingChange }) => {
+const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChange }) => {
   const fileInputRef = useRef(null);
 
-  // 加载配置文件
-  const loadConfig = () => {
-    if (!wsRef?.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      Toast.error('WebSocket 未连接');
-      return;
-    }
+  // 加载配置文件 (REST API)
+  const loadConfig = async () => {
     onLoadingChange(true);
-    wsRef.current.send(JSON.stringify({
-      type: 'load_config',
-      payload: { user_id: userId }
-    }));
+    try {
+      const data = await api.getConfig(userId);
+      onContentChange(data.content || '');
+    } catch (error) {
+      Toast.error('加载配置失败: ' + error.message);
+    } finally {
+      onLoadingChange(false);
+    }
   };
 
-  // 保存配置文件
-  const saveConfig = () => {
-    if (!wsRef?.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      Toast.error('WebSocket 未连接');
-      return;
-    }
+  // 保存配置文件 (REST API)
+  const saveConfig = async () => {
     onLoadingChange(true);
-    wsRef.current.send(JSON.stringify({
-      type: 'save_config',
-      payload: { user_id: userId, content }
-    }));
+    try {
+      await api.saveConfig(userId, content);
+      Toast.success('配置已保存');
+    } catch (error) {
+      Toast.error('保存失败: ' + error.message);
+    } finally {
+      onLoadingChange(false);
+    }
   };
 
   // 处理文件上传
