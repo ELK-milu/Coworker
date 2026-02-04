@@ -8,7 +8,6 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
-	"github.com/QuantumNous/new-api/claudecli/internal/prompt"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
@@ -81,29 +80,13 @@ func Init() *Module {
 	// 创建 MCP 管理器
 	mcpManager := mcp.NewManager()
 
-	// 构建系统提示词
-	promptCtx := &prompt.PromptContext{
-		WorkingDir:     cfg.Security.WorkingDir,
-		Model:          cfg.Claude.Model,
-		PermissionMode: "normal",
-		IsGitRepo:      prompt.IsGitRepo(cfg.Security.WorkingDir),
-		Language:       "中文", // 默认使用中文
-		ClaudeMdPath:   prompt.FindClaudeMd(cfg.Security.WorkingDir),
-	}
-	// 获取 Git 状态
-	if promptCtx.IsGitRepo {
-		promptCtx.GitStatus = prompt.GetGitStatus(cfg.Security.WorkingDir)
-	}
-	systemPrompt := prompt.BuildSystemPrompt(promptCtx)
-	log.Printf("[ClaudeCLI] System prompt built, length: %d chars", len(systemPrompt))
-
 	// 创建 REST 处理器
 	restHandler := api.NewRESTHandler(sessionManager)
 	restHandler.SetTaskManager(taskManager)
 	restHandler.SetWorkspaceManager(workspaceManager)
 
-	// 创建 WebSocket 处理器
-	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, permChecker, skillRegistry, mcpManager, systemPrompt)
+	// 创建 WebSocket 处理器（不再传递静态系统提示词，改为动态构建）
+	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, permChecker, skillRegistry, mcpManager, cfg)
 
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)

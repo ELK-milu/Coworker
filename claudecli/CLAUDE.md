@@ -51,6 +51,8 @@ claudecli/
     │   └── persist.go          # 会话持久化
     ├── task/
     │   └── task.go             # 任务管理 (TodoList)
+    ├── sandbox/
+    │   └── sandbox.go          # 沙箱隔离 (路径映射与安全验证)
     ├── permission/
     │   └── memory.go           # 权限记忆管理
     ├── workspace/
@@ -201,21 +203,60 @@ const handleMessage = (data) => {
 
 ### 工具路径解析
 
-所有工具必须使用 `resolvePath` 解析路径，确保在用户工作空间内：
+所有工具必须使用沙箱 (`sandbox.Sandbox`) 解析路径，确保安全隔离：
 
 ```go
-func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
-    workDir := ctx.Value("workingDir").(string)
-    if filepath.IsAbs(path) {
-        return path
-    }
-    return filepath.Join(workDir, path)
+// 获取沙箱
+sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+
+// 使用沙箱解析路径
+path, err := sb.ToReal(in.FilePath)
+if err != nil {
+    return &types.ToolResult{Success: false, Error: err.Error()}, nil
 }
 ```
+
+### 沙箱隔离机制 (sandbox/)
+
+沙箱提供用户工作空间的安全隔离：
+
+**路径映射规则：**
+```
+输入: /workspace/src/main.go  → 输出: /app/userdata/user_xxx/workspace/src/main.go
+输入: src/main.go             → 输出: /app/userdata/user_xxx/workspace/src/main.go
+输入: /etc/passwd             → 错误: ErrPathOutsideSandbox
+输入: ../../../etc/passwd     → 错误: ErrPathTraversal
+```
+
+**核心方法：**
+- `ToReal(virtualPath)` - 虚拟路径 → 真实路径（带安全验证）
+- `ToVirtual(realPath)` - 真实路径 → 虚拟路径
+- `VirtualizePaths(paths)` - 批量虚拟化路径列表
+- `VirtualizeOutput(output)` - 虚拟化输出字符串中的路径
 
 ---
 
 ## 已完成功能
+
+### 2026-02-04 (工作空间沙箱隔离)
+
+- [x] 沙箱包 (`sandbox/sandbox.go`)
+  - 路径映射：虚拟路径 `/workspace` ↔ 真实路径
+  - 路径遍历攻击防护
+  - 系统路径访问拦截
+  - 输出路径虚拟化
+- [x] 动态系统提示词
+  - 移除静态系统提示词构建
+  - 每个用户独立的系统提示词上下文
+  - 使用虚拟路径 `/workspace` 而非真实路径
+- [x] 工具沙箱集成
+  - Read/Write/Edit 工具使用沙箱解析路径
+  - Glob/Grep 工具输出路径虚拟化
+  - Bash 工具危险路径检查和输出虚拟化
+- [x] Git 状态隔离
+  - 只检查用户工作空间内的 git 状态
+  - 虚拟化 git 状态中的文件路径
+- [x] 单元测试覆盖 (`sandbox_test.go`)
 
 ### 2026-02-04 (OpenCode 学习改进)
 
@@ -282,7 +323,7 @@ func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
 ### 中优先级
 
 - [ ] 上下文压缩性能优化
-- [ ] 工作空间安全审计
+- [x] 工作空间安全审计 (已通过沙箱隔离实现)
 - [ ] 更多工具支持 (LSP, WebFetch 等)
 
 ### 低优先级
@@ -292,4 +333,4 @@ func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
 
 ---
 
-*Last updated: 2026-02-01 19:55:59*
+*Last updated: 2026-02-04 (沙箱隔离功能)*

@@ -13,6 +13,8 @@ const (
 	WorkingDirKey ContextKey = "working_dir"
 	// UserIDKey 用户 ID 的 context key
 	UserIDKey ContextKey = "user_id"
+	// SandboxKey 沙箱的 context key
+	SandboxKey ContextKey = "sandbox"
 )
 
 // GetWorkingDir 从 context 中获取工作目录

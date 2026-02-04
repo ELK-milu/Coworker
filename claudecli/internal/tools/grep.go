@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
@@ -56,6 +57,9 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
+	// 获取沙箱
+	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+
 	workDir := types.GetWorkingDir(ctx, t.workingDir)
 	searchPath := workDir
 	if in.Path != "" {
@@ -73,7 +77,7 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 				return nil
 			}
 		}
-		matches := t.searchFile(path, re)
+		matches := t.searchFile(path, re, sb)
 		results = append(results, matches...)
 		return nil
 	})
@@ -85,12 +89,18 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	return &types.ToolResult{Success: true, Output: strings.Join(results, "\n")}, nil
 }
 
-func (t *GrepTool) searchFile(path string, re *regexp.Regexp) []string {
+func (t *GrepTool) searchFile(path string, re *regexp.Regexp, sb *sandbox.Sandbox) []string {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
 	defer file.Close()
+
+	// 虚拟化路径
+	displayPath := path
+	if sb != nil {
+		displayPath = sb.ToVirtual(path)
+	}
 
 	var results []string
 	scanner := bufio.NewScanner(file)
@@ -99,7 +109,7 @@ func (t *GrepTool) searchFile(path string, re *regexp.Regexp) []string {
 		lineNum++
 		line := scanner.Text()
 		if re.MatchString(line) {
-			results = append(results, fmt.Sprintf("%s:%d:%s", path, lineNum, line))
+			results = append(results, fmt.Sprintf("%s:%d:%s", displayPath, lineNum, line))
 		}
 	}
 	return results

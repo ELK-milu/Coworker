@@ -2,6 +2,7 @@ package loop
 
 import (
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
@@ -20,6 +21,7 @@ type ConversationLoop struct {
 	system    string
 	mode      string // normal, plan, acceptEdits, bypassPermissions
 	userID    string // 用户 ID，用于任务工具
+	sandbox   *sandbox.Sandbox // 沙箱，用于路径隔离
 	startTime int64
 }
 
@@ -76,6 +78,7 @@ func NewConversationLoop(
 	registry *tools.Registry,
 	systemPrompt string,
 	userID string,
+	sb *sandbox.Sandbox,
 	eventCh chan<- LoopEvent,
 ) *ConversationLoop {
 	return &ConversationLoop{
@@ -86,6 +89,7 @@ func NewConversationLoop(
 		eventCh: eventCh,
 		mode:    "normal",
 		userID:  userID,
+		sandbox: sb,
 	}
 }
 
@@ -274,10 +278,11 @@ func (l *ConversationLoop) saveAssistantMessage(text string, calls []toolCall) {
 func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) error {
 	results := make([]interface{}, 0, len(calls))
 
-	// 将会话的工作目录和用户 ID 放入 context
+	// 将会话的工作目录、用户 ID 和沙箱放入 context
 	workDir := l.session.GetWorkingDir()
 	toolCtx := context.WithValue(ctx, types.WorkingDirKey, workDir)
 	toolCtx = context.WithValue(toolCtx, types.UserIDKey, l.userID)
+	toolCtx = context.WithValue(toolCtx, types.SandboxKey, l.sandbox)
 
 	for _, tc := range calls {
 		log.Printf("[Tool] Executing: name=%s, id=%s, workDir=%s", tc.Name, tc.ID, workDir)

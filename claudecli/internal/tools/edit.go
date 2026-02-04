@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
@@ -54,7 +55,15 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	path := t.resolvePath(ctx, in.FilePath)
+	// 获取沙箱
+	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+
+	// 使用沙箱解析路径
+	path, err := t.resolvePathWithSandbox(ctx, in.FilePath, sb)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+	}
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
@@ -65,11 +74,9 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	var matchMethod string
 
 	if in.ReplaceAll {
-		// ReplaceAll 模式仍使用精确匹配
 		newContent = strings.ReplaceAll(oldContent, in.OldString, in.NewString)
 		matchMethod = "exact"
 	} else {
-		// 使用 ReplacerChain 进行模糊匹配
 		match, method := t.replacerChain.FindBestMatch(oldContent, in.OldString)
 		if match != nil {
 			newContent = oldContent[:match.Start] + in.NewString + oldContent[match.End:]
@@ -101,4 +108,12 @@ func (t *EditTool) resolvePath(ctx context.Context, path string) string {
 	}
 	workDir := types.GetWorkingDir(ctx, t.workingDir)
 	return filepath.Join(workDir, path)
+}
+
+// resolvePathWithSandbox 使用沙箱解析路径
+func (t *EditTool) resolvePathWithSandbox(ctx context.Context, path string, sb *sandbox.Sandbox) (string, error) {
+	if sb != nil {
+		return sb.ToReal(path)
+	}
+	return t.resolvePath(ctx, path), nil
 }

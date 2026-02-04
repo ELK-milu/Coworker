@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
@@ -62,12 +63,23 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
+	// 获取沙箱
+	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+
 	workDir := types.GetWorkingDir(ctx, t.workingDir)
 
 	var pattern string
-	// 检查 pattern 是否是绝对路径
 	if filepath.IsAbs(in.Pattern) {
-		pattern = in.Pattern
+		// 绝对路径需要通过沙箱验证
+		if sb != nil {
+			realPath, err := sb.ToReal(in.Pattern)
+			if err != nil {
+				return &types.ToolResult{Success: false, Error: err.Error()}, nil
+			}
+			pattern = realPath
+		} else {
+			pattern = in.Pattern
+		}
 	} else {
 		searchPath := workDir
 		if in.Path != "" {
@@ -86,6 +98,11 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 
 	// 过滤排除的路径
 	filtered := filterExcluded(matches, excludePatterns)
+
+	// 虚拟化输出路径
+	if sb != nil {
+		filtered = sb.VirtualizePaths(filtered)
+	}
 
 	return &types.ToolResult{
 		Success: true,

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
@@ -64,6 +65,19 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		}
 	}
 
+	// 获取沙箱
+	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+
+	// 检查命令中的危险系统路径
+	if sb != nil {
+		dangerousPaths := []string{"/etc/", "/var/", "/usr/", "/bin/", "/sbin/", "/root/", "/proc/", "/sys/"}
+		for _, path := range dangerousPaths {
+			if strings.Contains(in.Command, path) {
+				return &types.ToolResult{Success: false, Error: "access to system paths not allowed"}, nil
+			}
+		}
+	}
+
 	timeout := t.timeout
 	if in.Timeout > 0 {
 		timeout = time.Duration(in.Timeout) * time.Millisecond
@@ -89,10 +103,16 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	// 检查是否超时
 	timedOut := execCtx.Err() == context.DeadlineExceeded
 
+	// 虚拟化输出中的路径
+	outputStr := string(output)
+	if sb != nil {
+		outputStr = sb.VirtualizeOutput(outputStr)
+	}
+
 	if err != nil {
 		return &types.ToolResult{
 			Success:   false,
-			Output:    string(output),
+			Output:    outputStr,
 			Error:     err.Error(),
 			ElapsedMs: elapsedMs,
 			TimeoutMs: timeoutMs,
@@ -102,7 +122,7 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 
 	return &types.ToolResult{
 		Success:   true,
-		Output:    string(output),
+		Output:    outputStr,
 		ElapsedMs: elapsedMs,
 		TimeoutMs: timeoutMs,
 		TimedOut:  false,

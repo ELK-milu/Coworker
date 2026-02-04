@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
@@ -50,12 +51,23 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	path := t.resolvePath(ctx, in.FilePath)
+	// 获取沙箱
+	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+
+	// 使用沙箱解析路径
+	path, err := t.resolvePathWithSandbox(ctx, in.FilePath, sb)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+	}
 
 	// 检查文件是否存在
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// 文件不存在，尝试提供模糊建议
 		suggestions := t.suggestFiles(path)
+		// 虚拟化建议路径
+		if sb != nil {
+			suggestions = sb.VirtualizePaths(suggestions)
+		}
 		errMsg := fmt.Sprintf("file not found: %s", in.FilePath)
 		if len(suggestions) > 0 {
 			errMsg += fmt.Sprintf("\n\nDid you mean one of these?\n- %s", strings.Join(suggestions, "\n- "))
@@ -87,6 +99,15 @@ func (t *ReadTool) resolvePath(ctx context.Context, path string) string {
 	}
 	workDir := types.GetWorkingDir(ctx, t.workingDir)
 	return filepath.Join(workDir, path)
+}
+
+// resolvePathWithSandbox 使用沙箱解析路径
+func (t *ReadTool) resolvePathWithSandbox(ctx context.Context, path string, sb *sandbox.Sandbox) (string, error) {
+	if sb != nil {
+		return sb.ToReal(path)
+	}
+	// 无沙箱时使用原有逻辑
+	return t.resolvePath(ctx, path), nil
 }
 
 // isBinaryFile 检测文件是否为二进制文件

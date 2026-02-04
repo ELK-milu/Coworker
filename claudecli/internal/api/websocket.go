@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
+	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/loop"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
+	"github.com/QuantumNous/new-api/claudecli/internal/prompt"
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
@@ -38,7 +40,7 @@ type WSHandler struct {
 	skills      *skills.Registry
 	skillExec   *skills.Executor
 	mcp         *mcp.Manager
-	system      string
+	config      *config.Config // 配置（用于动态构建系统提示词）
 	mu          sync.Mutex
 	cancelFunc  context.CancelFunc
 	connMu      sync.Mutex
@@ -54,7 +56,7 @@ func NewWSHandler(
 	perm *permissions.Checker,
 	sk *skills.Registry,
 	mcpMgr *mcp.Manager,
-	systemPrompt string,
+	cfg *config.Config,
 ) *WSHandler {
 	return &WSHandler{
 		client:      c,
@@ -66,7 +68,7 @@ func NewWSHandler(
 		skills:      sk,
 		skillExec:   skills.NewExecutor(sk),
 		mcp:         mcpMgr,
-		system:      systemPrompt,
+		config:      cfg,
 	}
 }
 
@@ -258,13 +260,25 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		sess = h.sessions.Create(chat.UserID)
 	}
 
-	// 如果前端指定了工作路径，更新会话的工作目录
+	// 获取用户工作空间路径
+	userWorkDir := h.workspace.GetUserWorkDir(chat.UserID)
+
+	// 创建用户沙箱
+	sb := sandbox.NewSandbox(chat.UserID, userWorkDir)
+
+	// 如果前端指定了工作路径，更新会话的工作目录（仍使用真实路径）
 	if chat.WorkingPath != "" {
-		baseWorkDir := h.workspace.GetUserWorkDir(chat.UserID)
-		newWorkDir := filepath.Join(baseWorkDir, chat.WorkingPath)
-		sess.SetWorkingDir(newWorkDir)
-		log.Printf("[WS] Updated working dir for session %s: %s", sess.ID, newWorkDir)
+		realWorkDir, err := sb.ToReal(chat.WorkingPath)
+		if err == nil {
+			sess.SetWorkingDir(realWorkDir)
+			log.Printf("[WS] Updated working dir for session %s: %s (virtual: %s)", sess.ID, realWorkDir, chat.WorkingPath)
+		}
+	} else {
+		sess.SetWorkingDir(userWorkDir)
 	}
+
+	// 动态构建系统提示词（使用虚拟路径）
+	systemPrompt := h.buildUserSystemPrompt(chat.UserID, sb)
 
 	// 创建可取消的 context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -275,17 +289,17 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	// 创建事件通道
 	eventCh := make(chan loop.LoopEvent, 100)
 
-	// 启动对话循环
-	go h.runConversation(ctx, sess, chat.UserID, chat.Message, eventCh)
+	// 启动对话循环（传递沙箱）
+	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, eventCh)
 
 	// 异步转发事件到 WebSocket（不阻塞消息读取循环）
 	go h.forwardEvents(conn, sess.ID, eventCh)
 }
 
 // runConversation 运行对话
-func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, eventCh chan loop.LoopEvent) {
+func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, eventCh chan loop.LoopEvent) {
 	defer close(eventCh)
-	l := loop.NewConversationLoop(h.client, sess, h.tools, h.system, userID, eventCh)
+	l := loop.NewConversationLoop(h.client, sess, h.tools, systemPrompt, userID, sb, eventCh)
 	l.ProcessMessage(ctx, msg)
 
 	// 对话结束后保存会话
@@ -1557,4 +1571,38 @@ func (h *WSHandler) handleClearOutputSchema(conn *websocket.Conn) {
 			"success": true,
 		},
 	})
+}
+
+// buildUserSystemPrompt 为用户动态构建系统提示词（使用虚拟路径）
+func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) string {
+	// 使用虚拟工作目录
+	virtualWorkDir := sb.GetVirtualWorkingDir()
+	realWorkDir := sb.GetRealWorkingDir()
+
+	// 构建提示词上下文
+	promptCtx := &prompt.PromptContext{
+		WorkingDir:     virtualWorkDir, // 使用虚拟路径
+		Model:          h.config.Claude.Model,
+		PermissionMode: "normal",
+		IsGitRepo:      prompt.IsGitRepo(realWorkDir), // 检查真实路径
+		Language:       "中文",
+		ClaudeMdPath:   prompt.FindClaudeMd(realWorkDir), // 查找真实路径
+	}
+
+	// 获取 Git 状态（使用真实路径，但虚拟化输出）
+	if promptCtx.IsGitRepo {
+		gitStatus := prompt.GetGitStatus(realWorkDir)
+		if gitStatus != nil {
+			// 虚拟化 Git 状态中的文件路径
+			gitStatus.Staged = sb.VirtualizePaths(gitStatus.Staged)
+			gitStatus.Unstaged = sb.VirtualizePaths(gitStatus.Unstaged)
+			gitStatus.Untracked = sb.VirtualizePaths(gitStatus.Untracked)
+			promptCtx.GitStatus = gitStatus
+		}
+	}
+
+	systemPrompt := prompt.BuildSystemPrompt(promptCtx)
+	log.Printf("[WS] Built system prompt for user %s, length: %d chars", userID, len(systemPrompt))
+
+	return systemPrompt
 }

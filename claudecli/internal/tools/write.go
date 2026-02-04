@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
@@ -46,7 +47,14 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	path := t.resolvePath(ctx, in.FilePath)
+	// 获取沙箱
+	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+
+	// 使用沙箱解析路径
+	path, err := t.resolvePathWithSandbox(ctx, in.FilePath, sb)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+	}
 	log.Printf("[Write] Input path: %s, Resolved path: %s", in.FilePath, path)
 
 	// 确保目录存在
@@ -59,7 +67,9 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	return &types.ToolResult{Success: true, Output: "File written successfully to " + path}, nil
+	// 返回虚拟路径
+	outputPath := in.FilePath
+	return &types.ToolResult{Success: true, Output: "File written successfully to " + outputPath}, nil
 }
 
 func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
@@ -69,4 +79,12 @@ func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
 	workDir := types.GetWorkingDir(ctx, t.workingDir)
 	log.Printf("[Write] resolvePath: defaultWorkDir=%s, contextWorkDir=%s", t.workingDir, workDir)
 	return filepath.Join(workDir, path)
+}
+
+// resolvePathWithSandbox 使用沙箱解析路径
+func (t *WriteTool) resolvePathWithSandbox(ctx context.Context, path string, sb *sandbox.Sandbox) (string, error) {
+	if sb != nil {
+		return sb.ToReal(path)
+	}
+	return t.resolvePath(ctx, path), nil
 }
