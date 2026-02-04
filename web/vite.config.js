@@ -31,6 +31,19 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: process.env.VITE_API_URL || 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/claudecli': {
+        target: process.env.VITE_API_URL || 'http://localhost:3000',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
+  },
   plugins: [
     codeInspectorPlugin({
       bundler: 'vite',
@@ -65,6 +78,8 @@ export default defineConfig({
     },
   },
   build: {
+    // 启用构建缓存
+    cache: true,
     rollupOptions: {
       output: {
         manualChunks: {

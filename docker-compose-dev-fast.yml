@@ -1,40 +1,37 @@
-# Development Docker Compose Configuration
-# 简化的本地开发方式
+# Fast Development Docker Compose Configuration
+# 使用 Vite 开发服务器，支持 HMR 热更新
 #
 # 使用方法:
-#   docker-compose -f docker-compose-dev.yml up
+#   docker-compose -f docker-compose-dev-fast.yml up
 #
 # 架构说明:
-#   开发时访问: http://localhost:3000 (后端服务)
-#       ↓
-#   Go 后端 (3000) + Air 热重载 + 静态文件服务
-#       ↓
-#   前端构建产物 (web/dist)
+#   前端开发: http://localhost:5173 (Vite Dev Server + HMR)
+#   后端 API: http://localhost:3000 (Go + Air)
+#   Vite 自动代理 /api/* 到后端
 #
 # 特性:
-#   - 统一入口：http://localhost:3000
-#   - 后端：Go + Air 热重载
-#   - 前端：bun build 构建静态文件，修改后手动重启 web-dev 容器
-#
-# 前端修改后重新构建:
-#   docker-compose -f docker-compose-dev.yml restart web-dev
+#   - 前端修改即时生效（HMR，毫秒级）
+#   - 后端修改自动重载（Air）
+#   - 无需手动重启任何容器
 
 version: '3.4'
 
 services:
-  # 前端构建服务 (Bun + Vite Build)
+  # 前端开发服务 (Vite Dev Server + HMR)
   web-dev:
     image: oven/bun:latest
     container_name: web-dev
-    restart: "no"
+    restart: unless-stopped
     volumes:
       - ./web:/app
       - web_node_modules:/app/node_modules
-      - web_vite_cache:/app/node_modules/.vite
     working_dir: /app
-    command: sh -c "bun install && bun run build"
+    ports:
+      - "5173:5173"
+    command: sh -c "bun install && bun run dev -- --host 0.0.0.0"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=development
+      - VITE_API_URL=http://new-api-dev:3000
 
   # 后端开发服务 (Go + Air)
   new-api-dev:
@@ -44,22 +41,16 @@ services:
     container_name: new-api-dev
     restart: unless-stopped
     ports:
-      - "3000:3000"  # Go API 服务端口
+      - "3000:3000"
     volumes:
-      # 挂载源代码（实时更新）
       - .:/app
-      # 排除构建产物
       - /app/tmp
-      # 用户数据目录
       - ./userdata:/app/userdata
     environment:
       - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
-      - ERROR_LOG_ENABLED=true
-      - BATCH_UPDATE_ENABLED=true
       - DEBUG=true
-      # Agent 配置
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
       - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
@@ -93,4 +84,3 @@ services:
 volumes:
   pg_data_dev:
   web_node_modules:
-  web_vite_cache:

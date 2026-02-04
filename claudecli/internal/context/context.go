@@ -275,8 +275,17 @@ func (m *Manager) Compact() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 1. 先执行 Microcompact（清理旧工具结果）
+	// 1. 先执行 Prune 层（基于 token 数修剪旧工具输出）
 	messages := m.getMessagesUnsafe()
+	currentTokens := m.getUsedTokensUnsafe()
+	prunedMessages, pruneResult := Prune(messages, currentTokens)
+	if pruneResult.SavedTokens > 0 {
+		m.updateMessagesFromCompacted(prunedMessages)
+		m.savedTokens += pruneResult.SavedTokens
+	}
+
+	// 2. 执行 Microcompact（清理旧工具结果）
+	messages = m.getMessagesUnsafe()
 	compactedMessages := Microcompact(messages)
 	m.updateMessagesFromCompacted(compactedMessages)
 

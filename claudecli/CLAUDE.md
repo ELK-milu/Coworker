@@ -40,6 +40,7 @@ claudecli/
     ├── context/
     │   ├── context.go          # 上下文管理器
     │   ├── compress.go         # 消息压缩 (Microcompact)
+    │   ├── prune.go            # Prune 层 (基于 token 修剪)
     │   ├── summary.go          # 摘要生成
     │   ├── summarizer.go       # AI 摘要生成器
     │   ├── session_memory.go   # Session Memory 管理
@@ -50,15 +51,18 @@ claudecli/
     │   └── persist.go          # 会话持久化
     ├── task/
     │   └── task.go             # 任务管理 (TodoList)
+    ├── permission/
+    │   └── memory.go           # 权限记忆管理
     ├── workspace/
     │   └── workspace.go        # 用户工作空间隔离
     ├── tools/
     │   ├── registry.go         # 工具注册表
     │   ├── bash.go             # Bash 命令执行
-    │   ├── read.go             # 文件读取
+    │   ├── read.go             # 文件读取 (含二进制检测)
     │   ├── write.go            # 文件写入
     │   ├── edit.go             # 文件编辑
-    │   ├── glob.go             # 文件搜索
+    │   ├── edit_replacer.go    # 多层 Replacer 链
+    │   ├── glob.go             # 文件搜索 (含排除模式)
     │   └── grep.go             # 内容搜索
     ├── loop/
     │   └── conversation.go     # 对话循环控制
@@ -212,6 +216,29 @@ func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
 ---
 
 ## 已完成功能
+
+### 2026-02-04 (OpenCode 学习改进)
+
+- [x] Edit 工具多层 Replacer 链 (`edit_replacer.go`)
+  - SimpleReplacer (精确匹配)
+  - LineTrimmedReplacer (行尾空格容忍)
+  - LeadingWhitespaceReplacer (前导空格容忍)
+  - BlockAnchorReplacer (首尾行锚定 + Levenshtein 模糊匹配)
+  - WhitespaceNormalizedReplacer (空格归一化)
+  - IndentNormalizedReplacer (Tab/空格互换)
+- [x] Read 工具增强
+  - 二进制文件检测 (拒绝读取二进制文件)
+  - 模糊文件建议 (文件不存在时提供相似文件名)
+- [x] 会话压缩 Prune 层 (`prune.go`)
+  - 基于 token 数修剪旧工具输出
+  - 保护最近 40K tokens 的消息
+- [x] Glob 排除模式
+  - 默认排除 node_modules、.git、vendor 等
+  - 支持用户自定义排除模式
+- [x] 权限记忆系统 (`permission/memory.go`)
+  - 支持 "always allow/deny" 选项
+  - 通配符匹配 (如 "git *")
+  - 持久化到 userdata/{user_id}/permissions.json
 
 ### 2026-02-02
 

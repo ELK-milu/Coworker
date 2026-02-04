@@ -11,7 +11,8 @@ import (
 
 // EditTool 文件编辑工具
 type EditTool struct {
-	workingDir string
+	workingDir    string
+	replacerChain *ReplacerChain
 }
 
 type EditInput struct {
@@ -22,7 +23,10 @@ type EditInput struct {
 }
 
 func NewEditTool(workingDir string) *EditTool {
-	return &EditTool{workingDir: workingDir}
+	return &EditTool{
+		workingDir:    workingDir,
+		replacerChain: NewReplacerChain(),
+	}
 }
 
 func (t *EditTool) Name() string { return "Edit" }
@@ -58,11 +62,21 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 
 	oldContent := string(content)
 	var newContent string
+	var matchMethod string
 
 	if in.ReplaceAll {
+		// ReplaceAll 模式仍使用精确匹配
 		newContent = strings.ReplaceAll(oldContent, in.OldString, in.NewString)
+		matchMethod = "exact"
 	} else {
-		newContent = strings.Replace(oldContent, in.OldString, in.NewString, 1)
+		// 使用 ReplacerChain 进行模糊匹配
+		match, method := t.replacerChain.FindBestMatch(oldContent, in.OldString)
+		if match != nil {
+			newContent = oldContent[:match.Start] + in.NewString + oldContent[match.End:]
+			matchMethod = method
+		} else {
+			newContent = oldContent
+		}
 	}
 
 	if oldContent == newContent {
@@ -73,7 +87,12 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	return &types.ToolResult{Success: true, Output: "File edited successfully"}, nil
+	output := "File edited successfully"
+	if matchMethod != "" && matchMethod != "SimpleReplacer" {
+		output = "File edited successfully (matched via " + matchMethod + ")"
+	}
+
+	return &types.ToolResult{Success: true, Output: output}, nil
 }
 
 func (t *EditTool) resolvePath(ctx context.Context, path string) string {

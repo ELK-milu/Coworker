@@ -1,11 +1,14 @@
 package tools
 
 import (
-	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
 // ReadTool 文件读取工具
@@ -48,6 +51,28 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	}
 
 	path := t.resolvePath(ctx, in.FilePath)
+
+	// 检查文件是否存在
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// 文件不存在，尝试提供模糊建议
+		suggestions := t.suggestFiles(path)
+		errMsg := fmt.Sprintf("file not found: %s", in.FilePath)
+		if len(suggestions) > 0 {
+			errMsg += fmt.Sprintf("\n\nDid you mean one of these?\n- %s", strings.Join(suggestions, "\n- "))
+		}
+		return &types.ToolResult{Success: false, Error: errMsg}, nil
+	}
+
+	// 检查是否为二进制文件
+	if isBinary, err := t.isBinaryFile(path); err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+	} else if isBinary {
+		return &types.ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot read binary file: %s", in.FilePath),
+		}, nil
+	}
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
@@ -62,4 +87,61 @@ func (t *ReadTool) resolvePath(ctx context.Context, path string) string {
 	}
 	workDir := types.GetWorkingDir(ctx, t.workingDir)
 	return filepath.Join(workDir, path)
+}
+
+// isBinaryFile 检测文件是否为二进制文件
+func (t *ReadTool) isBinaryFile(path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+
+	// 读取前 8000 字节进行检测
+	buf := make([]byte, 8000)
+	n, err := file.Read(buf)
+	if err != nil && n == 0 {
+		return false, err
+	}
+
+	// 检查是否包含 NULL 字节（二进制文件的特征）
+	for i := 0; i < n; i++ {
+		if buf[i] == 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// suggestFiles 根据文件名提供模糊建议
+func (t *ReadTool) suggestFiles(path string) []string {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	var suggestions []string
+	baseLower := strings.ToLower(base)
+
+	for _, entry := range entries {
+		name := entry.Name()
+		nameLower := strings.ToLower(name)
+
+		// 检查是否包含基础名称
+		if strings.Contains(nameLower, baseLower) ||
+			strings.Contains(baseLower, nameLower) {
+			suggestions = append(suggestions, filepath.Join(dir, name))
+		}
+	}
+
+	// 最多返回 3 个建议
+	if len(suggestions) > 3 {
+		suggestions = suggestions[:3]
+	}
+
+	return suggestions
 }
