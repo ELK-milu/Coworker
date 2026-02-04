@@ -402,6 +402,78 @@ func (m *Manager) Render(userID, listID string) string {
 	return strings.Join(lines, "\n")
 }
 
+// RenderCompact 紧凑渲染任务列表（用于系统提示词嵌入）
+// 只显示 in_progress + pending + 最近3个completed
+// maxItems 限制最大显示数量
+func (m *Manager) RenderCompact(userID, listID string, maxItems int) string {
+	tasks := m.List(userID, listID)
+	if len(tasks) == 0 {
+		return ""
+	}
+
+	var inProgress []*Task
+	var pending []*Task
+	var completed []*Task
+
+	for _, t := range tasks {
+		switch t.Status {
+		case StatusInProgress:
+			inProgress = append(inProgress, t)
+		case StatusPending:
+			pending = append(pending, t)
+		case StatusCompleted:
+			completed = append(completed, t)
+		}
+	}
+
+	// 只保留最近3个已完成任务
+	if len(completed) > 3 {
+		completed = completed[len(completed)-3:]
+	}
+
+	var lines []string
+	count := 0
+
+	// 先显示进行中的任务
+	for _, t := range inProgress {
+		if count >= maxItems {
+			break
+		}
+		if t.ActiveForm != "" {
+			lines = append(lines, fmt.Sprintf("[>] %s <- %s", t.Subject, t.ActiveForm))
+		} else {
+			lines = append(lines, fmt.Sprintf("[>] %s", t.Subject))
+		}
+		count++
+	}
+
+	// 再显示待办任务
+	for _, t := range pending {
+		if count >= maxItems {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("[ ] %s", t.Subject))
+		count++
+	}
+
+	// 最后显示最近完成的任务
+	for _, t := range completed {
+		if count >= maxItems {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("[x] %s", t.Subject))
+		count++
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	// 添加统计
+	lines = append(lines, fmt.Sprintf("\n(%d/%d completed)", len(completed), len(tasks)))
+	return strings.Join(lines, "\n")
+}
+
 // contains 检查切片是否包含元素
 func contains(slice []string, item string) bool {
 	for _, s := range slice {

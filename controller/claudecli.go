@@ -124,3 +124,35 @@ func (ctrl *ClaudeCLIController) GetConfig(c *gin.Context) {
 func (ctrl *ClaudeCLIController) SaveConfig(c *gin.Context) {
 	ctrl.module.RESTHandler.SaveConfig(c)
 }
+
+// ========== Job 管理 ==========
+
+// ListJobs 获取 Job 列表
+func (ctrl *ClaudeCLIController) ListJobs(c *gin.Context) {
+	ctrl.module.RESTHandler.ListJobs(c)
+}
+
+// CreateJob 创建 Job
+func (ctrl *ClaudeCLIController) CreateJob(c *gin.Context) {
+	ctrl.module.RESTHandler.CreateJob(c)
+}
+
+// UpdateJob 更新 Job
+func (ctrl *ClaudeCLIController) UpdateJob(c *gin.Context) {
+	ctrl.module.RESTHandler.UpdateJob(c)
+}
+
+// DeleteJob 删除 Job
+func (ctrl *ClaudeCLIController) DeleteJob(c *gin.Context) {
+	ctrl.module.RESTHandler.DeleteJob(c)
+}
+
+// RunJob 手动触发 Job
+func (ctrl *ClaudeCLIController) RunJob(c *gin.Context) {
+	ctrl.module.RESTHandler.RunJob(c)
+}
+
+// ReorderJobs 批量排序 Jobs
+func (ctrl *ClaudeCLIController) ReorderJobs(c *gin.Context) {
+	ctrl.module.RESTHandler.ReorderJobs(c)
+}

@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/container"
+	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
@@ -25,6 +26,7 @@ type Module struct {
 	Tools        *tools.Registry
 	Workspace    *workspace.Manager
 	Tasks        *task.Manager
+	Jobs         *job.Manager
 	Containers   *container.ContainerManager
 	RESTHandler  *api.RESTHandler
 	WSHandler    *api.WSHandler
@@ -70,6 +72,9 @@ func Init() *Module {
 	// 创建任务管理器
 	taskManager := task.NewManager(cfg.Security.WorkingDir)
 
+	// 创建 Job 管理器
+	jobManager := job.NewManager(cfg.Security.WorkingDir)
+
 	// 创建容器管理器（如果启用）
 	var containerMgr *container.ContainerManager
 	if cfg.Container.Enabled {
@@ -108,9 +113,11 @@ func Init() *Module {
 	restHandler := api.NewRESTHandler(sessionManager)
 	restHandler.SetTaskManager(taskManager)
 	restHandler.SetWorkspaceManager(workspaceManager)
+	restHandler.SetJobManager(jobManager)
 
 	// 创建 WebSocket 处理器（不再传递静态系统提示词，改为动态构建）
 	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, permChecker, skillRegistry, mcpManager, cfg)
+	wsHandler.SetJobManager(jobManager)
 
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)
@@ -122,11 +129,15 @@ func Init() *Module {
 		Tools:       toolRegistry,
 		Workspace:   workspaceManager,
 		Tasks:       taskManager,
+		Jobs:        jobManager,
 		Containers:  containerMgr,
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
 		FileHandler: fileHandler,
 	}
+
+	// 启动 Job 调度器
+	jobManager.Start()
 
 	log.Println("[ClaudeCLI] Module initialized successfully")
 	return instance
@@ -163,6 +174,10 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 
 // Shutdown 优雅关闭模块
 func (m *Module) Shutdown() {
+	if m.Jobs != nil {
+		log.Println("[ClaudeCLI] Stopping job scheduler...")
+		m.Jobs.Stop()
+	}
 	if m.Containers != nil {
 		log.Println("[ClaudeCLI] Shutting down container manager...")
 		m.Containers.StopAll()

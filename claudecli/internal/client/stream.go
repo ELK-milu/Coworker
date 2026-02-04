@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"log"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
@@ -68,4 +69,43 @@ func (c *ClaudeClient) streamMessages(
 		eventCh <- StreamEvent{Type: EventError, Error: err.Error()}
 	}
 	log.Printf("[API] Stream completed")
+}
+
+// CreateSimpleMessage 创建简单消息（非流式，用于标题生成等轻量级任务）
+func (c *ClaudeClient) CreateSimpleMessage(ctx context.Context, prompt string, maxTokens int64) (string, error) {
+	// 使用 Haiku 模型降低成本
+	model := "claude-3-5-haiku-latest"
+
+	messages := []anthropic.BetaMessageParam{
+		{
+			Role: "user",
+			Content: []anthropic.BetaContentBlockParamUnion{
+				{
+					OfRequestTextBlock: &anthropic.BetaTextBlockParam{
+						Type: "text",
+						Text: prompt,
+					},
+				},
+			},
+		},
+	}
+
+	response, err := c.client.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
+		Model:     anthropic.Model(model),
+		MaxTokens: maxTokens,
+		Messages:  messages,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	// 提取文本内容
+	var text strings.Builder
+	for _, block := range response.Content {
+		if block.Type == "text" {
+			text.WriteString(block.Text)
+		}
+	}
+
+	return text.String(), nil
 }

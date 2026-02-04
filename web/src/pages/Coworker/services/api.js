@@ -172,3 +172,54 @@ export async function saveConfig(userId, content) {
     }),
   });
 }
+
+// ========== Job 管理 API ==========
+
+export async function listJobs(userId) {
+  return request(`/jobs?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function createJob(userId, jobData) {
+  return request('/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: userId,
+      ...jobData,
+    }),
+  });
+}
+
+export async function updateJob(userId, jobId, updates) {
+  return request(`/jobs/${encodeURIComponent(jobId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      user_id: userId,
+      ...updates,
+    }),
+  });
+}
+
+export async function deleteJob(userId, jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}?user_id=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function runJob(userId, jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/run`, {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: userId,
+    }),
+  });
+}
+
+export async function reorderJobs(userId, jobIds) {
+  return request('/jobs/reorder', {
+    method: 'PUT',
+    body: JSON.stringify({
+      user_id: userId,
+      job_ids: jobIds,
+    }),
+  });
+}

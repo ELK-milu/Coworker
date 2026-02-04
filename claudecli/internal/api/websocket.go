@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
+	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/loop"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
@@ -36,6 +37,7 @@ type WSHandler struct {
 	tools       *tools.Registry
 	workspace   *workspace.Manager
 	tasks       *task.Manager
+	jobs        *job.Manager
 	permissions *permissions.Checker
 	skills      *skills.Registry
 	skillExec   *skills.Executor
@@ -70,6 +72,11 @@ func NewWSHandler(
 		mcp:         mcpMgr,
 		config:      cfg,
 	}
+}
+
+// SetJobManager 设置 Job 管理器
+func (h *WSHandler) SetJobManager(jm *job.Manager) {
+	h.jobs = jm
 }
 
 // WSMessage WebSocket 消息
@@ -216,6 +223,25 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "clear_output_schema":
 			log.Printf("[WS] Processing clear_output_schema message")
 			h.handleClearOutputSchema(conn)
+		// Job 相关消息
+		case "job_create":
+			log.Printf("[WS] Processing job_create message")
+			h.handleJobCreate(conn, wsMsg.Payload)
+		case "job_update":
+			log.Printf("[WS] Processing job_update message")
+			h.handleJobUpdate(conn, wsMsg.Payload)
+		case "job_delete":
+			log.Printf("[WS] Processing job_delete message")
+			h.handleJobDelete(conn, wsMsg.Payload)
+		case "job_list":
+			log.Printf("[WS] Processing job_list message")
+			h.handleJobList(conn, wsMsg.Payload)
+		case "job_run":
+			log.Printf("[WS] Processing job_run message")
+			h.handleJobRun(conn, wsMsg.Payload)
+		case "job_reorder":
+			log.Printf("[WS] Processing job_reorder message")
+			h.handleJobReorder(conn, wsMsg.Payload)
 		}
 	}
 }
@@ -255,9 +281,11 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	}
 
 	// 获取或创建会话
+	isNewSession := false
 	sess := h.sessions.Get(chat.SessionID)
 	if sess == nil {
 		sess = h.sessions.Create(chat.UserID)
+		isNewSession = true
 	}
 
 	// 获取用户工作空间路径
@@ -289,15 +317,29 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	// 创建事件通道
 	eventCh := make(chan loop.LoopEvent, 100)
 
+	// 如果是新会话，发送 session_created 事件
+	if isNewSession {
+		// 先发送 session_created 消息
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "session_created",
+			"payload": map[string]interface{}{
+				"session_id": sess.ID,
+				"title":      "新对话",
+				"created_at": sess.CreatedAt.Unix(),
+				"updated_at": sess.UpdatedAt.Unix(),
+			},
+		})
+	}
+
 	// 启动对话循环（传递沙箱）
-	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, eventCh)
+	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, eventCh, conn, isNewSession)
 
 	// 异步转发事件到 WebSocket（不阻塞消息读取循环）
 	go h.forwardEvents(conn, sess.ID, eventCh)
 }
 
 // runConversation 运行对话
-func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, eventCh chan loop.LoopEvent) {
+func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, eventCh chan loop.LoopEvent, conn *websocket.Conn, isNewSession bool) {
 	defer close(eventCh)
 	l := loop.NewConversationLoop(h.client, sess, h.tools, systemPrompt, userID, sb, eventCh)
 	l.ProcessMessage(ctx, msg)
@@ -307,6 +349,11 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 		log.Printf("[WS] Failed to save session %s: %v", sess.ID, err)
 	} else {
 		log.Printf("[WS] Session saved: %s", sess.ID)
+	}
+
+	// 如果是新会话且还没有标题，异步生成标题
+	if isNewSession && sess.GetTitle() == "" {
+		go h.generateSessionTitle(ctx, sess, msg, conn)
 	}
 }
 
@@ -1585,6 +1632,12 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 		platform = "linux (sandbox container)"
 	}
 
+	// 获取任务列表渲染
+	tasksRender := ""
+	if h.tasks != nil {
+		tasksRender = h.tasks.RenderCompact(userID, "default", 10)
+	}
+
 	// 构建提示词上下文
 	promptCtx := &prompt.PromptContext{
 		WorkingDir:     virtualWorkDir, // 使用虚拟路径
@@ -1592,6 +1645,7 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 		PermissionMode: "normal",
 		Platform:       platform,
 		Language:       "中文",
+		TasksRender:    tasksRender,
 	}
 
 	// 容器隔离模式：用户工作空间是隔离的，不继承宿主机的 git 状态
@@ -1629,4 +1683,332 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 	log.Printf("[WS] Built system prompt for user %s, length: %d chars, isGitRepo: %v", userID, len(systemPrompt), promptCtx.IsGitRepo)
 
 	return systemPrompt
+}
+
+// generateSessionTitle 异步生成会话标题
+func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Session, firstMessage string, conn *websocket.Conn) {
+	// 构建标题生成提示
+	prompt := `Based on the following user message, generate a concise title (10-20 characters) that summarizes the topic. Reply with ONLY the title, no quotes or extra text.
+
+User message: ` + firstMessage
+
+	// 限制消息长度
+	if len(prompt) > 500 {
+		prompt = prompt[:500] + "..."
+	}
+
+	// 使用轻量级模型生成标题
+	title, err := h.client.CreateSimpleMessage(ctx, prompt, 50)
+	if err != nil {
+		log.Printf("[WS] Failed to generate title for session %s: %v", sess.ID, err)
+		// 使用消息前缀作为后备标题
+		title = firstMessage
+		if len(title) > 30 {
+			title = title[:30] + "..."
+		}
+	}
+
+	// 清理标题
+	title = strings.TrimSpace(title)
+	title = strings.Trim(title, "\"'")
+	if len(title) > 50 {
+		title = title[:50] + "..."
+	}
+
+	// 更新会话标题
+	sess.SetTitle(title)
+
+	// 保存会话
+	if err := h.sessions.Save(sess.ID); err != nil {
+		log.Printf("[WS] Failed to save session after title update: %v", err)
+	}
+
+	// 发送 title_updated 消息
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "title_updated",
+		"payload": map[string]interface{}{
+			"session_id": sess.ID,
+			"title":      title,
+		},
+	})
+
+	log.Printf("[WS] Generated title for session %s: %s", sess.ID, title)
+}
+
+// ========== Job 相关处理 ==========
+
+// JobCreatePayload 创建 Job 载荷
+type JobCreatePayload struct {
+	UserID   string `json:"user_id"`
+	Name     string `json:"name"`
+	CronExpr string `json:"cron_expr"`
+	Command  string `json:"command"`
+}
+
+// handleJobCreate 处理创建 Job 请求
+func (h *WSHandler) handleJobCreate(conn *websocket.Conn, payload json.RawMessage) {
+	var req JobCreatePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid job_create payload")
+		return
+	}
+
+	if req.UserID == "" || req.Name == "" || req.CronExpr == "" || req.Command == "" {
+		h.sendError(conn, "user_id, name, cron_expr and command are required")
+		return
+	}
+
+	if h.jobs == nil {
+		h.sendError(conn, "job manager not initialized")
+		return
+	}
+
+	go func() {
+		j, err := h.jobs.Create(req.UserID, req.Name, req.CronExpr, req.Command)
+		if err != nil {
+			h.sendError(conn, "failed to create job: "+err.Error())
+			return
+		}
+
+		log.Printf("[WS] Created job for user %s: %s", req.UserID, j.ID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "job_created",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"job":     j,
+				"success": true,
+			},
+		})
+	}()
+}
+
+// JobUpdatePayload 更新 Job 载荷
+type JobUpdatePayload struct {
+	UserID   string `json:"user_id"`
+	JobID    string `json:"job_id"`
+	Name     string `json:"name,omitempty"`
+	CronExpr string `json:"cron_expr,omitempty"`
+	Command  string `json:"command,omitempty"`
+	Enabled  *bool  `json:"enabled,omitempty"`
+}
+
+// handleJobUpdate 处理更新 Job 请求
+func (h *WSHandler) handleJobUpdate(conn *websocket.Conn, payload json.RawMessage) {
+	var req JobUpdatePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid job_update payload")
+		return
+	}
+
+	if req.UserID == "" || req.JobID == "" {
+		h.sendError(conn, "user_id and job_id are required")
+		return
+	}
+
+	if h.jobs == nil {
+		h.sendError(conn, "job manager not initialized")
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if req.Name != "" {
+		updates["name"] = req.Name
+	}
+	if req.CronExpr != "" {
+		updates["cron_expr"] = req.CronExpr
+	}
+	if req.Command != "" {
+		updates["command"] = req.Command
+	}
+	if req.Enabled != nil {
+		updates["enabled"] = *req.Enabled
+	}
+
+	go func() {
+		j, err := h.jobs.Update(req.UserID, req.JobID, updates)
+		if err != nil {
+			h.sendError(conn, "failed to update job: "+err.Error())
+			return
+		}
+
+		log.Printf("[WS] Updated job for user %s: %s", req.UserID, req.JobID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "job_updated",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"job":     j,
+				"success": true,
+			},
+		})
+	}()
+}
+
+// JobDeletePayload 删除 Job 载荷
+type JobDeletePayload struct {
+	UserID string `json:"user_id"`
+	JobID  string `json:"job_id"`
+}
+
+// handleJobDelete 处理删除 Job 请求
+func (h *WSHandler) handleJobDelete(conn *websocket.Conn, payload json.RawMessage) {
+	var req JobDeletePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid job_delete payload")
+		return
+	}
+
+	if req.UserID == "" || req.JobID == "" {
+		h.sendError(conn, "user_id and job_id are required")
+		return
+	}
+
+	if h.jobs == nil {
+		h.sendError(conn, "job manager not initialized")
+		return
+	}
+
+	go func() {
+		if err := h.jobs.Delete(req.UserID, req.JobID); err != nil {
+			h.sendError(conn, "failed to delete job: "+err.Error())
+			return
+		}
+
+		log.Printf("[WS] Deleted job for user %s: %s", req.UserID, req.JobID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "job_deleted",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"job_id":  req.JobID,
+				"success": true,
+			},
+		})
+	}()
+}
+
+// JobListPayload Job 列表载荷
+type JobListPayload struct {
+	UserID string `json:"user_id"`
+}
+
+// handleJobList 处理 Job 列表请求
+func (h *WSHandler) handleJobList(conn *websocket.Conn, payload json.RawMessage) {
+	var req JobListPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid job_list payload")
+		return
+	}
+
+	if req.UserID == "" {
+		h.sendError(conn, "user_id is required")
+		return
+	}
+
+	if h.jobs == nil {
+		h.sendError(conn, "job manager not initialized")
+		return
+	}
+
+	go func() {
+		jobs := h.jobs.List(req.UserID)
+		log.Printf("[WS] Listed %d jobs for user %s", len(jobs), req.UserID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "jobs_list",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"jobs":    jobs,
+			},
+		})
+	}()
+}
+
+// JobRunPayload Job 运行载荷
+type JobRunPayload struct {
+	UserID string `json:"user_id"`
+	JobID  string `json:"job_id"`
+}
+
+// handleJobRun 处理手动触发 Job 请求
+func (h *WSHandler) handleJobRun(conn *websocket.Conn, payload json.RawMessage) {
+	var req JobRunPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid job_run payload")
+		return
+	}
+
+	if req.UserID == "" || req.JobID == "" {
+		h.sendError(conn, "user_id and job_id are required")
+		return
+	}
+
+	if h.jobs == nil {
+		h.sendError(conn, "job manager not initialized")
+		return
+	}
+
+	j := h.jobs.Get(req.UserID, req.JobID)
+	if j == nil {
+		h.sendError(conn, "job not found")
+		return
+	}
+
+	// 标记为运行中
+	h.jobs.MarkRunning(req.UserID, req.JobID)
+
+	log.Printf("[WS] Job manually triggered for user %s: %s", req.UserID, req.JobID)
+
+	h.sendJSON(conn, map[string]interface{}{
+		"type": "job_triggered",
+		"payload": map[string]interface{}{
+			"user_id": req.UserID,
+			"job":     j,
+			"success": true,
+		},
+	})
+}
+
+// JobReorderPayload Job 排序载荷
+type JobReorderPayload struct {
+	UserID string   `json:"user_id"`
+	JobIDs []string `json:"job_ids"`
+}
+
+// handleJobReorder 处理 Job 排序请求
+func (h *WSHandler) handleJobReorder(conn *websocket.Conn, payload json.RawMessage) {
+	var req JobReorderPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid job_reorder payload")
+		return
+	}
+
+	if req.UserID == "" || len(req.JobIDs) == 0 {
+		h.sendError(conn, "user_id and job_ids are required")
+		return
+	}
+
+	if h.jobs == nil {
+		h.sendError(conn, "job manager not initialized")
+		return
+	}
+
+	go func() {
+		if err := h.jobs.UpdateOrder(req.UserID, req.JobIDs); err != nil {
+			h.sendError(conn, "failed to reorder jobs: "+err.Error())
+			return
+		}
+
+		log.Printf("[WS] Reordered jobs for user %s", req.UserID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "jobs_reordered",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"job_ids": req.JobIDs,
+				"success": true,
+			},
+		})
+	}()
 }

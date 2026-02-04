@@ -58,6 +58,9 @@ const Coworker = () => {
   // 配置相关状态
   const [configContent, setConfigContent] = useState('');
   const [configLoading, setConfigLoading] = useState(false);
+  // 事项相关状态
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
   const [userId] = useState(() => {
     // 从 localStorage 获取或生成用户ID
     let uid = localStorage.getItem('coworker_user_id');
@@ -131,6 +134,20 @@ const Coworker = () => {
     }
   }, [userId]);
 
+  // 加载事项列表 (REST API)
+  const loadJobsList = useCallback(async () => {
+    setJobsLoading(true);
+    try {
+      const data = await api.listJobs(userId);
+      setJobs((data.jobs || []).sort((a, b) => a.order - b.order));
+      console.log('[Coworker] Loaded jobs:', data.jobs?.length || 0);
+    } catch (error) {
+      console.error('[Coworker] Failed to load jobs:', error);
+    } finally {
+      setJobsLoading(false);
+    }
+  }, [userId]);
+
   // 删除会话 (REST API)
   const deleteSession = useCallback(async (sessId) => {
     try {
@@ -170,6 +187,7 @@ const Coworker = () => {
         loadSessionsList();
         loadFilesList('');
         loadTasksList();
+        loadJobsList();
         // 如果有 session_id，使用 REST API 加载历史消息
         if (currentSessionId) {
           api.getSessionHistory(currentSessionId).then(data => {
@@ -203,7 +221,7 @@ const Coworker = () => {
     } catch (error) {
       console.error('[Coworker] WebSocket error:', error);
     }
-  }, [loadSessionsList, loadFilesList, loadTasksList]);
+  }, [loadSessionsList, loadFilesList, loadTasksList, loadJobsList]);
 
   useEffect(() => {
     connectWebSocket();
@@ -344,6 +362,71 @@ const Coworker = () => {
         } else if (payload.action === 'deleted' && payload.task) {
           setTasks(prev => prev.filter(t => t.id !== payload.task.id));
           console.log('[Coworker] Task deleted by AI:', payload.task.id);
+        }
+        break;
+
+      // 新会话创建事件
+      case 'session_created':
+        if (payload.session_id) {
+          // 更新 sessionId
+          setSessionId(payload.session_id);
+          localStorage.setItem(SESSION_STORAGE_KEY, payload.session_id);
+          // 添加新会话到列表顶部
+          setSessions(prev => [{
+            id: payload.session_id,
+            title: payload.title || '新对话',
+            created_at: payload.created_at,
+            updated_at: payload.updated_at,
+            message_count: 0,
+          }, ...prev]);
+          console.log('[Coworker] Session created:', payload.session_id);
+        }
+        break;
+
+      // 标题更新事件
+      case 'title_updated':
+        if (payload.session_id && payload.title) {
+          setSessions(prev => prev.map(s =>
+            s.id === payload.session_id
+              ? { ...s, title: payload.title }
+              : s
+          ));
+          console.log('[Coworker] Title updated:', payload.session_id, payload.title);
+        }
+        break;
+
+      // Job 执行事件
+      case 'job_execution':
+        if (payload.job_id) {
+          // 更新 job 状态
+          setJobs(prev => prev.map(j =>
+            j.id === payload.job_id
+              ? { ...j, status: payload.status || 'running' }
+              : j
+          ));
+          // 如果有命令，可以显示通知
+          if (payload.command) {
+            Toast.info(`事项 "${payload.name}" 正在执行...`);
+          }
+          console.log('[Coworker] Job execution:', payload.job_id, payload.status);
+        }
+        break;
+
+      // Job 状态更新事件
+      case 'job_status':
+        if (payload.job_id) {
+          setJobs(prev => prev.map(j =>
+            j.id === payload.job_id
+              ? {
+                  ...j,
+                  status: payload.status || j.status,
+                  last_run: payload.last_run || j.last_run,
+                  next_run: payload.next_run || j.next_run,
+                  last_error: payload.last_error || j.last_error,
+                }
+              : j
+          ));
+          console.log('[Coworker] Job status updated:', payload.job_id, payload.status);
         }
         break;
     }
@@ -492,6 +575,79 @@ const Coworker = () => {
     }
   };
 
+  // 创建事项 (REST API)
+  const createJob = async (jobData) => {
+    try {
+      const data = await api.createJob(userId, jobData);
+      if (data.success && data.job) {
+        setJobs(prev => [...prev, data.job].sort((a, b) => a.order - b.order));
+        console.log('[Coworker] Job created:', data.job.id);
+      }
+    } catch (error) {
+      console.error('[Coworker] Failed to create job:', error);
+      Toast.error('创建事项失败');
+    }
+  };
+
+  // 更新事项 (REST API)
+  const updateJob = async (jobId, updates) => {
+    try {
+      const data = await api.updateJob(userId, jobId, updates);
+      if (data.success && data.job) {
+        setJobs(prev => prev.map(j => j.id === data.job.id ? data.job : j));
+        console.log('[Coworker] Job updated:', data.job.id);
+      }
+    } catch (error) {
+      console.error('[Coworker] Failed to update job:', error);
+      Toast.error('更新事项失败');
+    }
+  };
+
+  // 删除事项 (REST API)
+  const deleteJob = async (jobId) => {
+    try {
+      await api.deleteJob(userId, jobId);
+      setJobs(prev => prev.filter(j => j.id !== jobId));
+      console.log('[Coworker] Job deleted:', jobId);
+    } catch (error) {
+      console.error('[Coworker] Failed to delete job:', error);
+      Toast.error('删除事项失败');
+    }
+  };
+
+  // 运行事项 (REST API)
+  const runJob = async (jobId) => {
+    try {
+      const data = await api.runJob(userId, jobId);
+      if (data.success) {
+        Toast.success('事项已触发');
+        // 更新状态为 running
+        setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'running' } : j));
+        console.log('[Coworker] Job triggered:', jobId);
+      }
+    } catch (error) {
+      console.error('[Coworker] Failed to run job:', error);
+      Toast.error('触发事项失败');
+    }
+  };
+
+  // 刷新事项列表 (REST API)
+  const refreshJobs = () => {
+    loadJobsList();
+  };
+
+  // 事项排序 (REST API)
+  const reorderJobs = async (jobIds) => {
+    try {
+      await api.reorderJobs(userId, jobIds);
+      console.log('[Coworker] Jobs reordered');
+      loadJobsList();
+    } catch (error) {
+      console.error('[Coworker] Failed to reorder jobs:', error);
+      Toast.error('排序失败');
+    }
+  };
+
   // 渲染消息项
   const renderMessage = (msg, index) => {
     if (msg.type === 'tool') {
@@ -553,6 +709,14 @@ const Coworker = () => {
           configLoading={configLoading}
           onConfigChange={setConfigContent}
           onConfigLoadingChange={setConfigLoading}
+          jobs={jobs}
+          jobsLoading={jobsLoading}
+          onCreateJob={createJob}
+          onUpdateJob={updateJob}
+          onDeleteJob={deleteJob}
+          onRunJob={runJob}
+          onRefreshJobs={refreshJobs}
+          onReorderJobs={reorderJobs}
           userId={userId}
         />
 

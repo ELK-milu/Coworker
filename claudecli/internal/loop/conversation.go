@@ -45,6 +45,19 @@ type LoopEvent struct {
 	// 任务变更信息
 	TaskAction string      `json:"task_action,omitempty"`
 	TaskData   interface{} `json:"task_data,omitempty"`
+	// 会话信息
+	SessionID   string `json:"session_id,omitempty"`
+	SessionInfo *SessionInfo `json:"session_info,omitempty"`
+	// 标题更新
+	Title string `json:"title,omitempty"`
+}
+
+// SessionInfo 会话信息
+type SessionInfo struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
 }
 
 // StatusInfo 状态信息
@@ -61,14 +74,16 @@ type StatusInfo struct {
 }
 
 const (
-	EventTypeText        = "text"
-	EventTypeThinking    = "thinking"
-	EventTypeToolStart   = "tool_start"
-	EventTypeToolEnd     = "tool_end"
-	EventTypeDone        = "done"
-	EventTypeError       = "error"
-	EventTypeStatus      = "status"
-	EventTypeTaskChanged = "task_changed"
+	EventTypeText          = "text"
+	EventTypeThinking      = "thinking"
+	EventTypeToolStart     = "tool_start"
+	EventTypeToolEnd       = "tool_end"
+	EventTypeDone          = "done"
+	EventTypeError         = "error"
+	EventTypeStatus        = "status"
+	EventTypeTaskChanged   = "task_changed"
+	EventTypeSessionCreated = "session_created"
+	EventTypeTitleUpdated   = "title_updated"
 )
 
 // NewConversationLoop 创建对话循环

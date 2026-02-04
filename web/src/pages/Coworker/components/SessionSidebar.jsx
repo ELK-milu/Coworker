@@ -13,9 +13,11 @@ import {
   IconFolder,
   IconList,
   IconSetting,
+  IconClock,
 } from '@douyinfe/semi-icons';
 import FileExplorer from './FileExplorer';
 import TaskList from './TaskList';
+import JobList from './JobList';
 import ConfigPanel from './ConfigPanel';
 import './SessionSidebar.css';
 
@@ -66,6 +68,15 @@ const SessionSidebar = ({
   configLoading = false,
   onConfigChange,
   onConfigLoadingChange,
+  // 事项相关
+  jobs = [],
+  jobsLoading = false,
+  onCreateJob,
+  onUpdateJob,
+  onDeleteJob,
+  onRunJob,
+  onRefreshJobs,
+  onReorderJobs,
   // 用户ID
   userId,
 }) => {
@@ -219,6 +230,14 @@ const SessionSidebar = ({
               <IconSetting size="small" />
               <span>配置</span>
             </button>
+            <button
+              type="button"
+              className={`tab-btn ${activeTab === 'jobs' ? 'active' : ''}`}
+              onClick={() => setActiveTab('jobs')}
+            >
+              <IconClock size="small" />
+              <span>事项</span>
+            </button>
           </div>
         )}
         <Button
@@ -250,6 +269,17 @@ const SessionSidebar = ({
             loading={configLoading}
             onContentChange={onConfigChange}
             onLoadingChange={onConfigLoadingChange}
+          />
+        ) : activeTab === 'jobs' ? (
+          <JobList
+            jobs={jobs}
+            loading={jobsLoading}
+            onCreateJob={onCreateJob}
+            onUpdateJob={onUpdateJob}
+            onDeleteJob={onDeleteJob}
+            onRunJob={onRunJob}
+            onRefresh={onRefreshJobs}
+            onReorder={onReorderJobs}
           />
         ) : (
           <FileExplorer

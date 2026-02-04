@@ -13,6 +13,7 @@ import (
 type SessionData struct {
 	ID         string          `json:"id"`
 	UserID     string          `json:"user_id"`
+	Title      string          `json:"title,omitempty"` // 会话标题
 	Messages   []types.Message `json:"messages"`
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
@@ -36,6 +37,7 @@ func (s *Session) ToSessionData() *SessionData {
 	return &SessionData{
 		ID:         s.ID,
 		UserID:     s.UserID,
+		Title:      s.Title,
 		Messages:   s.Messages,
 		CreatedAt:  s.CreatedAt,
 		UpdatedAt:  s.UpdatedAt,
@@ -54,6 +56,7 @@ func FromSessionData(data *SessionData) *Session {
 	return &Session{
 		ID:         data.ID,
 		UserID:     data.UserID,
+		Title:      data.Title,
 		Messages:   data.Messages,
 		CreatedAt:  data.CreatedAt,
 		UpdatedAt:  data.UpdatedAt,

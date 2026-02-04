@@ -1,0 +1,256 @@
+/* 事项列表样式 - Cron 定时任务 */
+
+.job-list-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--semi-color-bg-0);
+}
+
+/* 头部 */
+.job-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--semi-color-border);
+  background: var(--semi-color-bg-1);
+}
+
+.job-list-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--semi-color-text-0);
+}
+
+.job-list-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* Job 列表 */
+.job-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.job-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.job-list::-webkit-scrollbar-thumb {
+  background: var(--semi-color-fill-2);
+  border-radius: 2px;
+}
+
+/* Job 项 */
+.job-item {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+  border: 1px solid transparent;
+  background: var(--semi-color-bg-1);
+}
+
+.job-item:hover {
+  background: var(--semi-color-fill-0);
+}
+
+.job-item.running {
+  background: var(--semi-color-primary-light-default);
+  border-color: var(--semi-color-primary-light-hover);
+}
+
+.job-item.failed {
+  background: var(--semi-color-danger-light-default);
+  border-color: var(--semi-color-danger-light-hover);
+}
+
+.job-item.disabled {
+  opacity: 0.5;
+}
+
+.job-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 状态指示器 */
+.job-status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Job 内容 */
+.job-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.job-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--semi-color-text-0);
+}
+
+.job-name.disabled {
+  color: var(--semi-color-text-2);
+}
+
+.job-cron {
+  font-size: 11px;
+}
+
+/* Job 操作按钮 */
+.job-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.job-item:hover .job-item-actions {
+  opacity: 1;
+}
+
+.job-delete-btn:hover {
+  color: var(--semi-color-danger) !important;
+}
+
+/* Job 详情 */
+.job-item-details {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--semi-color-border);
+}
+
+.job-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.job-detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.job-detail-label {
+  flex-shrink: 0;
+  color: var(--semi-color-text-2);
+  min-width: 70px;
+}
+
+.job-detail-value {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.job-detail-row.error .job-detail-value {
+  color: var(--semi-color-danger);
+}
+
+/* 创建表单 */
+.job-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--semi-color-border);
+  background: var(--semi-color-bg-1);
+}
+
+.job-input,
+.job-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--semi-color-border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--semi-color-bg-0);
+  color: var(--semi-color-text-0);
+  outline: none;
+  transition: border-color 0.15s ease;
+  box-sizing: border-box;
+}
+
+.job-input:focus,
+.job-textarea:focus {
+  border-color: var(--semi-color-primary);
+}
+
+.job-textarea {
+  resize: none;
+  font-family: inherit;
+}
+
+.job-cron-preview {
+  padding: 4px 8px;
+  background: var(--semi-color-fill-0);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.job-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 空状态和加载状态 */
+.job-empty,
+.job-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  gap: 12px;
+  text-align: center;
+}
+
+/* 拖拽手柄 */
+.job-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--semi-color-text-2);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.job-item:hover .job-drag-handle {
+  opacity: 1;
+}
+
+.job-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* 拖拽状态 */
+.job-item.dragging {
+  opacity: 0.5;
+  background: var(--semi-color-fill-1);
+}
+
+.job-item.drag-over {
+  border-color: var(--semi-color-primary);
+  background: var(--semi-color-primary-light-default);
+}

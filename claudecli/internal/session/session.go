@@ -12,6 +12,7 @@ import (
 type Session struct {
 	ID         string
 	UserID     string
+	Title      string // 会话标题（AI 生成）
 	Messages   []types.Message
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -96,4 +97,19 @@ func (s *Session) SetWorkingDir(dir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.WorkingDir = dir
+}
+
+// GetTitle 获取会话标题
+func (s *Session) GetTitle() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Title
+}
+
+// SetTitle 设置会话标题
+func (s *Session) SetTitle(title string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Title = title
+	s.UpdatedAt = time.Now()
 }

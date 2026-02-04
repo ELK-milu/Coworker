@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
@@ -15,6 +16,7 @@ type RESTHandler struct {
 	sessions  *session.Manager
 	tasks     *task.Manager
 	workspace *workspace.Manager
+	jobs      *job.Manager
 }
 
 // NewRESTHandler 创建 REST 处理器
@@ -30,6 +32,11 @@ func (h *RESTHandler) SetTaskManager(tm *task.Manager) {
 // SetWorkspaceManager 设置工作空间管理器
 func (h *RESTHandler) SetWorkspaceManager(wm *workspace.Manager) {
 	h.workspace = wm
+}
+
+// SetJobManager 设置 Job 管理器
+func (h *RESTHandler) SetJobManager(jm *job.Manager) {
+	h.jobs = jm
 }
 
 // CreateSession 创建会话
@@ -108,31 +115,36 @@ func (h *RESTHandler) ListSessions(c *gin.Context) {
 
 	var sessionList []map[string]interface{}
 	for _, sess := range sessions {
-		title := "新对话"
-		messages := sess.GetMessages()
-		for _, msg := range messages {
-			if msg.Role == "user" {
-				for _, block := range msg.Content {
-					if textBlock, ok := block.(types.TextBlock); ok {
-						title = textBlock.Text
-						if len(title) > 50 {
-							title = title[:50] + "..."
+		// 优先使用会话的 Title 字段
+		title := sess.GetTitle()
+		if title == "" {
+			// 后备：获取第一条用户消息作为标题
+			title = "新对话"
+			messages := sess.GetMessages()
+			for _, msg := range messages {
+				if msg.Role == "user" {
+					for _, block := range msg.Content {
+						if textBlock, ok := block.(types.TextBlock); ok {
+							title = textBlock.Text
+							if len(title) > 50 {
+								title = title[:50] + "..."
+							}
+							break
 						}
-						break
-					}
-					if blockMap, ok := block.(map[string]interface{}); ok {
-						if blockMap["type"] == "text" {
-							if text, ok := blockMap["text"].(string); ok {
-								title = text
-								if len(title) > 50 {
-									title = title[:50] + "..."
+						if blockMap, ok := block.(map[string]interface{}); ok {
+							if blockMap["type"] == "text" {
+								if text, ok := blockMap["text"].(string); ok {
+									title = text
+									if len(title) > 50 {
+										title = title[:50] + "..."
+									}
+									break
 								}
-								break
 							}
 						}
 					}
+					break
 				}
-				break
 			}
 		}
 
@@ -141,7 +153,7 @@ func (h *RESTHandler) ListSessions(c *gin.Context) {
 			"title":         title,
 			"created_at":    sess.CreatedAt.Unix(),
 			"updated_at":    sess.UpdatedAt.Unix(),
-			"message_count": len(messages),
+			"message_count": len(sess.GetMessages()),
 		})
 	}
 
@@ -437,6 +449,194 @@ func (h *RESTHandler) SaveConfig(c *gin.Context) {
 
 	if err := h.workspace.SaveConfig(req.UserID, req.Content); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ========== Job 管理 API ==========
+
+// ListJobs 获取 Job 列表
+func (h *RESTHandler) ListJobs(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.jobs == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
+		return
+	}
+
+	jobs := h.jobs.List(userID)
+	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
+}
+
+// CreateJob 创建 Job
+func (h *RESTHandler) CreateJob(c *gin.Context) {
+	var req struct {
+		UserID   string `json:"user_id"`
+		Name     string `json:"name"`
+		CronExpr string `json:"cron_expr"`
+		Command  string `json:"command"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.UserID == "" || req.Name == "" || req.CronExpr == "" || req.Command == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id, name, cron_expr and command are required"})
+		return
+	}
+
+	if h.jobs == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
+		return
+	}
+
+	newJob, err := h.jobs.Create(req.UserID, req.Name, req.CronExpr, req.Command)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "job": newJob})
+}
+
+// UpdateJob 更新 Job
+func (h *RESTHandler) UpdateJob(c *gin.Context) {
+	jobID := c.Param("id")
+	var req struct {
+		UserID   string `json:"user_id"`
+		Name     string `json:"name,omitempty"`
+		CronExpr string `json:"cron_expr,omitempty"`
+		Command  string `json:"command,omitempty"`
+		Enabled  *bool  `json:"enabled,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.jobs == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if req.Name != "" {
+		updates["name"] = req.Name
+	}
+	if req.CronExpr != "" {
+		updates["cron_expr"] = req.CronExpr
+	}
+	if req.Command != "" {
+		updates["command"] = req.Command
+	}
+	if req.Enabled != nil {
+		updates["enabled"] = *req.Enabled
+	}
+
+	updatedJob, err := h.jobs.Update(req.UserID, jobID, updates)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "job": updatedJob})
+}
+
+// DeleteJob 删除 Job
+func (h *RESTHandler) DeleteJob(c *gin.Context) {
+	jobID := c.Param("id")
+	userID := c.Query("user_id")
+
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.jobs == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
+		return
+	}
+
+	if err := h.jobs.Delete(userID, jobID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// RunJob 手动触发 Job
+func (h *RESTHandler) RunJob(c *gin.Context) {
+	jobID := c.Param("id")
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.jobs == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
+		return
+	}
+
+	jobItem := h.jobs.Get(req.UserID, jobID)
+	if jobItem == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+		return
+	}
+
+	// 标记为运行中
+	h.jobs.MarkRunning(req.UserID, jobID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"job":     jobItem,
+		"message": "Job triggered manually. Check WebSocket for execution events.",
+	})
+}
+
+// ReorderJobs 批量排序 Jobs
+func (h *RESTHandler) ReorderJobs(c *gin.Context) {
+	var req struct {
+		UserID string   `json:"user_id"`
+		JobIDs []string `json:"job_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.jobs == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
+		return
+	}
+
+	if err := h.jobs.UpdateOrder(req.UserID, req.JobIDs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 

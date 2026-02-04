@@ -42,6 +42,14 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 		coworkerGroup.GET("/config", claudeCLICtrl.GetConfig)
 		coworkerGroup.PUT("/config", claudeCLICtrl.SaveConfig)
 
+		// Job 管理
+		coworkerGroup.GET("/jobs", claudeCLICtrl.ListJobs)
+		coworkerGroup.POST("/jobs", claudeCLICtrl.CreateJob)
+		coworkerGroup.PUT("/jobs/reorder", claudeCLICtrl.ReorderJobs)
+		coworkerGroup.PUT("/jobs/:id", claudeCLICtrl.UpdateJob)
+		coworkerGroup.DELETE("/jobs/:id", claudeCLICtrl.DeleteJob)
+		coworkerGroup.POST("/jobs/:id/run", claudeCLICtrl.RunJob)
+
 		// WebSocket 连接
 		coworkerGroup.GET("/ws", claudeCLICtrl.HandleWebSocket)
 	}

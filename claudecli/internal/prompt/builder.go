@@ -21,6 +21,7 @@ type PromptContext struct {
 	GitStatus      *GitStatusInfo // Git 状态
 	ClaudeMdPath   string         // CLAUDE.md 路径
 	CustomRules    string         // 自定义规则
+	TasksRender    string         // 任务列表渲染（嵌入系统提示词）
 }
 
 // GitStatusInfo Git 状态信息
@@ -111,27 +112,32 @@ func (b *SystemPromptBuilder) Build(ctx *PromptContext, opts BuildOptions) strin
 	// 10. 权限模式
 	parts = append(parts, b.getPermissionMode(ctx.PermissionMode))
 
-	// 10. 环境信息
+	// 11. 环境信息
 	parts = append(parts, b.getEnvironmentInfo(ctx))
 
-	// 11. 语言设置
+	// 12. 语言设置
 	if ctx.Language != "" {
 		parts = append(parts, b.getLanguageInfo(ctx.Language))
 	}
 
-	// 12. CLAUDE.md 内容
+	// 13. CLAUDE.md 内容
 	if opts.IncludeClaudeMd && ctx.ClaudeMdPath != "" {
 		if claudeMd := b.loadClaudeMd(ctx.ClaudeMdPath); claudeMd != "" {
 			parts = append(parts, claudeMd)
 		}
 	}
 
-	// 13. Git 状态
+	// 14. Git 状态
 	if ctx.GitStatus != nil {
 		parts = append(parts, b.getGitStatusInfo(ctx.GitStatus))
 	}
 
-	// 14. 自定义规则
+	// 15. 当前任务列表
+	if ctx.TasksRender != "" {
+		parts = append(parts, b.getTasksInfo(ctx.TasksRender))
+	}
+
+	// 16. 自定义规则
 	if ctx.CustomRules != "" {
 		parts = append(parts, ctx.CustomRules)
 	}
@@ -292,6 +298,15 @@ func (b *SystemPromptBuilder) getGitStatusInfo(status *GitStatusInfo) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// getTasksInfo 获取当前任务信息
+func (b *SystemPromptBuilder) getTasksInfo(tasksRender string) string {
+	return fmt.Sprintf(`# Current Tasks
+
+The following is your current task list. Use the TaskUpdate tool to update task status as you work.
+
+%s`, tasksRender)
 }
 
 // FindClaudeMd 查找 CLAUDE.md 文件
