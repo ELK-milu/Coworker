@@ -53,6 +53,9 @@ claudecli/
     │   └── task.go             # 任务管理 (TodoList)
     ├── sandbox/
     │   └── sandbox.go          # 沙箱隔离 (路径映射与安全验证)
+    ├── container/
+    │   ├── manager.go          # 容器管理器 (gVisor/Docker 隔离)
+    │   └── quota.go            # 磁盘配额检查
     ├── permission/
     │   └── memory.go           # 权限记忆管理
     ├── workspace/
@@ -216,6 +219,52 @@ if err != nil {
 }
 ```
 
+### 容器隔离机制 (container/)
+
+容器隔离为 Bash 工具提供内核级安全隔离：
+
+**架构设计：**
+```
+工具执行请求
+      |
+  +-----------+-----------+
+  |                       |
+File Tools            Bash Tool
+(Host Direct)     (Container Exec)
+  |                       |
+Sandbox Path      ContainerManager
+ Mapping           .Exec(cmd)
+  |                       |
+Host FS I/O        gVisor Container
+                   (runsc runtime)
+  |                       |
+  +------- Bind Mount ----+
+       /workspace <-> userdata/{uid}/workspace
+```
+
+**资源限制：**
+
+| 资源 | 限制 | 环境变量 |
+|------|------|----------|
+| 内存 | 256 MB | `CONTAINER_MEMORY_MB` |
+| CPU | 0.5 core | `CONTAINER_CPU_QUOTA` |
+| 进程数 | 100 | `CONTAINER_PID_LIMIT` |
+| 磁盘 | 250 MB | `CONTAINER_DISK_MB` |
+| 网络 | 禁用 | N/A |
+| 空闲超时 | 30 min | `CONTAINER_IDLE_TIMEOUT` |
+
+**启用方式：**
+```bash
+CONTAINER_ENABLED=true
+CONTAINER_RUNTIME=runsc          # gVisor, 留空则用默认 Docker runtime
+CONTAINER_IMAGE=coworker-sandbox:latest
+```
+
+**构建沙箱镜像：**
+```bash
+docker build -t coworker-sandbox:latest docker/sandbox/
+```
+
 ### 沙箱隔离机制 (sandbox/)
 
 沙箱提供用户工作空间的安全隔离：
@@ -237,6 +286,36 @@ if err != nil {
 ---
 
 ## 已完成功能
+
+### 2026-02-04 (gVisor 容器隔离)
+
+- [x] 容器管理器 (`container/manager.go`)
+  - Docker Go SDK 集成
+  - 每用户独立容器 (gVisor runtime)
+  - 容器生命周期管理 (GetOrCreate, Exec, Stop)
+  - 空闲容器自动清理 (30分钟超时)
+  - 资源限制 (256MB RAM, 0.5 CPU, 100 PID)
+  - 网络隔离 (`--network none`)
+  - Bind mount: `userdata/{uid}/workspace` → `/workspace`
+- [x] 磁盘配额 (`container/quota.go`)
+  - 应用层磁盘使用量检查
+  - 可配置配额 (默认 250MB)
+  - Bash 执行前自动检查
+- [x] Bash 工具容器执行模式
+  - 容器模式：`docker exec` 在 gVisor 容器中执行
+  - 本地模式：开发环境后备方案
+  - `SetContainerManager()` 注入容器管理器
+- [x] 容器配置 (`config/config.go`)
+  - `CONTAINER_ENABLED` 启用/禁用
+  - `CONTAINER_RUNTIME` 运行时 (runsc/default)
+  - `CONTAINER_IMAGE` 沙箱镜像
+  - `CONTAINER_MEMORY_MB/CPU_QUOTA/PID_LIMIT/DISK_MB`
+  - `CONTAINER_IDLE_TIMEOUT` 空闲超时
+- [x] 沙箱镜像 (`docker/sandbox/Dockerfile`)
+  - Python 3.12-slim 基础
+  - 预装 flask, fastapi, numpy, pandas 等
+  - 非 root 用户执行
+- [x] 优雅关闭 (`Module.Shutdown()`)
 
 ### 2026-02-04 (工作空间沙箱隔离)
 
@@ -333,4 +412,4 @@ if err != nil {
 
 ---
 
-*Last updated: 2026-02-04 (沙箱隔离功能)*
+*Last updated: 2026-02-04 (gVisor 容器隔离)*

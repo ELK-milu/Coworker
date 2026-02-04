@@ -2,6 +2,9 @@
 # 简化的本地开发方式
 #
 # 使用方法:
+#   # 首次运行需要先构建沙箱镜像
+#   docker build -t coworker-sandbox:latest docker/sandbox/
+#
 #   docker-compose -f docker-compose-dev.yml up
 #
 # 架构说明:
@@ -15,6 +18,7 @@
 #   - 统一入口：http://localhost:3000
 #   - 后端：Go + Air 热重载
 #   - 前端：bun build 构建静态文件，修改后手动重启 web-dev 容器
+#   - 容器隔离：Bash 命令在独立沙箱容器中执行
 #
 # 前端修改后重新构建:
 #   docker-compose -f docker-compose-dev.yml restart web-dev
@@ -52,6 +56,8 @@ services:
       - /app/tmp
       # 用户数据目录
       - ./userdata:/app/userdata
+      # Docker socket - 允许后端管理沙箱容器
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api
       - REDIS_CONN_STRING=redis://redis
@@ -64,11 +70,25 @@ services:
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
       - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
       - WORKSPACE_BASE_PATH=/app/userdata
+      # 容器隔离配置 (可选，设为 true 启用)
+      - CONTAINER_ENABLED=${CONTAINER_ENABLED:-false}
+      - CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-}
+      - CONTAINER_IMAGE=${CONTAINER_IMAGE:-coworker-sandbox:latest}
+      - CONTAINER_MEMORY_MB=${CONTAINER_MEMORY_MB:-256}
+      - CONTAINER_CPU_QUOTA=${CONTAINER_CPU_QUOTA:-0.5}
+      - CONTAINER_PID_LIMIT=${CONTAINER_PID_LIMIT:-100}
+      - CONTAINER_DISK_MB=${CONTAINER_DISK_MB:-250}
+      - CONTAINER_IDLE_TIMEOUT=${CONTAINER_IDLE_TIMEOUT:-30}
+      # Docker-in-Docker: 宿主机上 userdata 的绝对路径
+      - CONTAINER_HOST_BASE_PATH=${CONTAINER_HOST_BASE_PATH:-${PWD}/userdata}
     depends_on:
       - redis
       - postgres
     working_dir: /app
     command: air -c .air.toml
+    # 需要访问 Docker socket
+    group_add:
+      - "999"  # docker 组 (Linux)
 
   redis:
     image: redis:latest

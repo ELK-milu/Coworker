@@ -1,0 +1,24 @@
+# Coworker Sandbox Python Dependencies
+# Web 框架
+flask>=3.1,<4
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+jinja2>=3.1,<4
+
+# 数据处理
+numpy>=2.2,<3
+pandas>=2.2,<3
+matplotlib>=3.10,<4
+
+# 工具库
+requests>=2.32,<3
+pillow>=11,<12
+pydantic>=2.10,<3
+sqlalchemy>=2.0,<3
+httpx>=0.28,<1
+python-dotenv>=1.0,<2
+
+# 开发工具
+pytest>=8.3,<9
+black>=25,<26
+ruff>=0.9,<1

@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/api"
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
+	"github.com/QuantumNous/new-api/claudecli/internal/container"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
@@ -18,15 +19,16 @@ import (
 
 // Module claudecli 模块实例
 type Module struct {
-	Config      *config.Config
-	Client      *client.ClaudeClient
-	Sessions    *session.Manager
-	Tools       *tools.Registry
-	Workspace   *workspace.Manager
-	Tasks       *task.Manager
-	RESTHandler *api.RESTHandler
-	WSHandler   *api.WSHandler
-	FileHandler *api.FileHandler
+	Config       *config.Config
+	Client       *client.ClaudeClient
+	Sessions     *session.Manager
+	Tools        *tools.Registry
+	Workspace    *workspace.Manager
+	Tasks        *task.Manager
+	Containers   *container.ContainerManager
+	RESTHandler  *api.RESTHandler
+	WSHandler    *api.WSHandler
+	FileHandler  *api.FileHandler
 }
 
 var (
@@ -68,8 +70,30 @@ func Init() *Module {
 	// 创建任务管理器
 	taskManager := task.NewManager(cfg.Security.WorkingDir)
 
+	// 创建容器管理器（如果启用）
+	var containerMgr *container.ContainerManager
+	if cfg.Container.Enabled {
+		var err error
+		containerMgr, err = container.NewContainerManager(cfg.Security.WorkingDir, container.Config{
+			Image:        cfg.Container.Image,
+			Runtime:      cfg.Container.Runtime,
+			MemoryMB:     cfg.Container.MemoryMB,
+			CPUQuota:     cfg.Container.CPUQuota,
+			PidLimit:     cfg.Container.PidLimit,
+			DiskMB:       cfg.Container.DiskMB,
+			IdleTimeout:  cfg.Container.IdleTimeout,
+			HostBasePath: cfg.Container.HostBasePath,
+		})
+		if err != nil {
+			log.Printf("[ClaudeCLI] WARNING: Container isolation disabled: %v", err)
+			containerMgr = nil
+		} else {
+			log.Println("[ClaudeCLI] Container isolation enabled")
+		}
+	}
+
 	// 注册所有工具
-	registerTools(toolRegistry, cfg, taskManager)
+	registerTools(toolRegistry, cfg, taskManager, containerMgr)
 
 	// 创建权限检查器
 	permChecker := permissions.NewChecker()
@@ -98,6 +122,7 @@ func Init() *Module {
 		Tools:       toolRegistry,
 		Workspace:   workspaceManager,
 		Tasks:       taskManager,
+		Containers:  containerMgr,
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
 		FileHandler: fileHandler,
@@ -108,12 +133,16 @@ func Init() *Module {
 }
 
 // registerTools 注册所有工具
-func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager) {
+func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, containerMgr *container.ContainerManager) {
 	workingDir := cfg.Security.WorkingDir
 	blockedCommands := cfg.Security.BlockedCommands
 
 	// 注册基础工具
-	registry.Register(tools.NewBashTool(workingDir, blockedCommands))
+	bashTool := tools.NewBashTool(workingDir, blockedCommands)
+	if containerMgr != nil {
+		bashTool.SetContainerManager(containerMgr)
+	}
+	registry.Register(bashTool)
 	registry.Register(tools.NewReadTool(workingDir))
 	registry.Register(tools.NewWriteTool(workingDir))
 	registry.Register(tools.NewEditTool(workingDir))
@@ -129,7 +158,15 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 	registry.Register(tools.NewTaskListTool(taskManager))
 	registry.Register(tools.NewTaskGetTool(taskManager))
 
-	log.Printf("[ClaudeCLI] Registered %d tools", 13)
+	log.Printf("[ClaudeCLI] Registered %d tools (container isolation: %v)", 13, containerMgr != nil)
+}
+
+// Shutdown 优雅关闭模块
+func (m *Module) Shutdown() {
+	if m.Containers != nil {
+		log.Println("[ClaudeCLI] Shutting down container manager...")
+		m.Containers.StopAll()
+	}
 }
 
 // GetInstance 获取模块实例
