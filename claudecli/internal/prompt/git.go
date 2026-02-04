@@ -1,7 +1,9 @@
 package prompt
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -42,9 +44,15 @@ func GetGitStatus(workingDir string) *GitStatusInfo {
 }
 
 // IsGitRepo 检查目录是否是 git 仓库
+// 注意：只检查目录本身是否有 .git，不向上遍历（避免继承宿主机的 git 状态）
 func IsGitRepo(workingDir string) bool {
-	_, err := runGitCommand(workingDir, "rev-parse", "--git-dir")
-	return err == nil
+	gitDir := filepath.Join(workingDir, ".git")
+	info, err := os.Stat(gitDir)
+	if err != nil {
+		return false
+	}
+	// .git 可以是目录或文件（worktree 场景）
+	return info.IsDir() || info.Mode().IsRegular()
 }
 
 // runGitCommand 运行 git 命令

@@ -11,28 +11,28 @@ import (
 
 // PromptContext 提示词上下文
 type PromptContext struct {
-	WorkingDir     string            // 工作目录
-	Model          string            // 当前模型
-	PermissionMode string            // 权限模式: normal, acceptEdits, planMode, bypassPermissions
-	IsGitRepo      bool              // 是否为 git 仓库
-	Platform       string            // 平台
-	TodayDate      string            // 今天日期
-	Language       string            // 响应语言
-	GitStatus      *GitStatusInfo    // Git 状态
-	ClaudeMdPath   string            // CLAUDE.md 路径
-	CustomRules    string            // 自定义规则
+	WorkingDir     string         // 工作目录
+	Model          string         // 当前模型
+	PermissionMode string         // 权限模式: normal, acceptEdits, planMode, bypassPermissions
+	IsGitRepo      bool           // 是否为 git 仓库
+	Platform       string         // 平台
+	TodayDate      string         // 今天日期
+	Language       string         // 响应语言
+	GitStatus      *GitStatusInfo // Git 状态
+	ClaudeMdPath   string         // CLAUDE.md 路径
+	CustomRules    string         // 自定义规则
 }
 
 // GitStatusInfo Git 状态信息
 type GitStatusInfo struct {
-	Branch     string   // 当前分支
-	MainBranch string   // 主分支
-	IsClean    bool     // 是否干净
-	Staged     []string // 已暂存文件
-	Unstaged   []string // 未暂存文件
-	Untracked  []string // 未跟踪文件
-	Ahead      int      // 领先提交数
-	Behind     int      // 落后提交数
+	Branch        string   // 当前分支
+	MainBranch    string   // 主分支
+	IsClean       bool     // 是否干净
+	Staged        []string // 已暂存文件
+	Unstaged      []string // 未暂存文件
+	Untracked     []string // 未跟踪文件
+	Ahead         int      // 领先提交数
+	Behind        int      // 落后提交数
 	RecentCommits []string // 最近提交
 }
 

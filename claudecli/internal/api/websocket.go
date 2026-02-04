@@ -1579,30 +1579,54 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 	virtualWorkDir := sb.GetVirtualWorkingDir()
 	realWorkDir := sb.GetRealWorkingDir()
 
+	// 确定平台：如果启用容器隔离，命令在 Linux 容器中执行
+	platform := "linux"
+	if h.config.Container.Enabled {
+		platform = "linux (sandbox container)"
+	}
+
 	// 构建提示词上下文
 	promptCtx := &prompt.PromptContext{
 		WorkingDir:     virtualWorkDir, // 使用虚拟路径
 		Model:          h.config.Claude.Model,
 		PermissionMode: "normal",
-		IsGitRepo:      prompt.IsGitRepo(realWorkDir), // 检查真实路径
+		Platform:       platform,
 		Language:       "中文",
-		ClaudeMdPath:   prompt.FindClaudeMd(realWorkDir), // 查找真实路径
 	}
 
-	// 获取 Git 状态（使用真实路径，但虚拟化输出）
-	if promptCtx.IsGitRepo {
-		gitStatus := prompt.GetGitStatus(realWorkDir)
-		if gitStatus != nil {
-			// 虚拟化 Git 状态中的文件路径
-			gitStatus.Staged = sb.VirtualizePaths(gitStatus.Staged)
-			gitStatus.Unstaged = sb.VirtualizePaths(gitStatus.Unstaged)
-			gitStatus.Untracked = sb.VirtualizePaths(gitStatus.Untracked)
-			promptCtx.GitStatus = gitStatus
+	// 容器隔离模式：用户工作空间是隔离的，不继承宿主机的 git 状态
+	// 只检查用户工作空间内是否有 .git 目录
+	if h.config.Container.Enabled {
+		// 检查用户工作空间内的 git 状态（而非宿主机）
+		promptCtx.IsGitRepo = prompt.IsGitRepo(realWorkDir)
+		if promptCtx.IsGitRepo {
+			gitStatus := prompt.GetGitStatus(realWorkDir)
+			if gitStatus != nil {
+				gitStatus.Staged = sb.VirtualizePaths(gitStatus.Staged)
+				gitStatus.Unstaged = sb.VirtualizePaths(gitStatus.Unstaged)
+				gitStatus.Untracked = sb.VirtualizePaths(gitStatus.Untracked)
+				promptCtx.GitStatus = gitStatus
+			}
+		}
+		// 用户工作空间内查找 CLAUDE.md
+		promptCtx.ClaudeMdPath = prompt.FindClaudeMd(realWorkDir)
+	} else {
+		// 非容器模式：使用真实路径检查 git 状态
+		promptCtx.IsGitRepo = prompt.IsGitRepo(realWorkDir)
+		promptCtx.ClaudeMdPath = prompt.FindClaudeMd(realWorkDir)
+		if promptCtx.IsGitRepo {
+			gitStatus := prompt.GetGitStatus(realWorkDir)
+			if gitStatus != nil {
+				gitStatus.Staged = sb.VirtualizePaths(gitStatus.Staged)
+				gitStatus.Unstaged = sb.VirtualizePaths(gitStatus.Unstaged)
+				gitStatus.Untracked = sb.VirtualizePaths(gitStatus.Untracked)
+				promptCtx.GitStatus = gitStatus
+			}
 		}
 	}
 
 	systemPrompt := prompt.BuildSystemPrompt(promptCtx)
-	log.Printf("[WS] Built system prompt for user %s, length: %d chars", userID, len(systemPrompt))
+	log.Printf("[WS] Built system prompt for user %s, length: %d chars, isGitRepo: %v", userID, len(systemPrompt), promptCtx.IsGitRepo)
 
 	return systemPrompt
 }
