@@ -98,6 +98,9 @@ func (b *SystemPromptBuilder) Build(ctx *PromptContext, opts BuildOptions) strin
 		parts = append(parts, ToolGuidelines)
 	}
 
+	// 6.5 沙箱执行环境说明
+	parts = append(parts, SandboxEnvironment)
+
 	// 7. Git 操作指南
 	if opts.IncludeGitGuidelines {
 		parts = append(parts, GitGuidelines)
