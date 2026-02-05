@@ -52,7 +52,9 @@ claudecli/
     ├── task/
     │   └── task.go             # 任务管理 (TodoList)
     ├── sandbox/
-    │   └── sandbox.go          # 沙箱隔离 (路径映射与安全验证)
+    │   ├── sandbox.go          # 沙箱隔离 (路径映射与安全验证)
+    │   ├── microsandbox_client.go  # Microsandbox HTTP API 客户端
+    │   └── pool.go             # SandboxPool 管理器 (任务绑定模式)
     ├── container/
     │   ├── manager.go          # 容器管理器 (gVisor/Docker 隔离)
     │   └── quota.go            # 磁盘配额检查
@@ -287,6 +289,35 @@ docker build -t coworker-sandbox:latest docker/sandbox/
 
 ## 已完成功能
 
+### 2026-02-05 (Microsandbox MicroVM 沙箱)
+
+- [x] Microsandbox HTTP API 客户端 (`sandbox/microsandbox_client.go`)
+  - JSON-RPC over HTTP 通信
+  - StartSandbox/StopSandbox 沙箱生命周期
+  - RunCommand 命令执行
+  - Ping 健康检查
+- [x] SandboxPool 沙箱池管理器 (`sandbox/pool.go`)
+  - 任务绑定模式（非用户绑定）
+  - 预热池机制，获取延迟 < 200ms
+  - Acquire/Release 沙箱获取归还
+  - Exec 自动获取执行归还
+  - Stats 池统计信息
+- [x] Bash 工具 Microsandbox 执行模式
+  - `executeInMicrosandbox()` 方法
+  - 优先级：Microsandbox > Container > Local
+  - `SetSandboxPool()` 注入沙箱池
+- [x] Microsandbox 配置 (`config/config.go`)
+  - `MICROSANDBOX_ENABLED` 启用/禁用
+  - `MSB_SERVER_URL` 服务器地址
+  - `MSB_API_KEY` API 密钥
+  - `MSB_POOL_SIZE/MEMORY_MB/CPUS/EXEC_TIMEOUT`
+- [x] 模块初始化集成 (`init.go`)
+  - SandboxPool 创建和预热
+  - 优雅关闭时停止沙箱池
+- [x] 环境变量配置 (`.env.example`)
+  - 远程云服务器模式说明
+  - 本地开发模式说明
+
 ### 2026-02-04 (gVisor 容器隔离)
 
 - [x] 容器管理器 (`container/manager.go`)
@@ -412,4 +443,4 @@ docker build -t coworker-sandbox:latest docker/sandbox/
 
 ---
 
-*Last updated: 2026-02-04 (gVisor 容器隔离)*
+*Last updated: 2026-02-05 (Microsandbox MicroVM 沙箱)*

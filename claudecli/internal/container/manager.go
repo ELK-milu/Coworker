@@ -19,14 +19,14 @@ import (
 
 // ContainerManager 管理每个用户的沙箱容器
 type ContainerManager struct {
-	cli          *client.Client
-	mu           sync.Mutex
-	containers   map[string]*UserContainer // userID -> container
-	baseDir      string                     // userdata 基础路径 (容器内路径，用于磁盘配额检查)
-	hostBaseDir  string                     // userdata 基础路径 (宿主机路径，用于 bind mount)
-	config       Config
-	stopCh       chan struct{}
-	wg           sync.WaitGroup // 跟踪后台 goroutine
+	cli         *client.Client
+	mu          sync.Mutex
+	containers  map[string]*UserContainer // userID -> container
+	baseDir     string                    // userdata 基础路径 (容器内路径，用于磁盘配额检查)
+	hostBaseDir string                    // userdata 基础路径 (宿主机路径，用于 bind mount)
+	config      Config
+	stopCh      chan struct{}
+	wg          sync.WaitGroup // 跟踪后台 goroutine
 }
 
 // UserContainer 用户容器信息
@@ -56,7 +56,7 @@ func (uc *UserContainer) getLastUsed() time.Time {
 // Config 容器配置
 type Config struct {
 	Image        string
-	Runtime      string        // "runsc" for gVisor, "" for default
+	Runtime      string // "runsc" for gVisor, "" for default
 	MemoryMB     int64
 	CPUQuota     float64
 	PidLimit     int64

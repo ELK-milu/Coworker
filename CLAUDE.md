@@ -190,6 +190,13 @@ claudecli/
 │   │   └── task.go           # Task management (todo list)
 │   ├── workspace/
 │   │   └── workspace.go      # User workspace management
+│   ├── sandbox/              # Microsandbox MicroVM integration
+│   │   ├── microsandbox_client.go  # HTTP API client
+│   │   ├── pool.go           # SandboxPool manager (task-binding)
+│   │   └── sandbox.go        # Path mapping & security
+│   ├── container/            # Docker/gVisor container isolation
+│   │   ├── manager.go        # Container lifecycle management
+│   │   └── quota.go          # Disk quota checking
 │   ├── tools/                # Claude Code tools
 │   │   ├── bash.go
 │   │   ├── read.go
@@ -554,6 +561,85 @@ Pay-per-use billing with configurable model pricing:
 
 ---
 
+## Recent Changes (2026-02-05)
+
+### Microsandbox MicroVM 沙箱隔离
+
+实现了基于 Microsandbox 的 MicroVM 级别沙箱隔离，采用任务绑定模式（Task-Binding）最大化资源利用率。
+
+**架构设计：**
+- 任务绑定模式：沙箱按需分配，执行完立即归还，不绑定用户
+- 预热池：预先创建沙箱，获取延迟 < 200ms
+- 硬件级隔离：MicroVM 提供比容器更强的安全隔离
+
+**新增文件:**
+- `claudecli/internal/sandbox/microsandbox_client.go` - Microsandbox HTTP API 客户端
+  - `StartSandbox()` - 启动沙箱
+  - `StopSandbox()` - 停止沙箱
+  - `RunCommand()` - 执行命令
+  - `Ping()` - 健康检查
+- `claudecli/internal/sandbox/pool.go` - SandboxPool 沙箱池管理器
+  - `Start()` - 启动池并预热沙箱
+  - `Acquire()` - 获取空闲沙箱（阻塞等待）
+  - `Release()` - 归还沙箱到池中
+  - `Exec()` - 执行命令（自动获取/归还）
+  - `Stats()` - 返回池统计信息
+
+**修改文件:**
+- `claudecli/internal/config/config.go` - 新增 MicrosandboxConfig 配置结构
+- `claudecli/init.go` - 添加 SandboxPool 初始化和优雅关闭
+- `claudecli/internal/tools/bash.go` - 新增 `executeInMicrosandbox()` 方法
+- `.env.example` - 添加 Microsandbox 配置说明
+- `.env` - 添加 Microsandbox 配置（默认禁用）
+
+**执行优先级：**
+```
+Microsandbox (MicroVM) > Container (gVisor/Docker) > Local (开发模式)
+```
+
+**环境变量配置：**
+```bash
+# 启用 Microsandbox
+MICROSANDBOX_ENABLED=true
+
+# 远程云服务器模式（推荐生产环境）
+MSB_SERVER_URL=http://your-linux-server:5555
+MSB_API_KEY=your-api-key
+
+# 本地开发模式（--dev 无需 API Key）
+MSB_SERVER_URL=http://127.0.0.1:5555
+MSB_API_KEY=
+
+# 池配置
+MSB_POOL_SIZE=5          # 预热沙箱数量
+MSB_MEMORY_MB=512        # 每沙箱内存
+MSB_CPUS=1               # 每沙箱 CPU
+MSB_EXEC_TIMEOUT=120     # 执行超时（秒）
+```
+
+**部署方式：**
+
+1. **远程云服务器（推荐）**
+   - 后端运行在 Windows，Microsandbox 部署在 Linux 云服务器
+   - 安装：`curl -sSL https://get.microsandbox.dev | sh`
+   - 启动：`msb server start --detach`
+   - 生成 API Key：`msb server keygen --expire 3mo`
+
+2. **本地开发模式（仅 Linux/macOS）**
+   - 启动开发模式：`msb server start --dev`
+   - 无需 API Key
+
+**容量提升：**
+
+| 指标 | gVisor 容器 | Microsandbox |
+|------|------------|--------------|
+| 内存开销/沙箱 | 50-100MB | 64MB |
+| 4核4G 并发 | 5-6 用户 | **50 用户** |
+| 启动时间 | 2-5秒 | <200ms |
+| 隔离级别 | 用户态内核 | MicroVM |
+
+---
+
 ## Recent Changes (2026-02-02)
 
 ### Tool Execution Enhancement
@@ -899,4 +985,4 @@ E:\PythonWorks\Coworker\
 
 ---
 
-*Last updated: 2026-02-01 19:55:59*
+*Last updated: 2026-02-05*

@@ -3,6 +3,7 @@ package claudecli
 // ClaudeCLI 模块 - 提供 Claude Code CLI 功能
 
 import (
+	"context"
 	"github.com/QuantumNous/new-api/claudecli/internal/api"
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
@@ -10,12 +11,14 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
 	"log"
+	"time"
 )
 
 // Module claudecli 模块实例
@@ -28,6 +31,7 @@ type Module struct {
 	Tasks        *task.Manager
 	Jobs         *job.Manager
 	Containers   *container.ContainerManager
+	SandboxPool  *sandbox.SandboxPool
 	RESTHandler  *api.RESTHandler
 	WSHandler    *api.WSHandler
 	FileHandler  *api.FileHandler
@@ -97,8 +101,41 @@ func Init() *Module {
 		}
 	}
 
+	// 创建 Microsandbox 沙箱池（如果启用）
+	var sandboxPool *sandbox.SandboxPool
+	if cfg.Microsandbox.Enabled {
+		msbClient := sandbox.NewMicrosandboxClient(
+			cfg.Microsandbox.ServerURL,
+			cfg.Microsandbox.APIKey,
+			cfg.Microsandbox.Namespace,
+		)
+		poolCfg := sandbox.PoolConfig{
+			PoolSize:    cfg.Microsandbox.PoolSize,
+			MaxWaitTime: cfg.Microsandbox.MaxWaitTime,
+			MemoryMB:    cfg.Microsandbox.MemoryMB,
+			CPUs:        cfg.Microsandbox.CPUs,
+			ExecTimeout: cfg.Microsandbox.ExecTimeout,
+		}
+		var err error
+		sandboxPool, err = sandbox.NewSandboxPool(msbClient, poolCfg)
+		if err != nil {
+			log.Printf("[ClaudeCLI] WARNING: Microsandbox pool disabled: %v", err)
+			sandboxPool = nil
+		} else {
+			// 启动池（预热沙箱）
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			if err := sandboxPool.Start(ctx); err != nil {
+				log.Printf("[ClaudeCLI] WARNING: Failed to start sandbox pool: %v", err)
+				sandboxPool = nil
+			} else {
+				log.Println("[ClaudeCLI] Microsandbox pool enabled")
+			}
+			cancel()
+		}
+	}
+
 	// 注册所有工具
-	registerTools(toolRegistry, cfg, taskManager, containerMgr)
+	registerTools(toolRegistry, cfg, taskManager, containerMgr, sandboxPool)
 
 	// 创建权限检查器
 	permChecker := permissions.NewChecker()
@@ -131,6 +168,7 @@ func Init() *Module {
 		Tasks:       taskManager,
 		Jobs:        jobManager,
 		Containers:  containerMgr,
+		SandboxPool: sandboxPool,
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
 		FileHandler: fileHandler,
@@ -144,7 +182,7 @@ func Init() *Module {
 }
 
 // registerTools 注册所有工具
-func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, containerMgr *container.ContainerManager) {
+func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, containerMgr *container.ContainerManager, sandboxPool *sandbox.SandboxPool) {
 	workingDir := cfg.Security.WorkingDir
 	blockedCommands := cfg.Security.BlockedCommands
 
@@ -152,6 +190,9 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 	bashTool := tools.NewBashTool(workingDir, blockedCommands)
 	if containerMgr != nil {
 		bashTool.SetContainerManager(containerMgr)
+	}
+	if sandboxPool != nil {
+		bashTool.SetSandboxPool(sandboxPool)
 	}
 	registry.Register(bashTool)
 	registry.Register(tools.NewReadTool(workingDir))
@@ -177,6 +218,10 @@ func (m *Module) Shutdown() {
 	if m.Jobs != nil {
 		log.Println("[ClaudeCLI] Stopping job scheduler...")
 		m.Jobs.Stop()
+	}
+	if m.SandboxPool != nil {
+		log.Println("[ClaudeCLI] Shutting down sandbox pool...")
+		m.SandboxPool.Stop()
 	}
 	if m.Containers != nil {
 		log.Println("[ClaudeCLI] Shutting down container manager...")

@@ -19,6 +19,7 @@ type BashTool struct {
 	blockedCommands []string
 	timeout         time.Duration
 	containerMgr    *container.ContainerManager // 容器管理器 (nil 则使用本地执行)
+	sandboxPool     *sandbox.SandboxPool        // Microsandbox 沙箱池 (优先级高于容器)
 }
 
 // BashInput Bash 工具输入
@@ -40,6 +41,11 @@ func NewBashTool(workingDir string, blockedCommands []string) *BashTool {
 // SetContainerManager 设置容器管理器（启用容器隔离模式）
 func (t *BashTool) SetContainerManager(cm *container.ContainerManager) {
 	t.containerMgr = cm
+}
+
+// SetSandboxPool 设置 Microsandbox 沙箱池（优先级高于容器）
+func (t *BashTool) SetSandboxPool(pool *sandbox.SandboxPool) {
+	t.sandboxPool = pool
 }
 
 func (t *BashTool) Name() string { return "Bash" }
@@ -74,6 +80,11 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	}
 
 	userID, _ := ctx.Value(types.UserIDKey).(string)
+
+	// Microsandbox 模式：优先使用 MicroVM 沙箱池
+	if t.sandboxPool != nil {
+		return t.executeInMicrosandbox(ctx, in)
+	}
 
 	// 容器模式：在 gVisor 容器中执行
 	if t.containerMgr != nil && userID != "" {
@@ -116,6 +127,50 @@ func (t *BashTool) executeInContainer(ctx context.Context, userID string, in Bas
 
 	return &types.ToolResult{
 		Success:   true,
+		Output:    output,
+		ElapsedMs: elapsedMs,
+		TimeoutMs: timeoutMs,
+		TimedOut:  false,
+	}, nil
+}
+
+// executeInMicrosandbox 在 Microsandbox MicroVM 中执行命令
+func (t *BashTool) executeInMicrosandbox(ctx context.Context, in BashInput) (*types.ToolResult, error) {
+	timeout := t.timeout
+	if in.Timeout > 0 {
+		timeout = time.Duration(in.Timeout) * time.Millisecond
+	}
+	if timeout > 10*time.Minute {
+		timeout = 10 * time.Minute
+	}
+	timeoutMs := timeout.Milliseconds()
+
+	startTime := time.Now()
+	result, err := t.sandboxPool.Exec(ctx, in.Command, timeout)
+	elapsedMs := time.Since(startTime).Milliseconds()
+
+	if err != nil {
+		timedOut := strings.Contains(err.Error(), "deadline exceeded")
+		return &types.ToolResult{
+			Success:   false,
+			Error:     err.Error(),
+			ElapsedMs: elapsedMs,
+			TimeoutMs: timeoutMs,
+			TimedOut:  timedOut,
+		}, nil
+	}
+
+	// 合并输出
+	output := result.Output
+	if result.Error != "" {
+		if output != "" {
+			output += "\n"
+		}
+		output += result.Error
+	}
+
+	return &types.ToolResult{
+		Success:   result.Success,
 		Output:    output,
 		ElapsedMs: elapsedMs,
 		TimeoutMs: timeoutMs,

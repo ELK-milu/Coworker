@@ -9,10 +9,11 @@ import (
 
 // Config 应用配置
 type Config struct {
-	Server    ServerConfig
-	Claude    ClaudeConfig
-	Security  SecurityConfig
-	Container ContainerConfig
+	Server       ServerConfig
+	Claude       ClaudeConfig
+	Security     SecurityConfig
+	Container    ContainerConfig
+	Microsandbox MicrosandboxConfig
 }
 
 // ServerConfig 服务器配置
@@ -48,6 +49,19 @@ type ContainerConfig struct {
 	DiskMB       int64         // 工作空间磁盘配额 (MB)
 	IdleTimeout  time.Duration // 空闲超时
 	HostBasePath string        // 宿主机上的 userdata 基础路径 (Docker-in-Docker 场景必需)
+}
+
+// MicrosandboxConfig Microsandbox MicroVM 沙箱配置
+type MicrosandboxConfig struct {
+	Enabled     bool          // 是否启用 Microsandbox
+	ServerURL   string        // Microsandbox server URL
+	APIKey      string        // API Key (生产环境必需)
+	Namespace   string        // 命名空间
+	PoolSize    int           // 沙箱池大小
+	MaxWaitTime time.Duration // 获取沙箱最大等待时间
+	MemoryMB    int           // 每个沙箱内存限制 (MB)
+	CPUs        int           // 每个沙箱 CPU 核数
+	ExecTimeout time.Duration // 命令执行超时
 }
 
 var (
@@ -88,6 +102,17 @@ func Load() *Config {
 				DiskMB:       getEnvInt("CONTAINER_DISK_MB", 250),
 				IdleTimeout:  time.Duration(getEnvInt("CONTAINER_IDLE_TIMEOUT", 30)) * time.Minute,
 				HostBasePath: getEnv("CONTAINER_HOST_BASE_PATH", ""), // 宿主机路径，留空则使用 WorkingDir
+			},
+			Microsandbox: MicrosandboxConfig{
+				Enabled:     getEnv("MICROSANDBOX_ENABLED", "") == "true",
+				ServerURL:   getEnv("MSB_SERVER_URL", "http://127.0.0.1:5555"),
+				APIKey:      getEnv("MSB_API_KEY", ""),
+				Namespace:   getEnv("MSB_NAMESPACE", "default"),
+				PoolSize:    int(getEnvInt("MSB_POOL_SIZE", 5)),
+				MaxWaitTime: time.Duration(getEnvInt("MSB_MAX_WAIT_TIME", 30)) * time.Second,
+				MemoryMB:    int(getEnvInt("MSB_MEMORY_MB", 512)),
+				CPUs:        int(getEnvInt("MSB_CPUS", 1)),
+				ExecTimeout: time.Duration(getEnvInt("MSB_EXEC_TIMEOUT", 120)) * time.Second,
 			},
 		}
 	})
