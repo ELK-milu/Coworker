@@ -194,9 +194,6 @@ claudecli/
 │   │   ├── microsandbox_client.go  # HTTP API client
 │   │   ├── pool.go           # SandboxPool manager (task-binding)
 │   │   └── sandbox.go        # Path mapping & security
-│   ├── container/            # Docker/gVisor container isolation
-│   │   ├── manager.go        # Container lifecycle management
-│   │   └── quota.go          # Disk quota checking
 │   ├── tools/                # Claude Code tools
 │   │   ├── bash.go
 │   │   ├── read.go
@@ -594,7 +591,7 @@ Pay-per-use billing with configurable model pricing:
 
 **执行优先级：**
 ```
-Microsandbox (MicroVM) > Container (gVisor/Docker) > Local (开发模式)
+Microsandbox (MicroVM) > Local (开发模式)
 ```
 
 **环境变量配置：**

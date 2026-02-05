@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuantumNous/new-api/claudecli/internal/container"
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
@@ -18,8 +17,7 @@ type BashTool struct {
 	workingDir      string
 	blockedCommands []string
 	timeout         time.Duration
-	containerMgr    *container.ContainerManager // 容器管理器 (nil 则使用本地执行)
-	sandboxPool     *sandbox.SandboxPool        // Microsandbox 沙箱池 (优先级高于容器)
+	sandboxPool     *sandbox.SandboxPool // Microsandbox 沙箱池
 }
 
 // BashInput Bash 工具输入
@@ -38,12 +36,7 @@ func NewBashTool(workingDir string, blockedCommands []string) *BashTool {
 	}
 }
 
-// SetContainerManager 设置容器管理器（启用容器隔离模式）
-func (t *BashTool) SetContainerManager(cm *container.ContainerManager) {
-	t.containerMgr = cm
-}
-
-// SetSandboxPool 设置 Microsandbox 沙箱池（优先级高于容器）
+// SetSandboxPool 设置 Microsandbox 沙箱池
 func (t *BashTool) SetSandboxPool(pool *sandbox.SandboxPool) {
 	t.sandboxPool = pool
 }
@@ -79,59 +72,13 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		}
 	}
 
-	userID, _ := ctx.Value(types.UserIDKey).(string)
-
-	// Microsandbox 模式：优先使用 MicroVM 沙箱池
+	// Microsandbox 模式：使用 MicroVM 沙箱池
 	if t.sandboxPool != nil {
 		return t.executeInMicrosandbox(ctx, in)
 	}
 
-	// 容器模式：在 gVisor 容器中执行
-	if t.containerMgr != nil && userID != "" {
-		return t.executeInContainer(ctx, userID, in)
-	}
-
 	// 本地模式：直接在主机上执行
 	return t.executeLocal(ctx, in)
-}
-
-// executeInContainer 在容器中执行命令
-func (t *BashTool) executeInContainer(ctx context.Context, userID string, in BashInput) (*types.ToolResult, error) {
-	// 检查磁盘配额
-	if err := t.containerMgr.CheckDiskQuota(userID); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
-	}
-
-	timeout := t.timeout
-	if in.Timeout > 0 {
-		timeout = time.Duration(in.Timeout) * time.Millisecond
-	}
-	timeoutMs := timeout.Milliseconds()
-
-	startTime := time.Now()
-	output, err := t.containerMgr.Exec(ctx, userID, in.Command, timeout)
-	elapsedMs := time.Since(startTime).Milliseconds()
-
-	if err != nil {
-		// 区分超时和其他错误
-		timedOut := strings.Contains(err.Error(), "timed out")
-		return &types.ToolResult{
-			Success:   false,
-			Output:    output,
-			Error:     err.Error(),
-			ElapsedMs: elapsedMs,
-			TimeoutMs: timeoutMs,
-			TimedOut:  timedOut,
-		}, nil
-	}
-
-	return &types.ToolResult{
-		Success:   true,
-		Output:    output,
-		ElapsedMs: elapsedMs,
-		TimeoutMs: timeoutMs,
-		TimedOut:  false,
-	}, nil
 }
 
 // executeInMicrosandbox 在 Microsandbox MicroVM 中执行命令

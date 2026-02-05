@@ -4,10 +4,12 @@ package claudecli
 
 import (
 	"context"
+	"log"
+	"time"
+
 	"github.com/QuantumNous/new-api/claudecli/internal/api"
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
-	"github.com/QuantumNous/new-api/claudecli/internal/container"
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
@@ -17,24 +19,21 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
-	"log"
-	"time"
 )
 
 // Module claudecli 模块实例
 type Module struct {
-	Config       *config.Config
-	Client       *client.ClaudeClient
-	Sessions     *session.Manager
-	Tools        *tools.Registry
-	Workspace    *workspace.Manager
-	Tasks        *task.Manager
-	Jobs         *job.Manager
-	Containers   *container.ContainerManager
-	SandboxPool  *sandbox.SandboxPool
-	RESTHandler  *api.RESTHandler
-	WSHandler    *api.WSHandler
-	FileHandler  *api.FileHandler
+	Config      *config.Config
+	Client      *client.ClaudeClient
+	Sessions    *session.Manager
+	Tools       *tools.Registry
+	Workspace   *workspace.Manager
+	Tasks       *task.Manager
+	Jobs        *job.Manager
+	SandboxPool *sandbox.SandboxPool
+	RESTHandler *api.RESTHandler
+	WSHandler   *api.WSHandler
+	FileHandler *api.FileHandler
 }
 
 var (
@@ -79,28 +78,6 @@ func Init() *Module {
 	// 创建 Job 管理器
 	jobManager := job.NewManager(cfg.Security.WorkingDir)
 
-	// 创建容器管理器（如果启用）
-	var containerMgr *container.ContainerManager
-	if cfg.Container.Enabled {
-		var err error
-		containerMgr, err = container.NewContainerManager(cfg.Security.WorkingDir, container.Config{
-			Image:        cfg.Container.Image,
-			Runtime:      cfg.Container.Runtime,
-			MemoryMB:     cfg.Container.MemoryMB,
-			CPUQuota:     cfg.Container.CPUQuota,
-			PidLimit:     cfg.Container.PidLimit,
-			DiskMB:       cfg.Container.DiskMB,
-			IdleTimeout:  cfg.Container.IdleTimeout,
-			HostBasePath: cfg.Container.HostBasePath,
-		})
-		if err != nil {
-			log.Printf("[ClaudeCLI] WARNING: Container isolation disabled: %v", err)
-			containerMgr = nil
-		} else {
-			log.Println("[ClaudeCLI] Container isolation enabled")
-		}
-	}
-
 	// 创建 Microsandbox 沙箱池（如果启用）
 	var sandboxPool *sandbox.SandboxPool
 	if cfg.Microsandbox.Enabled {
@@ -135,7 +112,7 @@ func Init() *Module {
 	}
 
 	// 注册所有工具
-	registerTools(toolRegistry, cfg, taskManager, containerMgr, sandboxPool)
+	registerTools(toolRegistry, cfg, taskManager, sandboxPool)
 
 	// 创建权限检查器
 	permChecker := permissions.NewChecker()
@@ -167,7 +144,6 @@ func Init() *Module {
 		Workspace:   workspaceManager,
 		Tasks:       taskManager,
 		Jobs:        jobManager,
-		Containers:  containerMgr,
 		SandboxPool: sandboxPool,
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
@@ -182,15 +158,12 @@ func Init() *Module {
 }
 
 // registerTools 注册所有工具
-func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, containerMgr *container.ContainerManager, sandboxPool *sandbox.SandboxPool) {
+func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, sandboxPool *sandbox.SandboxPool) {
 	workingDir := cfg.Security.WorkingDir
 	blockedCommands := cfg.Security.BlockedCommands
 
 	// 注册基础工具
 	bashTool := tools.NewBashTool(workingDir, blockedCommands)
-	if containerMgr != nil {
-		bashTool.SetContainerManager(containerMgr)
-	}
 	if sandboxPool != nil {
 		bashTool.SetSandboxPool(sandboxPool)
 	}
@@ -210,7 +183,7 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 	registry.Register(tools.NewTaskListTool(taskManager))
 	registry.Register(tools.NewTaskGetTool(taskManager))
 
-	log.Printf("[ClaudeCLI] Registered %d tools (container isolation: %v)", 13, containerMgr != nil)
+	log.Printf("[ClaudeCLI] Registered %d tools (sandbox pool: %v)", 13, sandboxPool != nil)
 }
 
 // Shutdown 优雅关闭模块
@@ -222,10 +195,6 @@ func (m *Module) Shutdown() {
 	if m.SandboxPool != nil {
 		log.Println("[ClaudeCLI] Shutting down sandbox pool...")
 		m.SandboxPool.Stop()
-	}
-	if m.Containers != nil {
-		log.Println("[ClaudeCLI] Shutting down container manager...")
-		m.Containers.StopAll()
 	}
 }
 
