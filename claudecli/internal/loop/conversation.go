@@ -40,6 +40,8 @@ type LoopEvent struct {
 	ElapsedMs int64 `json:"elapsed_ms,omitempty"`
 	TimeoutMs int64 `json:"timeout_ms,omitempty"`
 	TimedOut  bool  `json:"timed_out,omitempty"`
+	// 工具元数据 (exec_env 等)
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 	// 状态信息
 	Status *StatusInfo `json:"status,omitempty"`
 	// 任务变更信息
@@ -339,6 +341,13 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 		}
 
 		results = append(results, toolResult)
+
+		// 提取工具元数据 (exec_env 等)
+		var metadata map[string]interface{}
+		if result != nil && result.Metadata != nil {
+			metadata = result.Metadata
+		}
+
 		l.eventCh <- LoopEvent{
 			Type:       EventTypeToolEnd,
 			ToolID:     tc.ID,
@@ -348,6 +357,7 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 			ElapsedMs:  elapsedMs,
 			TimeoutMs:  timeoutMs,
 			TimedOut:   timedOut,
+			Metadata:   metadata,
 		}
 
 		// 检测任务变更并发送事件

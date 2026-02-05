@@ -5,7 +5,7 @@ import { IconChevronDown, IconChevronRight, IconTick, IconClose, IconTerminal } 
 const { Text } = Typography;
 
 // 工具调用卡片组件
-const ToolCallCard = ({ toolName, toolId, input, result, status, isError, elapsedMs, timeoutMs, timedOut }) => {
+const ToolCallCard = ({ toolName, toolId, input, result, status, isError, elapsedMs, timeoutMs, timedOut, execEnv }) => {
   const [expanded, setExpanded] = useState(false);
 
   // 格式化执行时间
@@ -51,6 +51,11 @@ const ToolCallCard = ({ toolName, toolId, input, result, status, isError, elapse
         <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           {elapsedMs > 0 && (
             <Text type="tertiary" size="small">{formatElapsed(elapsedMs)}</Text>
+          )}
+          {execEnv && (
+            <Tag color={execEnv === 'microsandbox' ? 'cyan' : 'grey'} size="small">
+              {execEnv === 'microsandbox' ? 'MicroVM' : 'Local'}
+            </Tag>
           )}
           {timedOut && (
             <Tag color="orange" size="small">超时</Tag>

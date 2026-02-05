@@ -122,6 +122,9 @@ func (t *BashTool) executeInMicrosandbox(ctx context.Context, in BashInput) (*ty
 		ElapsedMs: elapsedMs,
 		TimeoutMs: timeoutMs,
 		TimedOut:  false,
+		Metadata: map[string]interface{}{
+			"exec_env": "microsandbox",
+		},
 	}, nil
 }
 
@@ -192,5 +195,8 @@ func (t *BashTool) executeLocal(ctx context.Context, in BashInput) (*types.ToolR
 		ElapsedMs: elapsedMs,
 		TimeoutMs: timeoutMs,
 		TimedOut:  false,
+		Metadata: map[string]interface{}{
+			"exec_env": "local",
+		},
 	}, nil
 }

@@ -313,6 +313,7 @@ const Coworker = () => {
                 elapsedMs: payload.elapsed_ms,
                 timeoutMs: payload.timeout_ms,
                 timedOut: payload.timed_out,
+                execEnv: payload.exec_env,
               }
             : msg
         ));
@@ -663,6 +664,7 @@ const Coworker = () => {
           elapsedMs={msg.elapsedMs}
           timeoutMs={msg.timeoutMs}
           timedOut={msg.timedOut}
+          execEnv={msg.execEnv}
         />
       );
     }
