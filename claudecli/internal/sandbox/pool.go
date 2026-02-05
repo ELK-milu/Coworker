@@ -34,7 +34,7 @@ type PoolConfig struct {
 	PoolSize    int           // 池大小 (默认 5)
 	MaxWaitTime time.Duration // 最大等待时间 (默认 30s)
 	MemoryMB    int           // 每沙箱内存 (默认 512MB)
-	CPUs        int           // 每沙箱 CPU (默认 1)
+	CPUs        float64       // 每沙箱 CPU (默认 0.25)
 	ExecTimeout time.Duration // 执行超时 (默认 2min)
 	Image       string        // 沙箱镜像 (默认 microsandbox/python)
 }
@@ -55,7 +55,7 @@ func DefaultPoolConfig() PoolConfig {
 		PoolSize:    5,
 		MaxWaitTime: 30 * time.Second,
 		MemoryMB:    512,
-		CPUs:        1,
+		CPUs:        0.25,
 		ExecTimeout: 2 * time.Minute,
 		Image:       "microsandbox/python",
 	}
@@ -73,7 +73,7 @@ func NewSandboxPool(client *MicrosandboxClient, config PoolConfig) (*SandboxPool
 		config.MemoryMB = 512
 	}
 	if config.CPUs <= 0 {
-		config.CPUs = 1
+		config.CPUs = 0.25
 	}
 	if config.ExecTimeout <= 0 {
 		config.ExecTimeout = 2 * time.Minute

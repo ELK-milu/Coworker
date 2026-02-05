@@ -46,7 +46,7 @@ type MicrosandboxConfig struct {
 	PoolSize    int           // 沙箱池大小
 	MaxWaitTime time.Duration // 获取沙箱最大等待时间
 	MemoryMB    int           // 每个沙箱内存限制 (MB)
-	CPUs        int           // 每个沙箱 CPU 核数
+	CPUs        float64       // 每个沙箱 CPU 核数 (支持小数，如 0.25)
 	ExecTimeout time.Duration // 命令执行超时
 }
 
@@ -85,8 +85,8 @@ func Load() *Config {
 				Namespace:   getEnv("MSB_NAMESPACE", "default"),
 				PoolSize:    int(getEnvInt("MSB_POOL_SIZE", 5)),
 				MaxWaitTime: time.Duration(getEnvInt("MSB_MAX_WAIT_TIME", 30)) * time.Second,
-				MemoryMB:    int(getEnvInt("MSB_MEMORY_MB", 512)),
-				CPUs:        int(getEnvInt("MSB_CPUS", 1)),
+				MemoryMB:    int(getEnvInt("MSB_MEMORY_MB", 64)),
+				CPUs:        getEnvFloat("MSB_CPUS", 0.25),
 				ExecTimeout: time.Duration(getEnvInt("MSB_EXEC_TIMEOUT", 120)) * time.Second,
 			},
 		}
@@ -105,6 +105,15 @@ func getEnvInt(key string, defaultVal int64) int64 {
 	if val := os.Getenv(key); val != "" {
 		if i, err := strconv.ParseInt(val, 10, 64); err == nil {
 			return i
+		}
+	}
+	return defaultVal
+}
+
+func getEnvFloat(key string, defaultVal float64) float64 {
+	if val := os.Getenv(key); val != "" {
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			return f
 		}
 	}
 	return defaultVal

@@ -58,7 +58,7 @@ type jsonRPCError struct {
 }
 
 // StartSandbox 启动沙箱
-func (c *MicrosandboxClient) StartSandbox(ctx context.Context, name, image string, memoryMB, cpus int) error {
+func (c *MicrosandboxClient) StartSandbox(ctx context.Context, name, image string, memoryMB int, cpus float64) error {
 	params := map[string]any{
 		"namespace": c.namespace,
 		"sandbox":   name,
