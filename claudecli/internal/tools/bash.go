@@ -36,7 +36,7 @@ func NewBashTool(workingDir string, blockedCommands []string) *BashTool {
 	}
 }
 
-// SetSandboxPool 设置 Microsandbox 沙箱池
+// SetSandboxPool 设置 nsjail 沙箱池
 func (t *BashTool) SetSandboxPool(pool *sandbox.SandboxPool) {
 	t.sandboxPool = pool
 }
@@ -72,17 +72,23 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		}
 	}
 
-	// Microsandbox 模式：使用 MicroVM 沙箱池
+	// nsjail 沙箱模式
 	if t.sandboxPool != nil {
-		return t.executeInMicrosandbox(ctx, in)
+		return t.executeInNsjail(ctx, in)
 	}
 
 	// 本地模式：直接在主机上执行
 	return t.executeLocal(ctx, in)
 }
 
-// executeInMicrosandbox 在 Microsandbox MicroVM 中执行命令
-func (t *BashTool) executeInMicrosandbox(ctx context.Context, in BashInput) (*types.ToolResult, error) {
+// executeInNsjail 在 nsjail 沙箱中执行命令
+func (t *BashTool) executeInNsjail(ctx context.Context, in BashInput) (*types.ToolResult, error) {
+	// 获取沙箱
+	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+	if sb == nil {
+		return &types.ToolResult{Success: false, Error: "sandbox context not found"}, nil
+	}
+
 	timeout := t.timeout
 	if in.Timeout > 0 {
 		timeout = time.Duration(in.Timeout) * time.Millisecond
@@ -92,8 +98,11 @@ func (t *BashTool) executeInMicrosandbox(ctx context.Context, in BashInput) (*ty
 	}
 	timeoutMs := timeout.Milliseconds()
 
+	// 获取用户工作空间的真实路径
+	workspacePath := sb.GetRealWorkingDir()
+
 	startTime := time.Now()
-	result, err := t.sandboxPool.Exec(ctx, in.Command, timeout)
+	result, err := t.sandboxPool.Exec(ctx, workspacePath, in.Command, timeout)
 	elapsedMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
@@ -115,6 +124,9 @@ func (t *BashTool) executeInMicrosandbox(ctx context.Context, in BashInput) (*ty
 		}
 		output += result.Error
 	}
+
+	// 虚拟化输出中的路径
+	output = sb.VirtualizeOutput(output)
 
 	return &types.ToolResult{
 		Success:   result.Success,

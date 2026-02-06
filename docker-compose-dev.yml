@@ -2,10 +2,7 @@
 # 简化的本地开发方式
 #
 # 使用方法:
-#   # 首次运行需要先构建沙箱镜像
-#   docker build -t coworker-sandbox:latest docker/sandbox/
-#
-#   docker-compose -f docker-compose-dev.yml up
+#   docker-compose -f docker-compose-dev.yml up --build
 #
 # 架构说明:
 #   开发时访问: http://localhost:3000 (后端服务)
@@ -18,7 +15,7 @@
 #   - 统一入口：http://localhost:3000
 #   - 后端：Go + Air 热重载
 #   - 前端：bun build 构建静态文件，修改后手动重启 web-dev 容器
-#   - 容器隔离：Bash 命令在独立沙箱容器中执行
+#   - 沙箱隔离：Bash 命令在独立 nsjail 容器中执行
 #
 # 前端修改后重新构建:
 #   docker-compose -f docker-compose-dev.yml restart web-dev
@@ -70,25 +67,32 @@ services:
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
       - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
       - WORKSPACE_BASE_PATH=/app/userdata
-      # 容器隔离配置 (可选，设为 true 启用)
-      - CONTAINER_ENABLED=${CONTAINER_ENABLED:-false}
-      - CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-}
-      - CONTAINER_IMAGE=${CONTAINER_IMAGE:-coworker-sandbox:latest}
-      - CONTAINER_MEMORY_MB=${CONTAINER_MEMORY_MB:-256}
-      - CONTAINER_CPU_QUOTA=${CONTAINER_CPU_QUOTA:-0.5}
-      - CONTAINER_PID_LIMIT=${CONTAINER_PID_LIMIT:-100}
-      - CONTAINER_DISK_MB=${CONTAINER_DISK_MB:-250}
-      - CONTAINER_IDLE_TIMEOUT=${CONTAINER_IDLE_TIMEOUT:-30}
-      # Docker-in-Docker: 宿主机上 userdata 的绝对路径
-      - CONTAINER_HOST_BASE_PATH=${CONTAINER_HOST_BASE_PATH:-${PWD}/userdata}
+      # Nsjail 沙箱配置
+      - NSJAIL_ENABLED=${NSJAIL_ENABLED:-true}
+      - NSJAIL_CONTAINER_NAME=nsjail-sandbox
+      - NSJAIL_MAX_CONCURRENT=${NSJAIL_MAX_CONCURRENT:-50}
+      - NSJAIL_MEMORY_MB=${NSJAIL_MEMORY_MB:-512}
+      - NSJAIL_EXEC_TIMEOUT=${NSJAIL_EXEC_TIMEOUT:-120}
     depends_on:
       - redis
       - postgres
+      - nsjail-sandbox
     working_dir: /app
     command: air -c .air.toml
-    # 需要访问 Docker socket
-    group_add:
-      - "999"  # docker 组 (Linux)
+
+  # nsjail 沙箱服务 (独立容器)
+  # 使用 Linux namespaces 提供进程级隔离
+  # 后端通过 docker exec 调用此容器执行命令
+  nsjail-sandbox:
+    build:
+      context: ./docker/nsjail
+      dockerfile: Dockerfile
+    container_name: nsjail-sandbox
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      # 用户数据目录 - 与后端共享
+      - ./userdata:/userdata:rw
 
   redis:
     image: redis:latest

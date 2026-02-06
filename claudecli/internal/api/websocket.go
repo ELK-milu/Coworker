@@ -1626,10 +1626,10 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 	virtualWorkDir := sb.GetVirtualWorkingDir()
 	realWorkDir := sb.GetRealWorkingDir()
 
-	// 确定平台：如果启用容器隔离，命令在 Linux 容器中执行
+	// 确定平台：如果启用 nsjail 沙箱，命令在隔离环境中执行
 	platform := "linux"
-	if h.config.Container.Enabled {
-		platform = "linux (sandbox container)"
+	if h.config.Nsjail.Enabled {
+		platform = "linux (nsjail sandbox)"
 	}
 
 	// 获取任务列表渲染
@@ -1648,9 +1648,9 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 		TasksRender:    tasksRender,
 	}
 
-	// 容器隔离模式：用户工作空间是隔离的，不继承宿主机的 git 状态
+	// nsjail 沙箱模式：用户工作空间是隔离的，不继承宿主机的 git 状态
 	// 只检查用户工作空间内是否有 .git 目录
-	if h.config.Container.Enabled {
+	if h.config.Nsjail.Enabled {
 		// 检查用户工作空间内的 git 状态（而非宿主机）
 		promptCtx.IsGitRepo = prompt.IsGitRepo(realWorkDir)
 		if promptCtx.IsGitRepo {

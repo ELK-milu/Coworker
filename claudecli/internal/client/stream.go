@@ -81,7 +81,7 @@ func (c *ClaudeClient) CreateSimpleMessage(ctx context.Context, prompt string, m
 			Role: "user",
 			Content: []anthropic.BetaContentBlockParamUnion{
 				{
-					OfRequestTextBlock: &anthropic.BetaTextBlockParam{
+					OfText: &anthropic.BetaTextBlockParam{
 						Type: "text",
 						Text: prompt,
 					},

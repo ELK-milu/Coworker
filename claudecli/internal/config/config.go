@@ -9,10 +9,10 @@ import (
 
 // Config 应用配置
 type Config struct {
-	Server       ServerConfig
-	Claude       ClaudeConfig
-	Security     SecurityConfig
-	Microsandbox MicrosandboxConfig
+	Server   ServerConfig
+	Claude   ClaudeConfig
+	Security SecurityConfig
+	Nsjail   NsjailConfig
 }
 
 // ServerConfig 服务器配置
@@ -37,17 +37,13 @@ type SecurityConfig struct {
 	BlockedCommands []string
 }
 
-// MicrosandboxConfig Microsandbox MicroVM 沙箱配置
-type MicrosandboxConfig struct {
-	Enabled     bool          // 是否启用 Microsandbox
-	ServerURL   string        // Microsandbox server URL
-	APIKey      string        // API Key (生产环境必需)
-	Namespace   string        // 命名空间
-	PoolSize    int           // 沙箱池大小
-	MaxWaitTime time.Duration // 获取沙箱最大等待时间
-	MemoryMB    int           // 每个沙箱内存限制 (MB)
-	CPUs        float64       // 每个沙箱 CPU 核数 (支持小数，如 0.25)
-	ExecTimeout time.Duration // 命令执行超时
+// NsjailConfig nsjail 进程沙箱配置
+type NsjailConfig struct {
+	Enabled       bool          // 是否启用 nsjail
+	ContainerName string        // nsjail 容器名称
+	MaxConcurrent int           // 最大并发数
+	MemoryMB      int           // 内存限制 (MB)
+	ExecTimeout   time.Duration // 命令执行超时
 }
 
 var (
@@ -78,16 +74,12 @@ func Load() *Config {
 					":(){ :|:& };:", "chmod -R 777 /",
 				},
 			},
-			Microsandbox: MicrosandboxConfig{
-				Enabled:     getEnv("MICROSANDBOX_ENABLED", "") == "true",
-				ServerURL:   getEnv("MSB_SERVER_URL", "http://127.0.0.1:5555"),
-				APIKey:      getEnv("MSB_API_KEY", ""),
-				Namespace:   getEnv("MSB_NAMESPACE", "default"),
-				PoolSize:    int(getEnvInt("MSB_POOL_SIZE", 5)),
-				MaxWaitTime: time.Duration(getEnvInt("MSB_MAX_WAIT_TIME", 30)) * time.Second,
-				MemoryMB:    int(getEnvInt("MSB_MEMORY_MB", 64)),
-				CPUs:        getEnvFloat("MSB_CPUS", 0.25),
-				ExecTimeout: time.Duration(getEnvInt("MSB_EXEC_TIMEOUT", 120)) * time.Second,
+			Nsjail: NsjailConfig{
+				Enabled:       getEnv("NSJAIL_ENABLED", "true") == "true",
+				ContainerName: getEnv("NSJAIL_CONTAINER_NAME", "nsjail-sandbox"),
+				MaxConcurrent: int(getEnvInt("NSJAIL_MAX_CONCURRENT", 50)),
+				MemoryMB:      int(getEnvInt("NSJAIL_MEMORY_MB", 512)),
+				ExecTimeout:   time.Duration(getEnvInt("NSJAIL_EXEC_TIMEOUT", 120)) * time.Second,
 			},
 		}
 	})
