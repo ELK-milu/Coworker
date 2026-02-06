@@ -37,6 +37,12 @@ type ToolResultBlock struct {
 	ToolUseID string `json:"tool_use_id"`
 	Content   string `json:"content"`
 	IsError   bool   `json:"is_error,omitempty"`
+	// 执行时间信息（用于前端显示）
+	ElapsedMs int64 `json:"elapsed_ms,omitempty"`
+	TimeoutMs int64 `json:"timeout_ms,omitempty"`
+	TimedOut  bool  `json:"timed_out,omitempty"`
+	// 执行环境 (local, microsandbox, nsjail)
+	ExecEnv string `json:"exec_env,omitempty"`
 }
 
 func (t ToolResultBlock) GetType() string { return "tool_result" }

@@ -547,6 +547,19 @@ func ConvertMessagesToFrontend(messages []types.Message) []map[string]interface{
 						if result[i]["toolId"] == toolResult.ToolUseID {
 							result[i]["result"] = toolResult.Content
 							result[i]["isError"] = toolResult.IsError
+							// 添加执行时间信息
+							if toolResult.ElapsedMs > 0 {
+								result[i]["elapsedMs"] = toolResult.ElapsedMs
+							}
+							if toolResult.TimeoutMs > 0 {
+								result[i]["timeoutMs"] = toolResult.TimeoutMs
+							}
+							if toolResult.TimedOut {
+								result[i]["timedOut"] = toolResult.TimedOut
+							}
+							if toolResult.ExecEnv != "" {
+								result[i]["execEnv"] = toolResult.ExecEnv
+							}
 							break
 						}
 					}
@@ -591,11 +604,29 @@ func ConvertMessagesToFrontend(messages []types.Message) []map[string]interface{
 				toolUseID, _ := blockMap["tool_use_id"].(string)
 				content, _ := blockMap["content"].(string)
 				isError, _ := blockMap["is_error"].(bool)
+				// 提取执行时间信息
+				elapsedMs, _ := blockMap["elapsed_ms"].(float64)
+				timeoutMs, _ := blockMap["timeout_ms"].(float64)
+				timedOut, _ := blockMap["timed_out"].(bool)
+				execEnv, _ := blockMap["exec_env"].(string)
 				// 查找对应的工具调用并更新结果
 				for i := len(result) - 1; i >= 0; i-- {
 					if result[i]["toolId"] == toolUseID {
 						result[i]["result"] = content
 						result[i]["isError"] = isError
+						// 添加执行时间信息
+						if elapsedMs > 0 {
+							result[i]["elapsedMs"] = int64(elapsedMs)
+						}
+						if timeoutMs > 0 {
+							result[i]["timeoutMs"] = int64(timeoutMs)
+						}
+						if timedOut {
+							result[i]["timedOut"] = timedOut
+						}
+						if execEnv != "" {
+							result[i]["execEnv"] = execEnv
+						}
 						break
 					}
 				}

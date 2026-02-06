@@ -332,11 +332,23 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 					tc.Name, elapsedMs, len(result.Output))
 			}
 
+			// 提取执行环境
+			execEnv := ""
+			if result.Metadata != nil {
+				if env, ok := result.Metadata["exec_env"].(string); ok {
+					execEnv = env
+				}
+			}
+
 			toolResult = types.ToolResultBlock{
 				Type:      "tool_result",
 				ToolUseID: tc.ID,
 				Content:   result.Output,
 				IsError:   !result.Success,
+				ElapsedMs: elapsedMs,
+				TimeoutMs: timeoutMs,
+				TimedOut:  timedOut,
+				ExecEnv:   execEnv,
 			}
 		}
 
