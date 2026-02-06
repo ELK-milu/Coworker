@@ -55,9 +55,9 @@ func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string
 	// 路径转换: /app/userdata/xxx -> /userdata/xxx
 	nsjailPath := convertToNsjailPath(workspacePath)
 
-	// 构建 nsjail 命令参数
+	// 构建 nsjail 命令参数 (-q 抑制日志输出)
 	nsjailCmd := fmt.Sprintf(
-		"nsjail -Mo --user 99999 --group 99999 --hostname sandbox "+
+		"nsjail -Mo -q --user 99999 --group 99999 --hostname sandbox "+
 			"--bindmount %s:/workspace:rw "+
 			"--bindmount /bin:/bin:ro "+
 			"--bindmount /lib:/lib:ro "+
@@ -107,7 +107,8 @@ func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string
 
 // Ping 检查 nsjail 容器是否可用
 func (e *NsjailExecutor) Ping() error {
-	cmd := exec.Command("docker", "exec", e.config.ContainerName, "nsjail", "--version")
+	// nsjail 不支持 --version，使用 --help 检测
+	cmd := exec.Command("docker", "exec", e.config.ContainerName, "nsjail", "--help")
 	return cmd.Run()
 }
 
