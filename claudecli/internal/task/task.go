@@ -258,6 +258,87 @@ func (m *Manager) Update(userID, listID, taskID string, updates map[string]inter
 	return task, nil
 }
 
+// UpdateByInternalID 通过 InternalID 更新任务（更稳定，不受其他任务删除影响）
+func (m *Manager) UpdateByInternalID(userID, listID, internalID string, updates map[string]interface{}) (*Task, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := userID + ":" + listID
+
+	// 加载任务列表
+	tasks := m.listTasksLocked(userID, listID)
+
+	// 查找匹配的任务
+	var task *Task
+	for _, t := range tasks {
+		if t.InternalID == internalID {
+			task = t
+			break
+		}
+	}
+
+	if task == nil {
+		return nil, fmt.Errorf("task not found: internalId=%s", internalID)
+	}
+
+	// 应用更新
+	if subject, ok := updates["subject"].(string); ok {
+		task.Subject = subject
+	}
+	if description, ok := updates["description"].(string); ok {
+		task.Description = description
+	}
+	if activeForm, ok := updates["activeForm"].(string); ok {
+		task.ActiveForm = activeForm
+	}
+	if status, ok := updates["status"].(string); ok {
+		newStatus := Status(status)
+		// 约束检查: 只能有一个 in_progress 任务
+		if newStatus == StatusInProgress && task.Status != StatusInProgress {
+			for _, t := range tasks {
+				if t.InternalID != task.InternalID && t.Status == StatusInProgress {
+					return nil, ErrOnlyOneInProgress
+				}
+			}
+		}
+		task.Status = newStatus
+	}
+	if owner, ok := updates["owner"].(string); ok {
+		task.Owner = owner
+	}
+
+	task.UpdatedAt = time.Now().UnixMilli()
+
+	// 计算动态 ID
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].Order < tasks[j].Order
+	})
+	dynamicID := ""
+	for i, t := range tasks {
+		if t.InternalID == internalID {
+			dynamicID = fmt.Sprintf("%d", i+1)
+			break
+		}
+	}
+
+	// 如果状态是 deleted，删除文件
+	if task.Status == StatusDeleted {
+		taskFile := filepath.Join(m.getTaskDir(userID, listID), task.InternalID+".json")
+		os.Remove(taskFile)
+		delete(m.tasks[key], task.InternalID)
+		task.ID = dynamicID
+		return task, nil
+	}
+
+	// 保存到文件
+	if err := m.saveTask(userID, listID, task); err != nil {
+		return nil, err
+	}
+
+	task.ID = dynamicID
+	return task, nil
+}
+
 // List 列出所有任务
 func (m *Manager) List(userID, listID string) []*Task {
 	m.mu.Lock()

@@ -97,11 +97,11 @@ func (t *TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (*t
 	}
 
 	// 返回结果，不显示 ID（ID 顺序应通过 TaskList 获取）
-	// 只显示关键信息：subject, status, activeForm
+	// 只显示关键信息：subject, status, activeForm, internalId
 	return &types.ToolResult{
 		Success: true,
-		Output: fmt.Sprintf("Task created successfully:\n  subject: %s\n  status: %s\n  activeForm: %s",
-			newTask.Subject, newTask.Status, newTask.ActiveForm),
+		Output: fmt.Sprintf("Task created successfully:\n  internalId: %s\n  subject: %s\n  status: %s\n  activeForm: %s\n\nUse internalId for subsequent updates to avoid ID shift issues.",
+			newTask.InternalID, newTask.Subject, newTask.Status, newTask.ActiveForm),
 		Metadata: map[string]interface{}{
 			"task_changed": true,
 			"action":       "created",
@@ -141,7 +141,9 @@ Use this to:
 - Update task details or dependencies
 - Delete tasks that are no longer needed
 
-IMPORTANT: Only mark a task as completed when you have FULLY accomplished it.`
+IMPORTANT:
+- Only mark a task as completed when you have FULLY accomplished it.
+- Prefer using internalId (from TaskCreate output) over taskId to avoid ID shift issues when tasks are deleted.`
 }
 
 func (t *TaskUpdateTool) InputSchema() map[string]interface{} {
@@ -150,7 +152,11 @@ func (t *TaskUpdateTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"taskId": map[string]interface{}{
 				"type":        "string",
-				"description": "The ID of the task to update",
+				"description": "The dynamic ID of the task (position-based, may change when tasks are deleted)",
+			},
+			"internalId": map[string]interface{}{
+				"type":        "string",
+				"description": "The stable internal ID of the task (preferred, won't change when other tasks are deleted)",
 			},
 			"status": map[string]interface{}{
 				"type":        "string",
@@ -187,6 +193,7 @@ func (t *TaskUpdateTool) InputSchema() map[string]interface{} {
 // TaskUpdateInput 更新任务输入
 type TaskUpdateInput struct {
 	TaskID      string   `json:"taskId"`
+	InternalID  string   `json:"internalId,omitempty"`
 	Status      string   `json:"status,omitempty"`
 	Subject     string   `json:"subject,omitempty"`
 	Description string   `json:"description,omitempty"`
@@ -206,6 +213,14 @@ func (t *TaskUpdateTool) Execute(ctx context.Context, input json.RawMessage) (*t
 
 	userID := getContextUserID(ctx)
 	listID := "default"
+
+	// 检查是否提供了 taskId 或 internalId
+	if params.TaskID == "" && params.InternalID == "" {
+		return &types.ToolResult{
+			Success: false,
+			Error:   "Either taskId or internalId is required",
+		}, nil
+	}
 
 	// 构建更新 map
 	updates := make(map[string]interface{})
@@ -228,7 +243,14 @@ func (t *TaskUpdateTool) Execute(ctx context.Context, input json.RawMessage) (*t
 		updates["addBlockedBy"] = params.AddBlockedBy
 	}
 
-	updatedTask, err := t.tasks.Update(userID, listID, params.TaskID, updates)
+	// 优先使用 InternalID（更稳定）
+	var updatedTask *task.Task
+	var err error
+	if params.InternalID != "" {
+		updatedTask, err = t.tasks.UpdateByInternalID(userID, listID, params.InternalID, updates)
+	} else {
+		updatedTask, err = t.tasks.Update(userID, listID, params.TaskID, updates)
+	}
 	if err != nil {
 		return &types.ToolResult{
 			Success: false,
