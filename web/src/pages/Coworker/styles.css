@@ -126,7 +126,7 @@
 .message-content.user {
   background: var(--semi-color-primary-light-default);
   border-color: var(--semi-color-primary-light-active);
-  text-align: right;
+  text-align: left;
 }
 
 .message-content.assistant {
