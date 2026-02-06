@@ -205,6 +205,28 @@
   font-size: 11px;
 }
 
+/* Select 样式 */
+.job-select {
+  width: 100%;
+}
+
+/* 间隔输入 */
+.job-interval-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.job-interval-input .job-input {
+  flex: 1;
+}
+
+.job-interval-label {
+  font-size: 13px;
+  color: var(--semi-color-text-2);
+  white-space: nowrap;
+}
+
 .job-create-actions {
   display: flex;
   justify-content: flex-end;

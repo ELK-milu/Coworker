@@ -1777,10 +1777,19 @@ User message: ` + firstMessage
 
 // JobCreatePayload 创建 Job 载荷
 type JobCreatePayload struct {
-	UserID   string `json:"user_id"`
-	Name     string `json:"name"`
-	CronExpr string `json:"cron_expr"`
-	Command  string `json:"command"`
+	UserID  string `json:"user_id"`
+	Name    string `json:"name"`
+	Command string `json:"command"`
+
+	// 新的简化调度配置
+	ScheduleType    string `json:"schedule_type"`              // once, daily, weekly, interval, cron
+	Time            string `json:"time,omitempty"`             // HH:MM
+	Weekdays        []int  `json:"weekdays,omitempty"`         // [0-6], 0=周日
+	IntervalMinutes int    `json:"interval_minutes,omitempty"` // 间隔分钟
+	RunAt           int64  `json:"run_at,omitempty"`           // 单次执行时间戳
+
+	// 兼容旧 API
+	CronExpr string `json:"cron_expr,omitempty"`
 }
 
 // handleJobCreate 处理创建 Job 请求
@@ -1791,9 +1800,21 @@ func (h *WSHandler) handleJobCreate(conn *websocket.Conn, payload json.RawMessag
 		return
 	}
 
-	if req.UserID == "" || req.Name == "" || req.CronExpr == "" || req.Command == "" {
-		h.sendError(conn, "user_id, name, cron_expr and command are required")
+	if req.UserID == "" || req.Name == "" || req.Command == "" {
+		h.sendError(conn, "user_id, name and command are required")
 		return
+	}
+
+	// 确定调度类型
+	scheduleType := job.ScheduleType(req.ScheduleType)
+	if scheduleType == "" {
+		// 兼容旧 API：如果提供了 cron_expr，使用 cron 类型
+		if req.CronExpr != "" {
+			scheduleType = job.ScheduleCron
+		} else {
+			h.sendError(conn, "schedule_type or cron_expr is required")
+			return
+		}
 	}
 
 	if h.jobs == nil {
@@ -1802,7 +1823,12 @@ func (h *WSHandler) handleJobCreate(conn *websocket.Conn, payload json.RawMessag
 	}
 
 	go func() {
-		j, err := h.jobs.Create(req.UserID, req.Name, req.CronExpr, req.Command)
+		j, err := h.jobs.CreateWithSchedule(
+			req.UserID, req.Name, req.Command,
+			scheduleType,
+			req.CronExpr, req.Time,
+			req.Weekdays, req.IntervalMinutes, req.RunAt,
+		)
 		if err != nil {
 			h.sendError(conn, "failed to create job: "+err.Error())
 			return

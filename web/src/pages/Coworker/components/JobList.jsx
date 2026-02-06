@@ -1,10 +1,10 @@
 /*
 Copyright (C) 2025 QuantumNous
-事项列表组件 - Cron 定时任务
+事项列表组件 - 简化定时任务
 */
 
 import React, { useState, useRef } from 'react';
-import { Typography, Spin, Button, Tooltip, Switch, Popconfirm } from '@douyinfe/semi-ui';
+import { Typography, Spin, Button, Tooltip, Switch, Popconfirm, Select } from '@douyinfe/semi-ui';
 import {
   IconPlus,
   IconRefresh,
@@ -18,6 +18,59 @@ import {
 import './JobList.css';
 
 const { Text } = Typography;
+
+// 调度类型选项
+const scheduleTypeOptions = [
+  { value: 'daily', label: '每天' },
+  { value: 'weekly', label: '每周' },
+  { value: 'interval', label: '间隔' },
+  { value: 'once', label: '单次' },
+  { value: 'cron', label: '高级 (Cron)' },
+];
+
+// 星期选项
+const weekdayOptions = [
+  { value: 0, label: '周日' },
+  { value: 1, label: '周一' },
+  { value: 2, label: '周二' },
+  { value: 3, label: '周三' },
+  { value: 4, label: '周四' },
+  { value: 5, label: '周五' },
+  { value: 6, label: '周六' },
+];
+
+// 调度类型转换为可读文本
+const scheduleToReadable = (job) => {
+  if (!job) return '';
+
+  switch (job.schedule_type) {
+    case 'once':
+      if (job.run_at) {
+        const date = new Date(job.run_at);
+        return `单次 ${date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+      }
+      return '单次';
+
+    case 'daily':
+      return `每天 ${job.time || '00:00'}`;
+
+    case 'weekly':
+      const days = (job.weekdays || []).map(d => weekdayOptions.find(w => w.value === d)?.label || d).join('、');
+      return `每周${days} ${job.time || '00:00'}`;
+
+    case 'interval':
+      const mins = job.interval_minutes || 0;
+      if (mins >= 60) {
+        return `每 ${Math.floor(mins / 60)} 小时`;
+      }
+      return `每 ${mins} 分钟`;
+
+    case 'cron':
+    default:
+      // 兼容旧的 cron 表达式
+      return cronToReadable(job.cron_expr);
+  }
+};
 
 // Cron 表达式转换为可读文本（简易版本）
 const cronToReadable = (cronExpr) => {
@@ -109,8 +162,13 @@ const JobList = ({
   const [editingJob, setEditingJob] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
-    cron_expr: '',
     command: '',
+    schedule_type: 'daily',
+    time: '09:00',
+    weekdays: [1], // 默认周一
+    interval_minutes: 60,
+    run_at: '',
+    cron_expr: '',
   });
   const [expandedJob, setExpandedJob] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
@@ -119,14 +177,28 @@ const JobList = ({
 
   // 重置表单
   const resetForm = () => {
-    setFormData({ name: '', cron_expr: '', command: '' });
+    setFormData({
+      name: '',
+      command: '',
+      schedule_type: 'daily',
+      time: '09:00',
+      weekdays: [1],
+      interval_minutes: 60,
+      run_at: '',
+      cron_expr: '',
+    });
     setIsCreating(false);
     setEditingJob(null);
   };
 
   // 处理创建/更新 Job
   const handleSubmit = () => {
-    if (!formData.name.trim() || !formData.cron_expr.trim() || !formData.command.trim()) {
+    if (!formData.name.trim() || !formData.command.trim()) {
+      return;
+    }
+
+    // 验证调度配置
+    if (formData.schedule_type === 'cron' && !formData.cron_expr.trim()) {
       return;
     }
 
@@ -144,8 +216,13 @@ const JobList = ({
     setEditingJob(job);
     setFormData({
       name: job.name,
-      cron_expr: job.cron_expr,
       command: job.command,
+      schedule_type: job.schedule_type || 'cron',
+      time: job.time || '09:00',
+      weekdays: job.weekdays || [1],
+      interval_minutes: job.interval_minutes || 60,
+      run_at: job.run_at ? new Date(job.run_at).toISOString().slice(0, 16) : '',
+      cron_expr: job.cron_expr || '',
     });
     setIsCreating(true);
   };
@@ -223,7 +300,7 @@ const JobList = ({
               {job.name}
             </Text>
             <Text className="job-cron" type="tertiary" size="small">
-              {cronToReadable(job.cron_expr)}
+              {scheduleToReadable(job)}
             </Text>
           </div>
           <div className="job-item-actions" onClick={(e) => e.stopPropagation()}>
@@ -285,9 +362,9 @@ const JobList = ({
               </Text>
             </div>
             <div className="job-detail-row">
-              <span className="job-detail-label">Cron：</span>
-              <Text className="job-detail-value" code size="small">
-                {job.cron_expr}
+              <span className="job-detail-label">调度：</span>
+              <Text className="job-detail-value" size="small">
+                {scheduleToReadable(job)}
               </Text>
             </div>
             <div className="job-detail-row">
@@ -354,18 +431,76 @@ const JobList = ({
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             autoFocus
           />
-          <input
-            type="text"
-            className="job-input"
-            placeholder="Cron 表达式 (如: */5 * * * *)"
-            value={formData.cron_expr}
-            onChange={(e) => setFormData({ ...formData, cron_expr: e.target.value })}
+
+          {/* 调度类型选择 */}
+          <Select
+            className="job-select"
+            value={formData.schedule_type}
+            onChange={(value) => setFormData({ ...formData, schedule_type: value })}
+            optionList={scheduleTypeOptions}
+            placeholder="选择调度类型"
           />
-          {formData.cron_expr && (
-            <Text className="job-cron-preview" type="tertiary" size="small">
-              {cronToReadable(formData.cron_expr)}
-            </Text>
+
+          {/* 根据调度类型显示不同的输入 */}
+          {(formData.schedule_type === 'daily' || formData.schedule_type === 'weekly') && (
+            <input
+              type="time"
+              className="job-input"
+              value={formData.time}
+              onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+            />
           )}
+
+          {formData.schedule_type === 'weekly' && (
+            <Select
+              className="job-select"
+              multiple
+              value={formData.weekdays}
+              onChange={(value) => setFormData({ ...formData, weekdays: value })}
+              optionList={weekdayOptions}
+              placeholder="选择星期"
+            />
+          )}
+
+          {formData.schedule_type === 'interval' && (
+            <div className="job-interval-input">
+              <input
+                type="number"
+                className="job-input"
+                min="1"
+                value={formData.interval_minutes}
+                onChange={(e) => setFormData({ ...formData, interval_minutes: parseInt(e.target.value) || 1 })}
+              />
+              <span className="job-interval-label">分钟</span>
+            </div>
+          )}
+
+          {formData.schedule_type === 'once' && (
+            <input
+              type="datetime-local"
+              className="job-input"
+              value={formData.run_at}
+              onChange={(e) => setFormData({ ...formData, run_at: e.target.value })}
+            />
+          )}
+
+          {formData.schedule_type === 'cron' && (
+            <>
+              <input
+                type="text"
+                className="job-input"
+                placeholder="Cron 表达式 (如: */5 * * * *)"
+                value={formData.cron_expr}
+                onChange={(e) => setFormData({ ...formData, cron_expr: e.target.value })}
+              />
+              {formData.cron_expr && (
+                <Text className="job-cron-preview" type="tertiary" size="small">
+                  {cronToReadable(formData.cron_expr)}
+                </Text>
+              )}
+            </>
+          )}
+
           <textarea
             className="job-textarea"
             placeholder="执行命令 (发送给 AI 的指令)"

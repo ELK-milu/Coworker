@@ -19,22 +19,43 @@ const (
 	StatusFailed  Status = "failed"
 )
 
+// ScheduleType 调度类型
+type ScheduleType string
+
+const (
+	ScheduleOnce     ScheduleType = "once"     // 单次执行
+	ScheduleDaily    ScheduleType = "daily"    // 每天执行
+	ScheduleWeekly   ScheduleType = "weekly"   // 每周执行
+	ScheduleInterval ScheduleType = "interval" // 间隔执行
+	ScheduleCron     ScheduleType = "cron"     // Cron 表达式（高级）
+)
+
 // Job 定时事项
 type Job struct {
-	ID          string                 `json:"id"`
-	UserID      string                 `json:"user_id"`
-	Name        string                 `json:"name"`
-	CronExpr    string                 `json:"cron_expr"`   // Cron 表达式
-	Command     string                 `json:"command"`     // 执行的命令/提示词
-	Enabled     bool                   `json:"enabled"`
-	LastRun     int64                  `json:"last_run"`    // 上次执行时间戳
-	NextRun     int64                  `json:"next_run"`    // 下次执行时间戳
-	Status      Status                 `json:"status"`
-	LastError   string                 `json:"last_error,omitempty"`
-	Order       int                    `json:"order"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt   int64                  `json:"created_at"`
-	UpdatedAt   int64                  `json:"updated_at"`
+	ID        string `json:"id"`
+	UserID    string `json:"user_id"`
+	Name      string `json:"name"`
+	Command   string `json:"command"` // 执行的命令/提示词
+	Enabled   bool   `json:"enabled"`
+	LastRun   int64  `json:"last_run"` // 上次执行时间戳
+	NextRun   int64  `json:"next_run"` // 下次执行时间戳
+	Status    Status `json:"status"`
+	LastError string `json:"last_error,omitempty"`
+	Order     int    `json:"order"`
+
+	// 简化的时间配置
+	ScheduleType    ScheduleType `json:"schedule_type"`              // 调度类型
+	Time            string       `json:"time,omitempty"`             // 执行时间 "HH:MM"
+	Weekdays        []int        `json:"weekdays,omitempty"`         // 星期几 [0-6], 0=周日
+	IntervalMinutes int          `json:"interval_minutes,omitempty"` // 间隔分钟数
+	RunAt           int64        `json:"run_at,omitempty"`           // 单次执行时间戳
+
+	// 高级配置（保留兼容）
+	CronExpr string `json:"cron_expr,omitempty"` // Cron 表达式
+
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt int64                  `json:"created_at"`
+	UpdatedAt int64                  `json:"updated_at"`
 }
 
 // Manager Job 管理器
@@ -70,16 +91,23 @@ func (m *Manager) getJobDir(userID string) string {
 	return filepath.Join(m.baseDir, userID, ".claude", "jobs")
 }
 
-// Create 创建 Job
+// Create 创建 Job（简化版，支持新调度类型）
 func (m *Manager) Create(userID, name, cronExpr, command string) (*Job, error) {
+	// 兼容旧 API：如果提供了 cronExpr，使用 Cron 类型
+	return m.CreateWithSchedule(userID, name, command, ScheduleCron, cronExpr, "", nil, 0, 0)
+}
+
+// CreateWithSchedule 创建 Job（完整版）
+func (m *Manager) CreateWithSchedule(
+	userID, name, command string,
+	scheduleType ScheduleType,
+	cronExpr, timeStr string,
+	weekdays []int,
+	intervalMinutes int,
+	runAt int64,
+) (*Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	// 验证 Cron 表达式
-	nextRun, err := m.scheduler.NextRunTime(cronExpr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid cron expression: %v", err)
-	}
 
 	// 获取最大 Order
 	existingJobs := m.listJobsLocked(userID)
@@ -92,19 +120,30 @@ func (m *Manager) Create(userID, name, cronExpr, command string) (*Job, error) {
 
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
 	job := &Job{
-		ID:        jobID,
-		UserID:    userID,
-		Name:      name,
-		CronExpr:  cronExpr,
-		Command:   command,
-		Enabled:   true,
-		NextRun:   nextRun,
-		Status:    StatusIdle,
-		Order:     maxOrder + 1,
-		Metadata:  make(map[string]interface{}),
-		CreatedAt: time.Now().UnixMilli(),
-		UpdatedAt: time.Now().UnixMilli(),
+		ID:              jobID,
+		UserID:          userID,
+		Name:            name,
+		Command:         command,
+		Enabled:         true,
+		Status:          StatusIdle,
+		Order:           maxOrder + 1,
+		ScheduleType:    scheduleType,
+		Time:            timeStr,
+		Weekdays:        weekdays,
+		IntervalMinutes: intervalMinutes,
+		RunAt:           runAt,
+		CronExpr:        cronExpr,
+		Metadata:        make(map[string]interface{}),
+		CreatedAt:       time.Now().UnixMilli(),
+		UpdatedAt:       time.Now().UnixMilli(),
 	}
+
+	// 计算下次执行时间
+	nextRun, err := m.scheduler.CalculateNextRun(job)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schedule: %v", err)
+	}
+	job.NextRun = nextRun
 
 	// 保存到内存
 	if m.jobs[userID] == nil {
@@ -330,6 +369,8 @@ func (m *Manager) MarkCompleted(userID, jobID string, err error) {
 	defer m.mu.Unlock()
 
 	if job := m.jobs[userID][jobID]; job != nil {
+		job.LastRun = time.Now().UnixMilli()
+
 		if err != nil {
 			job.Status = StatusFailed
 			job.LastError = err.Error()
@@ -338,9 +379,16 @@ func (m *Manager) MarkCompleted(userID, jobID string, err error) {
 			job.LastError = ""
 		}
 
-		// 计算下次执行时间
-		nextRun, _ := m.scheduler.NextRunTime(job.CronExpr)
-		job.NextRun = nextRun
+		// 计算下次执行时间（使用新的调度方法）
+		// 对于单次执行的任务，执行后禁用
+		if job.ScheduleType == ScheduleOnce {
+			job.Enabled = false
+			job.NextRun = 0
+		} else {
+			nextRun, _ := m.scheduler.CalculateNextRun(job)
+			job.NextRun = nextRun
+		}
+
 		job.UpdatedAt = time.Now().UnixMilli()
 		m.saveJob(job)
 	}
