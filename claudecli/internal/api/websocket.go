@@ -352,8 +352,9 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 	}
 
 	// 如果是新会话且还没有标题，异步生成标题
+	// 注意：使用新的 context，因为对话的 ctx 可能已被取消
 	if isNewSession && sess.GetTitle() == "" {
-		go h.generateSessionTitle(ctx, sess, msg, conn)
+		go h.generateSessionTitle(context.Background(), sess, msg, conn)
 	}
 }
 
@@ -1719,8 +1720,13 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 
 // generateSessionTitle 异步生成会话标题
 func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Session, firstMessage string, conn *websocket.Conn) {
-	// 构建标题生成提示
-	prompt := `Based on the following user message, generate a concise title (10-20 characters) that summarizes the topic. Reply with ONLY the title, no quotes or extra text.
+	// 构建标题生成提示（支持中英文）
+	prompt := `Generate a concise title (5-15 characters) for this conversation.
+Rules:
+- If the message is in Chinese, reply in Chinese
+- If the message is in English, reply in English
+- Reply with ONLY the title, no quotes, no explanation
+- Keep it short and descriptive
 
 User message: ` + firstMessage
 
