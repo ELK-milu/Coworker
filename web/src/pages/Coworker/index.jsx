@@ -277,7 +277,7 @@ const Coworker = () => {
           if (last?.type === 'assistant' && last.streaming) {
             return [...prev.slice(0, -1), { ...last, content: last.content + payload.content }];
           }
-          return [...prev, { type: 'assistant', content: payload.content, streaming: true }];
+          return [...prev, { type: 'assistant', content: payload.content, streaming: true, timestamp: Date.now() }];
         });
         break;
 
@@ -288,7 +288,7 @@ const Coworker = () => {
           if (last?.type === 'thinking' && last.streaming) {
             return [...prev.slice(0, -1), { ...last, content: last.content + payload.content }];
           }
-          return [...prev, { type: 'thinking', content: payload.content, streaming: true }];
+          return [...prev, { type: 'thinking', content: payload.content, streaming: true, timestamp: Date.now() }];
         });
         break;
 
@@ -299,6 +299,7 @@ const Coworker = () => {
           toolId: payload.tool_id,
           input: payload.input,
           status: 'running',
+          timestamp: Date.now(),
         }]);
         break;
 
