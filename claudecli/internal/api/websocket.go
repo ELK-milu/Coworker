@@ -625,6 +625,7 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 		case loop.EventTypeToolEnd:
 			payload["name"] = event.ToolName
 			payload["tool_id"] = event.ToolID
+			payload["input"] = event.ToolInput
 			payload["result"] = event.ToolResult
 			payload["is_error"] = event.IsError
 			payload["elapsed_ms"] = event.ElapsedMs

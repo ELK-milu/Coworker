@@ -352,6 +352,7 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 			Type:       EventTypeToolEnd,
 			ToolID:     tc.ID,
 			ToolName:   tc.Name,
+			ToolInput:  tc.Input,
 			ToolResult: toolResult.Content,
 			IsError:    toolResult.IsError,
 			ElapsedMs:  elapsedMs,

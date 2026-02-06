@@ -6,7 +6,7 @@ const { Text } = Typography;
 
 // 工具调用卡片组件
 const ToolCallCard = ({ toolName, toolId, input, result, status, isError, elapsedMs, timeoutMs, timedOut, execEnv }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true); // 默认展开
 
   // 格式化执行时间
   const formatElapsed = (ms) => {

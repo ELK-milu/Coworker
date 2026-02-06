@@ -308,6 +308,7 @@ const Coworker = () => {
             ? {
                 ...msg,
                 status: 'completed',
+                input: payload.input || msg.input,
                 result: payload.result,
                 isError: payload.is_error,
                 elapsedMs: payload.elapsed_ms,
