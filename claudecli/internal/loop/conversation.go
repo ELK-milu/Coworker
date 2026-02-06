@@ -209,6 +209,10 @@ func (l *ConversationLoop) processStream(ctx context.Context, streamCh <-chan cl
 		select {
 		case <-ctx.Done():
 			// 上下文被取消，保存已有内容并返回
+			// 如果有正在处理的工具调用，也要保存
+			if currentTool != nil {
+				toolCalls = append(toolCalls, *currentTool)
+			}
 			if textContent != "" || len(toolCalls) > 0 {
 				l.saveAssistantMessage(textContent, toolCalls)
 			}
