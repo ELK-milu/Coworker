@@ -630,13 +630,6 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 			payload["elapsed_ms"] = event.ElapsedMs
 			payload["timeout_ms"] = event.TimeoutMs
 			payload["timed_out"] = event.TimedOut
-			if event.Metadata != nil {
-				payload["metadata"] = event.Metadata
-				// 提取 exec_env 到顶层方便前端使用
-				if execEnv, ok := event.Metadata["exec_env"].(string); ok {
-					payload["exec_env"] = execEnv
-				}
-			}
 		case loop.EventTypeError:
 			payload["error"] = event.Error
 		case loop.EventTypeStatus:
@@ -1633,10 +1626,10 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 	virtualWorkDir := sb.GetVirtualWorkingDir()
 	realWorkDir := sb.GetRealWorkingDir()
 
-	// 确定平台：如果启用 Microsandbox，命令在 MicroVM 中执行
+	// 确定平台：如果启用 nsjail 沙箱，命令在隔离环境中执行
 	platform := "linux"
-	if h.config.Microsandbox.Enabled {
-		platform = "linux (MicroVM sandbox)"
+	if h.config.Nsjail.Enabled {
+		platform = "linux (nsjail sandbox)"
 	}
 
 	// 获取任务列表渲染
@@ -1655,9 +1648,9 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 		TasksRender:    tasksRender,
 	}
 
-	// Microsandbox 模式：用户工作空间是隔离的，不继承宿主机的 git 状态
+	// nsjail 沙箱模式：用户工作空间是隔离的，不继承宿主机的 git 状态
 	// 只检查用户工作空间内是否有 .git 目录
-	if h.config.Microsandbox.Enabled {
+	if h.config.Nsjail.Enabled {
 		// 检查用户工作空间内的 git 状态（而非宿主机）
 		promptCtx.IsGitRepo = prompt.IsGitRepo(realWorkDir)
 		if promptCtx.IsGitRepo {

@@ -78,34 +78,28 @@ func Init() *Module {
 	// 创建 Job 管理器
 	jobManager := job.NewManager(cfg.Security.WorkingDir)
 
-	// 创建 Microsandbox 沙箱池（如果启用）
+	// 创建 nsjail 沙箱池（如果启用）
 	var sandboxPool *sandbox.SandboxPool
-	if cfg.Microsandbox.Enabled {
-		msbClient := sandbox.NewMicrosandboxClient(
-			cfg.Microsandbox.ServerURL,
-			cfg.Microsandbox.APIKey,
-			cfg.Microsandbox.Namespace,
-		)
+	if cfg.Nsjail.Enabled {
 		poolCfg := sandbox.PoolConfig{
-			PoolSize:    cfg.Microsandbox.PoolSize,
-			MaxWaitTime: cfg.Microsandbox.MaxWaitTime,
-			MemoryMB:    cfg.Microsandbox.MemoryMB,
-			CPUs:        cfg.Microsandbox.CPUs,
-			ExecTimeout: cfg.Microsandbox.ExecTimeout,
+			MaxConcurrent: cfg.Nsjail.MaxConcurrent,
+			MemoryMB:      cfg.Nsjail.MemoryMB,
+			ExecTimeout:   cfg.Nsjail.ExecTimeout,
+			ContainerName: cfg.Nsjail.ContainerName,
 		}
 		var err error
-		sandboxPool, err = sandbox.NewSandboxPool(msbClient, poolCfg)
+		sandboxPool, err = sandbox.NewSandboxPool(poolCfg)
 		if err != nil {
-			log.Printf("[ClaudeCLI] WARNING: Microsandbox pool disabled: %v", err)
+			log.Printf("[ClaudeCLI] WARNING: nsjail pool disabled: %v", err)
 			sandboxPool = nil
 		} else {
-			// 启动池（预热沙箱）
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			// 启动池
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := sandboxPool.Start(ctx); err != nil {
 				log.Printf("[ClaudeCLI] WARNING: Failed to start sandbox pool: %v", err)
 				sandboxPool = nil
 			} else {
-				log.Println("[ClaudeCLI] Microsandbox pool enabled")
+				log.Println("[ClaudeCLI] nsjail sandbox pool enabled")
 			}
 			cancel()
 		}
