@@ -300,10 +300,11 @@ func (l *ConversationLoop) saveAssistantMessage(text string, calls []toolCall) {
 func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) error {
 	results := make([]interface{}, 0, len(calls))
 
-	// 将会话的工作目录、用户 ID 和沙箱放入 context
+	// 将会话的工作目录、用户 ID、会话 ID 和沙箱放入 context
 	workDir := l.session.GetWorkingDir()
 	toolCtx := context.WithValue(ctx, types.WorkingDirKey, workDir)
 	toolCtx = context.WithValue(toolCtx, types.UserIDKey, l.userID)
+	toolCtx = context.WithValue(toolCtx, types.SessionIDKey, l.session.ID)
 	toolCtx = context.WithValue(toolCtx, types.SandboxKey, l.sandbox)
 
 	for _, tc := range calls {

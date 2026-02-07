@@ -11,17 +11,23 @@ import (
 
 // PromptContext 提示词上下文
 type PromptContext struct {
-	WorkingDir     string         // 工作目录
-	Model          string         // 当前模型
-	PermissionMode string         // 权限模式: normal, acceptEdits, planMode, bypassPermissions
-	IsGitRepo      bool           // 是否为 git 仓库
-	Platform       string         // 平台
-	TodayDate      string         // 今天日期
-	Language       string         // 响应语言
-	GitStatus      *GitStatusInfo // Git 状态
-	ClaudeMdPath   string         // CLAUDE.md 路径
-	CustomRules    string         // 自定义规则
-	TasksRender    string         // 任务列表渲染（嵌入系统提示词）
+	WorkingDir       string         // 工作目录
+	Model            string         // 当前模型
+	PermissionMode   string         // 权限模式: normal, acceptEdits, planMode, bypassPermissions
+	IsGitRepo        bool           // 是否为 git 仓库
+	Platform         string         // 平台
+	TodayDate        string         // 今天日期
+	GitStatus        *GitStatusInfo // Git 状态
+	ClaudeMdPath     string         // CLAUDE.md 路径
+	CustomRules      string         // 自定义规则
+	TasksRender      string         // 任务列表渲染（嵌入系统提示词）
+	RelevantMemories string         // 相关记忆（功能4）
+	SessionMemory    string         // 会话记忆（功能7）
+	// 用户信息
+	UserName     string // 用户称呼
+	CoworkerName string // Coworker 称呼
+	UserPhone    string // 用户手机号
+	UserEmail    string // 用户邮箱
 }
 
 // GitStatusInfo Git 状态信息
@@ -76,71 +82,84 @@ func (b *SystemPromptBuilder) SetDebug(debug bool) {
 func (b *SystemPromptBuilder) Build(ctx *PromptContext, opts BuildOptions) string {
 	var parts []string
 
-	// 1. 核心身份
+	// 核心身份
 	if opts.IncludeIdentity {
 		parts = append(parts, CoreIdentity)
 	}
 
-	// 2. 帮助信息
+	// 帮助信息
 	parts = append(parts, getHelpInfo())
 
-	// 3. 输出风格
+	// 输出风格
 	parts = append(parts, OutputStyle)
 
-	// 4. 任务管理
+	// 任务管理
 	parts = append(parts, TaskManagement)
 
-	// 5. 代码编写指南
+	// 代码编写指南
 	parts = append(parts, CodingGuidelines)
 
-	// 6. 工具使用指南
+	// 工具使用指南
 	if opts.IncludeToolGuidelines {
 		parts = append(parts, ToolGuidelines)
 	}
 
-	// 6.5 沙箱执行环境说明
+	// 沙箱执行环境说明
 	parts = append(parts, SandboxEnvironment)
 
-	// 7. Git 操作指南
+	// Git 操作指南
 	if opts.IncludeGitGuidelines {
 		parts = append(parts, GitGuidelines)
 	}
 
-	// 8. 代码引用
+	// 代码引用
 	parts = append(parts, CodeReferences)
 
-	// 9. 任务边界约束（防止自主扩展任务）
+	// 任务边界约束（防止自主扩展任务）
 	parts = append(parts, TaskBoundary)
 
-	// 10. 权限模式
+	// 记忆工具指南
+	parts = append(parts, MemoryGuidelines)
+
+	// 权限模式
 	parts = append(parts, b.getPermissionMode(ctx.PermissionMode))
 
-	// 11. 环境信息
-	parts = append(parts, b.getEnvironmentInfo(ctx))
-
-	// 12. 语言设置
-	if ctx.Language != "" {
-		parts = append(parts, b.getLanguageInfo(ctx.Language))
+	// 用户信息（称呼、联系方式）
+	if userInfo := b.getUserInfo(ctx); userInfo != "" {
+		parts = append(parts, userInfo)
 	}
 
-	// 13. CLAUDE.md 内容
+	// 环境信息
+	parts = append(parts, b.getEnvironmentInfo(ctx))
+
+	// CLAUDE.md 内容
 	if opts.IncludeClaudeMd && ctx.ClaudeMdPath != "" {
 		if claudeMd := b.loadClaudeMd(ctx.ClaudeMdPath); claudeMd != "" {
 			parts = append(parts, claudeMd)
 		}
 	}
 
-	// 14. Git 状态
+	// Git 状态
 	if ctx.GitStatus != nil {
 		parts = append(parts, b.getGitStatusInfo(ctx.GitStatus))
 	}
 
-	// 15. 当前任务列表
+	// 当前任务列表
 	if ctx.TasksRender != "" {
 		parts = append(parts, b.getTasksInfo(ctx.TasksRender))
 	}
 
-	// 16. 自定义规则
+	// 相关记忆
+	if ctx.RelevantMemories != "" {
+		parts = append(parts, b.getMemoriesInfo(ctx.RelevantMemories))
+	}
+
+	// 会话记忆
+	if ctx.SessionMemory != "" {
+		parts = append(parts, ctx.SessionMemory)
+	}
+
+	// 自定义规则
 	if ctx.CustomRules != "" {
 		parts = append(parts, ctx.CustomRules)
 	}
@@ -229,10 +248,31 @@ func getModelDisplayName(modelID string) string {
 	}
 }
 
-// getLanguageInfo 获取语言设置
-func (b *SystemPromptBuilder) getLanguageInfo(language string) string {
-	return fmt.Sprintf(`# Language
-Always respond in %s. Use %s for all explanations, comments, and communications with the user. Technical terms and code identifiers should remain in their original form.`, language, language)
+// getUserInfo 获取用户信息
+func (b *SystemPromptBuilder) getUserInfo(ctx *PromptContext) string {
+	// 如果没有任何用户信息，返回空
+	if ctx.UserName == "" && ctx.CoworkerName == "" && ctx.UserPhone == "" && ctx.UserEmail == "" {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, "# User Information")
+	lines = append(lines, "")
+
+	if ctx.UserName != "" {
+		lines = append(lines, fmt.Sprintf("- User's preferred name: %s (address the user by this name)", ctx.UserName))
+	}
+	if ctx.CoworkerName != "" {
+		lines = append(lines, fmt.Sprintf("- Your name: %s (the user calls you by this name)", ctx.CoworkerName))
+	}
+	if ctx.UserPhone != "" {
+		lines = append(lines, fmt.Sprintf("- User's phone: %s", ctx.UserPhone))
+	}
+	if ctx.UserEmail != "" {
+		lines = append(lines, fmt.Sprintf("- User's email: %s", ctx.UserEmail))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // loadClaudeMd 加载 CLAUDE.md 文件
@@ -310,6 +350,15 @@ func (b *SystemPromptBuilder) getTasksInfo(tasksRender string) string {
 The following is your current task list. Use the TaskUpdate tool to update task status as you work.
 
 %s`, tasksRender)
+}
+
+// getMemoriesInfo 获取相关记忆信息
+func (b *SystemPromptBuilder) getMemoriesInfo(memories string) string {
+	return fmt.Sprintf(`# Relevant Memories
+
+The following memories may be relevant to the current conversation:
+
+%s`, memories)
 }
 
 // FindClaudeMd 查找 CLAUDE.md 文件

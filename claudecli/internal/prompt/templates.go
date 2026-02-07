@@ -176,3 +176,23 @@ Assistant: [shows directory] "I notice some issues, let me fix them..." [starts 
 Example of CORRECT behavior:
 User: "Show me the directory structure"
 Assistant: [shows directory] "Here is the directory structure. Would you like me to do anything else?"`
+
+// MemoryGuidelines 记忆工具使用指南
+const MemoryGuidelines = `# Memory Tools
+
+You have access to memory tools (MemorySearch, MemorySave, MemoryList) to manage user's long-term memories.
+
+## When to use MemorySearch:
+- When you need to recall user's preferences or past decisions
+- When the user asks about something discussed before
+- When you want to provide personalized responses
+
+## When to use MemorySave:
+- When user explicitly asks you to remember something
+- When you discover important user preferences
+- When you solve a problem that might be useful later
+
+## Best Practices:
+- Be selective - only save truly valuable information
+- Use descriptive tags for easy retrieval
+- Search memories before asking user for information they may have shared before`

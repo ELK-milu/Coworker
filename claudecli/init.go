@@ -154,7 +154,7 @@ func Init() *Module {
 	}
 
 	// 注册所有工具
-	registerTools(toolRegistry, cfg, taskManager, sandboxPool)
+	registerTools(toolRegistry, cfg, taskManager, memoryManager, sandboxPool)
 
 	// 创建权限检查器
 	permChecker := permissions.NewChecker()
@@ -208,7 +208,7 @@ func Init() *Module {
 }
 
 // registerTools 注册所有工具
-func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, sandboxPool *sandbox.SandboxPool) {
+func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, memoryManager *memory.Manager, sandboxPool *sandbox.SandboxPool) {
 	workingDir := cfg.Security.WorkingDir
 	blockedCommands := cfg.Security.BlockedCommands
 
@@ -233,7 +233,12 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 	registry.Register(tools.NewTaskListTool(taskManager))
 	registry.Register(tools.NewTaskGetTool(taskManager))
 
-	log.Printf("[ClaudeCLI] Registered %d tools (sandbox pool: %v)", 13, sandboxPool != nil)
+	// 注册记忆工具
+	registry.Register(tools.NewMemorySearchTool(memoryManager))
+	registry.Register(tools.NewMemorySaveTool(memoryManager))
+	registry.Register(tools.NewMemoryListTool(memoryManager))
+
+	log.Printf("[ClaudeCLI] Registered %d tools (sandbox pool: %v)", 16, sandboxPool != nil)
 }
 
 // Shutdown 优雅关闭模块

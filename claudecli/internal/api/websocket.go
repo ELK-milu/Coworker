@@ -10,16 +10,20 @@ import (
 
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
+	"github.com/QuantumNous/new-api/claudecli/internal/embedding"
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/loop"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
+	"github.com/QuantumNous/new-api/claudecli/internal/memory"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
+	"github.com/QuantumNous/new-api/claudecli/internal/profile"
 	"github.com/QuantumNous/new-api/claudecli/internal/prompt"
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
+	"github.com/QuantumNous/new-api/claudecli/internal/variable"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"github.com/gin-gonic/gin"
@@ -38,14 +42,22 @@ type WSHandler struct {
 	workspace   *workspace.Manager
 	tasks       *task.Manager
 	jobs        *job.Manager
+	variables   *variable.Manager
+	memories    *memory.Manager
+	profiles    *profile.Manager
 	permissions *permissions.Checker
 	skills      *skills.Registry
 	skillExec   *skills.Executor
 	mcp         *mcp.Manager
-	config      *config.Config // 配置（用于动态构建系统提示词）
+	embedding   *embedding.Client      // Embedding 客户端
+	milvus      *memory.MilvusClient   // Milvus 向量数据库客户端
+	config      *config.Config         // 配置（用于动态构建系统提示词）
 	mu          sync.Mutex
 	cancelFunc  context.CancelFunc
 	connMu      sync.Mutex
+	// 当前连接的会话信息（用于断开时提取记忆）
+	currentUserID    string
+	currentSessionID string
 }
 
 // NewWSHandler 创建 WebSocket 处理器
@@ -79,6 +91,31 @@ func (h *WSHandler) SetJobManager(jm *job.Manager) {
 	h.jobs = jm
 }
 
+// SetVariableManager 设置变量管理器
+func (h *WSHandler) SetVariableManager(vm *variable.Manager) {
+	h.variables = vm
+}
+
+// SetMemoryManager 设置记忆管理器
+func (h *WSHandler) SetMemoryManager(mm *memory.Manager) {
+	h.memories = mm
+}
+
+// SetProfileManager 设置用户画像管理器
+func (h *WSHandler) SetProfileManager(pm *profile.Manager) {
+	h.profiles = pm
+}
+
+// SetEmbeddingClient 设置 Embedding 客户端
+func (h *WSHandler) SetEmbeddingClient(ec *embedding.Client) {
+	h.embedding = ec
+}
+
+// SetMilvusClient 设置 Milvus 客户端
+func (h *WSHandler) SetMilvusClient(mc *memory.MilvusClient) {
+	h.milvus = mc
+}
+
 // WSMessage WebSocket 消息
 type WSMessage struct {
 	Type    string          `json:"type"`
@@ -109,6 +146,21 @@ func (h *WSHandler) Handle(c *gin.Context) {
 
 // handleConnection 处理连接
 func (h *WSHandler) handleConnection(conn *websocket.Conn) {
+	// 连接断开时提取记忆
+	defer func() {
+		h.mu.Lock()
+		userID := h.currentUserID
+		sessionID := h.currentSessionID
+		h.mu.Unlock()
+
+		if userID != "" && sessionID != "" {
+			if sess := h.sessions.Get(sessionID); sess != nil {
+				log.Printf("[WS] Connection closed, extracting memories for user %s, session %s", userID, sessionID)
+				h.extractMemoriesAsync(userID, sess)
+			}
+		}
+	}()
+
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -242,6 +294,32 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "job_reorder":
 			log.Printf("[WS] Processing job_reorder message")
 			h.handleJobReorder(conn, wsMsg.Payload)
+		// Memory 相关消息
+		case "memory_create":
+			log.Printf("[WS] Processing memory_create message")
+			h.handleMemoryCreate(conn, wsMsg.Payload)
+		case "memory_update":
+			log.Printf("[WS] Processing memory_update message")
+			h.handleMemoryUpdate(conn, wsMsg.Payload)
+		case "memory_delete":
+			log.Printf("[WS] Processing memory_delete message")
+			h.handleMemoryDelete(conn, wsMsg.Payload)
+		case "memory_list":
+			log.Printf("[WS] Processing memory_list message")
+			h.handleMemoryList(conn, wsMsg.Payload)
+		case "memory_search":
+			log.Printf("[WS] Processing memory_search message")
+			h.handleMemorySearch(conn, wsMsg.Payload)
+		case "extract_memories":
+			log.Printf("[WS] Processing extract_memories message")
+			h.handleExtractMemories(conn, wsMsg.Payload)
+		// Profile 相关消息
+		case "profile_get":
+			log.Printf("[WS] Processing profile_get message")
+			h.handleProfileGet(conn, wsMsg.Payload)
+		case "profile_update":
+			log.Printf("[WS] Processing profile_update message")
+			h.handleProfileUpdate(conn, wsMsg.Payload)
 		}
 	}
 }
@@ -288,6 +366,12 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		isNewSession = true
 	}
 
+	// 更新当前连接的会话信息（用于断开时提取记忆）
+	h.mu.Lock()
+	h.currentUserID = chat.UserID
+	h.currentSessionID = sess.ID
+	h.mu.Unlock()
+
 	// 获取用户工作空间路径
 	userWorkDir := h.workspace.GetUserWorkDir(chat.UserID)
 
@@ -305,8 +389,8 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		sess.SetWorkingDir(userWorkDir)
 	}
 
-	// 动态构建系统提示词（使用虚拟路径）
-	systemPrompt := h.buildUserSystemPrompt(chat.UserID, sb)
+	// 动态构建系统提示词（使用虚拟路径，传入用户消息用于记忆检索）
+	systemPrompt := h.buildUserSystemPrompt(chat.UserID, sb, chat.Message)
 
 	// 创建可取消的 context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1223,6 +1307,15 @@ func (h *WSHandler) handleCompact(conn *websocket.Conn, payload json.RawMessage)
 
 	// 异步执行压缩操作
 	go func() {
+		// 压缩前先提取记忆（保存重要信息）
+		h.mu.Lock()
+		userID := h.currentUserID
+		h.mu.Unlock()
+		if userID != "" {
+			log.Printf("[WS] Extracting memories before compact for session %s", req.SessionID)
+			h.extractMemoriesFromSession(userID, sess)
+		}
+
 		// 执行压缩
 		sess.CompactContext()
 
@@ -1659,7 +1752,7 @@ func (h *WSHandler) handleClearOutputSchema(conn *websocket.Conn) {
 }
 
 // buildUserSystemPrompt 为用户动态构建系统提示词（使用虚拟路径）
-func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) string {
+func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, userMessage string) string {
 	// 使用虚拟工作目录
 	virtualWorkDir := sb.GetVirtualWorkingDir()
 	realWorkDir := sb.GetRealWorkingDir()
@@ -1676,14 +1769,41 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox) st
 		tasksRender = h.tasks.RenderCompact(userID, "default", 10)
 	}
 
+	// 获取相关记忆（功能4）- 根据用户消息检索
+	relevantMemories := ""
+	if h.memories != nil {
+		// 使用用户消息检索相关记忆
+		mems := h.memories.Retrieve(userID, userMessage, 5)
+		if len(mems) > 0 {
+			relevantMemories = h.memories.FormatForPrompt(mems)
+			log.Printf("[WS] Retrieved %d memories for user %s", len(mems), userID)
+		}
+	}
+
+	// 加载用户信息（用户称呼、Coworker称呼、手机号、邮箱）
+	var userName, coworkerName, userPhone, userEmail string
+	if h.workspace != nil {
+		if userInfo, err := h.workspace.LoadUserInfo(userID); err == nil && userInfo != nil {
+			userName = userInfo.UserName
+			coworkerName = userInfo.CoworkerName
+			userPhone = userInfo.Phone
+			userEmail = userInfo.Email
+		}
+	}
+
 	// 构建提示词上下文
 	promptCtx := &prompt.PromptContext{
-		WorkingDir:     virtualWorkDir, // 使用虚拟路径
-		Model:          h.config.Claude.Model,
-		PermissionMode: "normal",
-		Platform:       platform,
-		Language:       "中文",
-		TasksRender:    tasksRender,
+		WorkingDir:       virtualWorkDir, // 使用虚拟路径
+		Model:            h.config.Claude.Model,
+		PermissionMode:   "normal",
+		Platform:         platform,
+		TasksRender:      tasksRender,
+		RelevantMemories: relevantMemories,
+		// 用户信息
+		UserName:     userName,
+		CoworkerName: coworkerName,
+		UserPhone:    userPhone,
+		UserEmail:    userEmail,
 	}
 
 	// nsjail 沙箱模式：用户工作空间是隔离的，不继承宿主机的 git 状态
@@ -2076,6 +2196,408 @@ func (h *WSHandler) handleJobReorder(conn *websocket.Conn, payload json.RawMessa
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
 				"job_ids": req.JobIDs,
+				"success": true,
+			},
+		})
+	}()
+}
+
+// ========== Memory 相关处理 ==========
+
+// MemoryCreatePayload 创建记忆载荷
+type MemoryCreatePayload struct {
+	UserID    string   `json:"user_id"`
+	Tags      []string `json:"tags"`
+	Content   string   `json:"content"`
+	Summary   string   `json:"summary"`
+	Weight    float64  `json:"weight"`
+	SessionID string   `json:"session_id"`
+}
+
+// handleMemoryCreate 处理创建记忆请求
+func (h *WSHandler) handleMemoryCreate(conn *websocket.Conn, payload json.RawMessage) {
+	var req MemoryCreatePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid memory_create payload")
+		return
+	}
+
+	if req.UserID == "" || req.Content == "" {
+		h.sendError(conn, "user_id and content are required")
+		return
+	}
+
+	if h.memories == nil {
+		h.sendError(conn, "memory manager not initialized")
+		return
+	}
+
+	go func() {
+		mem := &memory.Memory{
+			Tags:      req.Tags,
+			Content:   req.Content,
+			Summary:   req.Summary,
+			Weight:    req.Weight,
+			SessionID: req.SessionID,
+			Source:    "manual",
+		}
+
+		created, err := h.memories.Create(req.UserID, mem)
+		if err != nil {
+			h.sendError(conn, "failed to create memory: "+err.Error())
+			return
+		}
+
+		log.Printf("[WS] Created memory for user %s: %s", req.UserID, created.ID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "memory_created",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"memory":  created,
+				"success": true,
+			},
+		})
+	}()
+}
+
+// MemoryUpdatePayload 更新记忆载荷
+type MemoryUpdatePayload struct {
+	UserID   string   `json:"user_id"`
+	MemoryID string   `json:"memory_id"`
+	Tags     []string `json:"tags,omitempty"`
+	Content  string   `json:"content,omitempty"`
+	Summary  string   `json:"summary,omitempty"`
+	Weight   float64  `json:"weight,omitempty"`
+}
+
+// handleMemoryUpdate 处理更新记忆请求
+func (h *WSHandler) handleMemoryUpdate(conn *websocket.Conn, payload json.RawMessage) {
+	var req MemoryUpdatePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid memory_update payload")
+		return
+	}
+
+	if req.UserID == "" || req.MemoryID == "" {
+		h.sendError(conn, "user_id and memory_id are required")
+		return
+	}
+
+	if h.memories == nil {
+		h.sendError(conn, "memory manager not initialized")
+		return
+	}
+
+	go func() {
+		updates := make(map[string]interface{})
+		if req.Content != "" {
+			updates["content"] = req.Content
+		}
+		if req.Summary != "" {
+			updates["summary"] = req.Summary
+		}
+		if len(req.Tags) > 0 {
+			updates["tags"] = req.Tags
+		}
+		if req.Weight > 0 {
+			updates["weight"] = req.Weight
+		}
+
+		updated, err := h.memories.Update(req.UserID, req.MemoryID, updates)
+		if err != nil {
+			h.sendError(conn, "failed to update memory: "+err.Error())
+			return
+		}
+
+		log.Printf("[WS] Updated memory for user %s: %s", req.UserID, req.MemoryID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "memory_updated",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"memory":  updated,
+				"success": true,
+			},
+		})
+	}()
+}
+
+// MemoryDeletePayload 删除记忆载荷
+type MemoryDeletePayload struct {
+	UserID   string `json:"user_id"`
+	MemoryID string `json:"memory_id"`
+}
+
+// handleMemoryDelete 处理删除记忆请求
+func (h *WSHandler) handleMemoryDelete(conn *websocket.Conn, payload json.RawMessage) {
+	var req MemoryDeletePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid memory_delete payload")
+		return
+	}
+
+	if req.UserID == "" || req.MemoryID == "" {
+		h.sendError(conn, "user_id and memory_id are required")
+		return
+	}
+
+	if h.memories == nil {
+		h.sendError(conn, "memory manager not initialized")
+		return
+	}
+
+	go func() {
+		if err := h.memories.Delete(req.UserID, req.MemoryID); err != nil {
+			h.sendError(conn, "failed to delete memory: "+err.Error())
+			return
+		}
+
+		log.Printf("[WS] Deleted memory for user %s: %s", req.UserID, req.MemoryID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "memory_deleted",
+			"payload": map[string]interface{}{
+				"user_id":   req.UserID,
+				"memory_id": req.MemoryID,
+				"success":   true,
+			},
+		})
+	}()
+}
+
+// MemoryListPayload 列出记忆载荷
+type MemoryListPayload struct {
+	UserID string `json:"user_id"`
+}
+
+// handleMemoryList 处理列出记忆请求
+func (h *WSHandler) handleMemoryList(conn *websocket.Conn, payload json.RawMessage) {
+	var req MemoryListPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid memory_list payload")
+		return
+	}
+
+	if req.UserID == "" {
+		h.sendError(conn, "user_id is required")
+		return
+	}
+
+	if h.memories == nil {
+		h.sendError(conn, "memory manager not initialized")
+		return
+	}
+
+	go func() {
+		h.memories.LoadUserMemories(req.UserID)
+		memories := h.memories.List(req.UserID)
+
+		log.Printf("[WS] Listed %d memories for user %s", len(memories), req.UserID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "memories_list",
+			"payload": map[string]interface{}{
+				"user_id":  req.UserID,
+				"memories": memories,
+			},
+		})
+	}()
+}
+
+// MemorySearchPayload 搜索记忆载荷
+type MemorySearchPayload struct {
+	UserID string `json:"user_id"`
+	Query  string `json:"query"`
+	Limit  int    `json:"limit"`
+}
+
+// handleMemorySearch 处理搜索记忆请求
+func (h *WSHandler) handleMemorySearch(conn *websocket.Conn, payload json.RawMessage) {
+	var req MemorySearchPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid memory_search payload")
+		return
+	}
+
+	if req.UserID == "" || req.Query == "" {
+		h.sendError(conn, "user_id and query are required")
+		return
+	}
+
+	if h.memories == nil {
+		h.sendError(conn, "memory manager not initialized")
+		return
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	go func() {
+		h.memories.LoadUserMemories(req.UserID)
+		retriever := memory.NewRetriever(h.memories, h.config.Security.WorkingDir)
+		results := retriever.Retrieve(req.UserID, req.Query, limit)
+
+		log.Printf("[WS] Found %d memories for query: %s", len(results), req.Query)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "memories_search_result",
+			"payload": map[string]interface{}{
+				"user_id":  req.UserID,
+				"query":    req.Query,
+				"memories": results,
+			},
+		})
+	}()
+}
+
+// ExtractMemoriesPayload 提取记忆载荷
+type ExtractMemoriesPayload struct {
+	UserID    string `json:"user_id"`
+	SessionID string `json:"session_id"`
+}
+
+// handleExtractMemories 处理用户手动触发的记忆提取请求
+func (h *WSHandler) handleExtractMemories(conn *websocket.Conn, payload json.RawMessage) {
+	var req ExtractMemoriesPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid extract_memories payload")
+		return
+	}
+
+	if req.UserID == "" || req.SessionID == "" {
+		h.sendError(conn, "user_id and session_id are required")
+		return
+	}
+
+	if h.memories == nil {
+		h.sendError(conn, "memory manager not initialized")
+		return
+	}
+
+	sess := h.sessions.Get(req.SessionID)
+	if sess == nil {
+		h.sendError(conn, "session not found")
+		return
+	}
+
+	go func() {
+		log.Printf("[WS] User requested memory extraction for session %s", req.SessionID)
+		h.extractMemoriesFromSession(req.UserID, sess)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "memories_extracted",
+			"payload": map[string]interface{}{
+				"user_id":    req.UserID,
+				"session_id": req.SessionID,
+				"success":    true,
+			},
+		})
+	}()
+}
+
+// ========== Profile 相关处理 ==========
+
+// ProfileGetPayload 获取画像载荷
+type ProfileGetPayload struct {
+	UserID string `json:"user_id"`
+}
+
+// handleProfileGet 处理获取画像请求
+func (h *WSHandler) handleProfileGet(conn *websocket.Conn, payload json.RawMessage) {
+	var req ProfileGetPayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid profile_get payload")
+		return
+	}
+
+	if req.UserID == "" {
+		h.sendError(conn, "user_id is required")
+		return
+	}
+
+	if h.profiles == nil {
+		h.sendError(conn, "profile manager not initialized")
+		return
+	}
+
+	go func() {
+		p := h.profiles.GetOrCreate(req.UserID)
+
+		log.Printf("[WS] Got profile for user %s", req.UserID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "profile_data",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"profile": p,
+			},
+		})
+	}()
+}
+
+// ProfileUpdatePayload 更新画像载荷
+type ProfileUpdatePayload struct {
+	UserID        string            `json:"user_id"`
+	Languages     []string          `json:"languages,omitempty"`
+	Frameworks    []string          `json:"frameworks,omitempty"`
+	ResponseStyle string            `json:"response_style,omitempty"`
+	Language      string            `json:"language,omitempty"`
+	CodingStyle   map[string]string `json:"coding_style,omitempty"`
+}
+
+// handleProfileUpdate 处理更新画像请求
+func (h *WSHandler) handleProfileUpdate(conn *websocket.Conn, payload json.RawMessage) {
+	var req ProfileUpdatePayload
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(conn, "invalid profile_update payload")
+		return
+	}
+
+	if req.UserID == "" {
+		h.sendError(conn, "user_id is required")
+		return
+	}
+
+	if h.profiles == nil {
+		h.sendError(conn, "profile manager not initialized")
+		return
+	}
+
+	go func() {
+		updates := make(map[string]interface{})
+		if len(req.Languages) > 0 {
+			updates["languages"] = req.Languages
+		}
+		if len(req.Frameworks) > 0 {
+			updates["frameworks"] = req.Frameworks
+		}
+		if req.ResponseStyle != "" {
+			updates["response_style"] = req.ResponseStyle
+		}
+		if req.Language != "" {
+			updates["language"] = req.Language
+		}
+		if len(req.CodingStyle) > 0 {
+			updates["coding_style"] = req.CodingStyle
+		}
+
+		if err := h.profiles.Update(req.UserID, updates); err != nil {
+			h.sendError(conn, "failed to update profile: "+err.Error())
+			return
+		}
+
+		p := h.profiles.GetOrCreate(req.UserID)
+
+		log.Printf("[WS] Updated profile for user %s", req.UserID)
+
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "profile_updated",
+			"payload": map[string]interface{}{
+				"user_id": req.UserID,
+				"profile": p,
 				"success": true,
 			},
 		})

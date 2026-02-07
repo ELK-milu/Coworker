@@ -13,6 +13,8 @@ const (
 	WorkingDirKey ContextKey = "working_dir"
 	// UserIDKey 用户 ID 的 context key
 	UserIDKey ContextKey = "user_id"
+	// SessionIDKey 会话 ID 的 context key
+	SessionIDKey ContextKey = "session_id"
 	// SandboxKey 沙箱的 context key
 	SandboxKey ContextKey = "sandbox"
 )
