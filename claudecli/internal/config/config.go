@@ -13,6 +13,7 @@ type Config struct {
 	Claude   ClaudeConfig
 	Security SecurityConfig
 	Nsjail   NsjailConfig
+	Milvus   MilvusConfig
 }
 
 // ServerConfig 服务器配置
@@ -44,6 +45,16 @@ type NsjailConfig struct {
 	MaxConcurrent int           // 最大并发数
 	MemoryMB      int           // 内存限制 (MB)
 	ExecTimeout   time.Duration // 命令执行超时
+}
+
+// MilvusConfig Milvus 向量数据库配置
+type MilvusConfig struct {
+	Enabled    bool   // 是否启用
+	Host       string // Milvus 主机
+	Port       int    // Milvus 端口
+	Collection string // Collection 名称
+	Dimension  int    // 向量维度
+	EnableBM25 bool   // 启用 BM25 混合检索
 }
 
 var (
@@ -80,6 +91,14 @@ func Load() *Config {
 				MaxConcurrent: int(getEnvInt("NSJAIL_MAX_CONCURRENT", 50)),
 				MemoryMB:      int(getEnvInt("NSJAIL_MEMORY_MB", 512)),
 				ExecTimeout:   time.Duration(getEnvInt("NSJAIL_EXEC_TIMEOUT", 120)) * time.Second,
+			},
+			Milvus: MilvusConfig{
+				Enabled:    getEnv("MILVUS_ENABLED", "false") == "true",
+				Host:       getEnv("MILVUS_HOST", "localhost"),
+				Port:       int(getEnvInt("MILVUS_PORT", 19530)),
+				Collection: getEnv("MILVUS_COLLECTION", "claude_memories"),
+				Dimension:  int(getEnvInt("EMBEDDING_DIMENSION", 1024)),
+				EnableBM25: getEnv("MILVUS_ENABLE_BM25", "true") == "true",
 			},
 		}
 	})

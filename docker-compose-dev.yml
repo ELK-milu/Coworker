@@ -73,10 +73,24 @@ services:
       - NSJAIL_MAX_CONCURRENT=${NSJAIL_MAX_CONCURRENT:-50}
       - NSJAIL_MEMORY_MB=${NSJAIL_MEMORY_MB:-512}
       - NSJAIL_EXEC_TIMEOUT=${NSJAIL_EXEC_TIMEOUT:-120}
+      # Milvus 向量数据库配置
+      - MILVUS_ENABLED=${MILVUS_ENABLED:-true}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - MILVUS_COLLECTION=${MILVUS_COLLECTION:-claude_memories}
+      # Embedding API 配置
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-siliconflow}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-large-zh-v1.5}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY}
+      - SILICONFLOW_BASE_URL=${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - DASHSCOPE_BASE_URL=${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
     depends_on:
       - redis
       - postgres
       - nsjail-sandbox
+      - milvus
     working_dir: /app
     command: air -c .air.toml
 
@@ -114,7 +128,74 @@ services:
     ports:
       - "5432:5432"
 
+  # -------------------- Milvus 向量数据库 --------------------
+  # Milvus Standalone 模式，用于记忆系统的向量搜索
+  # 依赖 etcd 和 minio 作为元数据存储和对象存储
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: milvus-etcd
+    restart: unless-stopped
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    container_name: milvus-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - minio_data:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    image: milvusdb/milvus:v2.5.6
+    container_name: milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    restart: unless-stopped
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MILVUS_LOG_LEVEL: error
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"  # Milvus gRPC 端口
+      - "9091:9091"    # Milvus 健康检查端口
+    depends_on:
+      - etcd
+      - minio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 60s
+      start_period: 120s
+      timeout: 30s
+      retries: 5
+
+
 volumes:
   pg_data_dev:
   web_node_modules:
   web_vite_cache:
+  etcd_data:
+  minio_data:
+  milvus_data:

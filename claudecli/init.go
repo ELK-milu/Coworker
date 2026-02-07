@@ -10,14 +10,18 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/api"
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
+	"github.com/QuantumNous/new-api/claudecli/internal/embedding"
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
+	"github.com/QuantumNous/new-api/claudecli/internal/memory"
 	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
+	"github.com/QuantumNous/new-api/claudecli/internal/profile"
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
+	"github.com/QuantumNous/new-api/claudecli/internal/variable"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
 )
 
@@ -30,6 +34,9 @@ type Module struct {
 	Workspace   *workspace.Manager
 	Tasks       *task.Manager
 	Jobs        *job.Manager
+	Variables   *variable.Manager
+	Memories    *memory.Manager
+	Profiles    *profile.Manager
 	SandboxPool *sandbox.SandboxPool
 	RESTHandler *api.RESTHandler
 	WSHandler   *api.WSHandler
@@ -77,6 +84,47 @@ func Init() *Module {
 
 	// 创建 Job 管理器
 	jobManager := job.NewManager(cfg.Security.WorkingDir)
+
+	// 创建变量管理器
+	variableManager := variable.NewManager(cfg.Security.WorkingDir)
+
+	// 创建记忆管理器
+	memoryManager := memory.NewManager(cfg.Security.WorkingDir)
+
+	// 创建 Embedding 客户端
+	embeddingCfg := embedding.LoadConfigFromEnv()
+	var embeddingClient *embedding.Client
+	if embeddingCfg.GetActiveAPIKey() != "" {
+		embeddingClient = embedding.NewClient(embeddingCfg)
+		log.Printf("[ClaudeCLI] Embedding client initialized (provider: %s, model: %s)", embeddingCfg.Provider, embeddingCfg.Model)
+	} else {
+		log.Println("[ClaudeCLI] Embedding client disabled (no API key configured)")
+	}
+
+	// 创建 Milvus 客户端
+	var milvusClient *memory.MilvusClient
+	if cfg.Milvus.Enabled {
+		milvusCfg := memory.MilvusConfig{
+			Enabled:    true,
+			Host:       cfg.Milvus.Host,
+			Port:       cfg.Milvus.Port,
+			Collection: cfg.Milvus.Collection,
+			Dimension:  cfg.Milvus.Dimension,
+			EnableBM25: cfg.Milvus.EnableBM25,
+		}
+		milvusClient = memory.NewMilvusClient(milvusCfg)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := milvusClient.Connect(ctx); err != nil {
+			log.Printf("[ClaudeCLI] WARNING: Milvus connection failed: %v", err)
+			milvusClient = nil
+		} else {
+			log.Printf("[ClaudeCLI] Milvus connected (host: %s:%d)", cfg.Milvus.Host, cfg.Milvus.Port)
+		}
+		cancel()
+	}
+
+	// 创建用户画像管理器
+	profileManager := profile.NewManager(cfg.Security.WorkingDir)
 
 	// 创建 nsjail 沙箱池（如果启用）
 	var sandboxPool *sandbox.SandboxPool
@@ -126,6 +174,11 @@ func Init() *Module {
 	// 创建 WebSocket 处理器（不再传递静态系统提示词，改为动态构建）
 	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, permChecker, skillRegistry, mcpManager, cfg)
 	wsHandler.SetJobManager(jobManager)
+	wsHandler.SetVariableManager(variableManager)
+	wsHandler.SetMemoryManager(memoryManager)
+	wsHandler.SetProfileManager(profileManager)
+	wsHandler.SetEmbeddingClient(embeddingClient)
+	wsHandler.SetMilvusClient(milvusClient)
 
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)
@@ -138,6 +191,9 @@ func Init() *Module {
 		Workspace:   workspaceManager,
 		Tasks:       taskManager,
 		Jobs:        jobManager,
+		Variables:   variableManager,
+		Memories:    memoryManager,
+		Profiles:    profileManager,
 		SandboxPool: sandboxPool,
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
