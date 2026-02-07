@@ -305,11 +305,16 @@ const Coworker = () => {
 
       case 'tool_input':
         // 工具输入完成，更新输入参数（在执行前发送）
-        setMessages(prev => prev.map(msg =>
-          msg.toolId === payload.tool_id
-            ? { ...msg, input: payload.input }
-            : msg
-        ));
+        console.log('[Coworker] tool_input received:', payload.tool_id, payload.input);
+        setMessages(prev => {
+          const updated = prev.map(msg =>
+            msg.toolId === payload.tool_id
+              ? { ...msg, input: payload.input }
+              : msg
+          );
+          console.log('[Coworker] Messages updated for tool_input');
+          return updated;
+        });
         break;
 
       case 'tool_end':

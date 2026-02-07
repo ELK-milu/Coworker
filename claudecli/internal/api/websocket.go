@@ -655,6 +655,7 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 			payload["tool_id"] = event.ToolID
 			payload["input"] = event.ToolInput
 		case loop.EventTypeToolInput:
+			log.Printf("[WS] Forwarding tool_input event: tool_id=%s, input_len=%d", event.ToolID, len(event.ToolInput))
 			payload["name"] = event.ToolName
 			payload["tool_id"] = event.ToolID
 			payload["input"] = event.ToolInput

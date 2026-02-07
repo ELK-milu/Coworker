@@ -311,6 +311,7 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 		log.Printf("[Tool] Input: %s", tc.Input)
 
 		// 在执行前发送工具输入，让前端可以显示完整的输入参数
+		log.Printf("[Tool] Sending tool_input event for %s (id=%s)", tc.Name, tc.ID)
 		l.eventCh <- LoopEvent{
 			Type:      EventTypeToolInput,
 			ToolID:    tc.ID,

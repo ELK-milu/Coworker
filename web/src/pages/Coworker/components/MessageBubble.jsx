@@ -26,7 +26,7 @@ const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask 
   };
 
   const formatTime = (ts) => {
-    if (!ts) return new Date().toLocaleTimeString();
+    if (!ts) return '';
     return new Date(ts).toLocaleTimeString();
   };
 
