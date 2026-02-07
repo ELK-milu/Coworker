@@ -14,6 +14,9 @@ const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask 
   const isError = role === 'error';
   const isThinking = role === 'thinking';
 
+  // 调试：打印 timestamp 值
+  console.log('[MessageBubble] role:', role, 'timestamp:', timestamp, 'formatted:', timestamp ? new Date(timestamp).toLocaleTimeString() : 'none');
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(content || '');

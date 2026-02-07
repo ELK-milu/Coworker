@@ -275,9 +275,13 @@ const Coworker = () => {
         setMessages(prev => {
           const last = prev[prev.length - 1];
           if (last?.type === 'assistant' && last.streaming) {
+            // 追加内容，保留原 timestamp
+            console.log('[Coworker] text: appending to existing message, keeping timestamp:', last.timestamp);
             return [...prev.slice(0, -1), { ...last, content: last.content + payload.content }];
           }
-          return [...prev, { type: 'assistant', content: payload.content, streaming: true, timestamp: Date.now() }];
+          const newTs = Date.now();
+          console.log('[Coworker] text: creating new message with timestamp:', newTs);
+          return [...prev, { type: 'assistant', content: payload.content, streaming: true, timestamp: newTs }];
         });
         break;
 
@@ -667,6 +671,9 @@ const Coworker = () => {
 
   // 渲染消息项
   const renderMessage = (msg, index) => {
+    // 调试：打印每条消息的 timestamp
+    console.log('[Coworker] renderMessage:', index, msg.type, 'timestamp:', msg.timestamp);
+
     if (msg.type === 'tool') {
       return (
         <ToolCallCard
