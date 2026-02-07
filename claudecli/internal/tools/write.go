@@ -1,13 +1,15 @@
 package tools
 
 import (
-	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
-	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
+	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
 // WriteTool 文件写入工具
@@ -42,9 +44,11 @@ func (t *WriteTool) InputSchema() map[string]interface{} {
 }
 
 func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.ToolResult, error) {
+	startTime := time.Now()
+
 	var in WriteInput
 	if err := json.Unmarshal(input, &in); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 获取沙箱
@@ -53,23 +57,23 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 	// 使用沙箱解析路径
 	path, err := t.resolvePathWithSandbox(ctx, in.FilePath, sb)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 	log.Printf("[Write] Input path: %s, Resolved path: %s", in.FilePath, path)
 
 	// 确保目录存在
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	if err := os.WriteFile(path, []byte(in.Content), 0644); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 返回虚拟路径
 	outputPath := in.FilePath
-	return &types.ToolResult{Success: true, Output: "File written successfully to " + outputPath}, nil
+	return &types.ToolResult{Success: true, Output: "File written successfully to " + outputPath, ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 }
 
 func (t *WriteTool) resolvePath(ctx context.Context, path string) string {

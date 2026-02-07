@@ -1,13 +1,15 @@
 package tools
 
 import (
-	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
-	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
+	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
 // EditTool 文件编辑工具
@@ -50,9 +52,11 @@ func (t *EditTool) InputSchema() map[string]interface{} {
 }
 
 func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.ToolResult, error) {
+	startTime := time.Now()
+
 	var in EditInput
 	if err := json.Unmarshal(input, &in); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 获取沙箱
@@ -61,12 +65,12 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	// 使用沙箱解析路径
 	path, err := t.resolvePathWithSandbox(ctx, in.FilePath, sb)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	oldContent := string(content)
@@ -87,11 +91,11 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	}
 
 	if oldContent == newContent {
-		return &types.ToolResult{Success: false, Error: "old_string not found"}, nil
+		return &types.ToolResult{Success: false, Error: "old_string not found", ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	output := "File edited successfully"
@@ -99,7 +103,7 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		output = "File edited successfully (matched via " + matchMethod + ")"
 	}
 
-	return &types.ToolResult{Success: true, Output: output}, nil
+	return &types.ToolResult{Success: true, Output: output, ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 }
 
 func (t *EditTool) resolvePath(ctx context.Context, path string) string {

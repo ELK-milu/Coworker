@@ -1,12 +1,14 @@
 package tools
 
 import (
-	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
-	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
+	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
 // GlobTool 文件模式匹配工具
@@ -58,9 +60,11 @@ func (t *GlobTool) InputSchema() map[string]interface{} {
 }
 
 func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (*types.ToolResult, error) {
+	startTime := time.Now()
+
 	var in GlobInput
 	if err := json.Unmarshal(input, &in); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 获取沙箱
@@ -74,7 +78,7 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		if sb != nil {
 			realPath, err := sb.ToReal(in.Pattern)
 			if err != nil {
-				return &types.ToolResult{Success: false, Error: err.Error()}, nil
+				return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 			}
 			pattern = realPath
 		} else {
@@ -90,7 +94,7 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 合并默认排除和用户指定的排除
@@ -105,8 +109,9 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	}
 
 	return &types.ToolResult{
-		Success: true,
-		Output:  strings.Join(filtered, "\n"),
+		Success:   true,
+		Output:    strings.Join(filtered, "\n"),
+		ElapsedMs: time.Since(startTime).Milliseconds(),
 	}, nil
 }
 

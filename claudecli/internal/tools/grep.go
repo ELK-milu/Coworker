@@ -2,8 +2,6 @@ package tools
 
 import (
 	"bufio"
-	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
-	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +9,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
+	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
 // GrepTool 内容搜索工具
@@ -47,14 +49,16 @@ func (t *GrepTool) InputSchema() map[string]interface{} {
 }
 
 func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (*types.ToolResult, error) {
+	startTime := time.Now()
+
 	var in GrepInput
 	if err := json.Unmarshal(input, &in); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	re, err := regexp.Compile(in.Pattern)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 获取沙箱
@@ -83,10 +87,10 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	})
 
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
-	return &types.ToolResult{Success: true, Output: strings.Join(results, "\n")}, nil
+	return &types.ToolResult{Success: true, Output: strings.Join(results, "\n"), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 }
 
 func (t *GrepTool) searchFile(path string, re *regexp.Regexp, sb *sandbox.Sandbox) []string {

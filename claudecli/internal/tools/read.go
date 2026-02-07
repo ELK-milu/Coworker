@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
@@ -46,9 +47,11 @@ func (t *ReadTool) InputSchema() map[string]interface{} {
 }
 
 func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (*types.ToolResult, error) {
+	startTime := time.Now()
+
 	var in ReadInput
 	if err := json.Unmarshal(input, &in); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 获取沙箱
@@ -57,7 +60,7 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	// 使用沙箱解析路径
 	path, err := t.resolvePathWithSandbox(ctx, in.FilePath, sb)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 检查文件是否存在
@@ -72,25 +75,26 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		if len(suggestions) > 0 {
 			errMsg += fmt.Sprintf("\n\nDid you mean one of these?\n- %s", strings.Join(suggestions, "\n- "))
 		}
-		return &types.ToolResult{Success: false, Error: errMsg}, nil
+		return &types.ToolResult{Success: false, Error: errMsg, ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
 	// 检查是否为二进制文件
 	if isBinary, err := t.isBinaryFile(path); err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	} else if isBinary {
 		return &types.ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("cannot read binary file: %s", in.FilePath),
+			Success:   false,
+			Error:     fmt.Sprintf("cannot read binary file: %s", in.FilePath),
+			ElapsedMs: time.Since(startTime).Milliseconds(),
 		}, nil
 	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
-	return &types.ToolResult{Success: true, Output: string(content)}, nil
+	return &types.ToolResult{Success: true, Output: string(content), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 }
 
 func (t *ReadTool) resolvePath(ctx context.Context, path string) string {

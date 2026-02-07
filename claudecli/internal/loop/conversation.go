@@ -76,14 +76,15 @@ type StatusInfo struct {
 }
 
 const (
-	EventTypeText          = "text"
-	EventTypeThinking      = "thinking"
-	EventTypeToolStart     = "tool_start"
-	EventTypeToolEnd       = "tool_end"
-	EventTypeDone          = "done"
-	EventTypeError         = "error"
-	EventTypeStatus        = "status"
-	EventTypeTaskChanged   = "task_changed"
+	EventTypeText           = "text"
+	EventTypeThinking       = "thinking"
+	EventTypeToolStart      = "tool_start"
+	EventTypeToolInput      = "tool_input" // 工具输入完成，执行前发送
+	EventTypeToolEnd        = "tool_end"
+	EventTypeDone           = "done"
+	EventTypeError          = "error"
+	EventTypeStatus         = "status"
+	EventTypeTaskChanged    = "task_changed"
 	EventTypeSessionCreated = "session_created"
 	EventTypeTitleUpdated   = "title_updated"
 )
@@ -308,6 +309,14 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 	for _, tc := range calls {
 		log.Printf("[Tool] Executing: name=%s, id=%s, workDir=%s", tc.Name, tc.ID, workDir)
 		log.Printf("[Tool] Input: %s", tc.Input)
+
+		// 在执行前发送工具输入，让前端可以显示完整的输入参数
+		l.eventCh <- LoopEvent{
+			Type:      EventTypeToolInput,
+			ToolID:    tc.ID,
+			ToolName:  tc.Name,
+			ToolInput: tc.Input,
+		}
 
 		result, err := l.tools.Execute(toolCtx, tc.Name, json.RawMessage(tc.Input))
 

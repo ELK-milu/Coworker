@@ -55,7 +55,7 @@ func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string
 	// 路径转换: /app/userdata/xxx -> /userdata/xxx
 	nsjailPath := convertToNsjailPath(workspacePath)
 
-	// 构建 nsjail 命令参数 (-q 抑制日志输出)
+	// 构建 nsjail 命令参数 (-q 抑制日志输出, --cwd 设置工作目录)
 	nsjailCmd := fmt.Sprintf(
 		"nsjail -Mo -q --user 99999 --group 99999 --hostname sandbox "+
 			"--bindmount %s:/workspace:rw "+
@@ -63,6 +63,7 @@ func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string
 			"--bindmount /lib:/lib:ro "+
 			"--bindmount /lib64:/lib64:ro "+
 			"--bindmount /usr:/usr:ro "+
+			"--cwd /workspace "+
 			"--time_limit %d "+
 			"--rlimit_as %d "+
 			"--disable_proc "+
@@ -87,8 +88,8 @@ func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string
 
 	// 解析结果
 	result := &CommandResult{
-		Output:   strings.TrimRight(stdout.String(), "\n"),
-		Error:    strings.TrimRight(stderr.String(), "\n"),
+		Output:   filterNsjailLogs(strings.TrimRight(stdout.String(), "\n")),
+		Error:    filterNsjailLogs(strings.TrimRight(stderr.String(), "\n")),
 		ExitCode: 0,
 		Success:  true,
 	}
@@ -122,4 +123,27 @@ func convertToNsjailPath(backendPath string) string {
 		return strings.Replace(cleanPath, "/app/userdata", "/userdata", 1)
 	}
 	return cleanPath
+}
+
+// filterNsjailLogs 过滤 nsjail 的日志输出
+// 移除 [W], [I], [E], [F], [D] 开头的日志行
+func filterNsjailLogs(output string) string {
+	if output == "" {
+		return output
+	}
+
+	lines := strings.Split(output, "\n")
+	filtered := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		// 跳过 nsjail 日志行 (格式: [W][timestamp][pid] message)
+		if len(line) > 3 && line[0] == '[' &&
+			(line[1] == 'W' || line[1] == 'I' || line[1] == 'E' || line[1] == 'F' || line[1] == 'D') &&
+			line[2] == ']' {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+
+	return strings.Join(filtered, "\n")
 }
