@@ -70,6 +70,11 @@ The user will primarily request you perform software engineering tasks. This inc
 const ToolGuidelines = `# Tool usage policy
 - You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially. For instance, if one operation must complete before another starts, run these operations sequentially instead. Never use placeholders or guess missing parameters in tool calls.
 - Use specialized tools instead of bash commands when possible, as this provides a better user experience. For file operations, use dedicated tools: Read for reading files instead of cat/head/tail, Edit for editing instead of sed/awk, and Write for creating files instead of cat with heredoc or echo redirection. Reserve bash tools exclusively for actual system commands and terminal operations that require shell execution. NEVER use bash echo or other command-line tools to communicate thoughts, explanations, or instructions to the user. Output all communication directly in your response text instead.
+- IMPORTANT: Minimize tool call frequency for file modifications:
+  - When making multiple related changes to the SAME file, use the Edit tool's "edits" array to batch all replacements into a SINGLE call instead of making separate calls for each change.
+  - When rewriting most of a file (more than ~40% of lines changing), prefer using Write to replace the entire file content in one call, rather than many small Edit calls.
+  - When making changes across DIFFERENT files, call Edit/Write for each file in parallel (multiple tool calls in one response).
+  - Avoid making tiny edits (1-2 lines) in separate calls when they could be combined into one larger edit or batched together.
 - Avoid using Bash with the find, grep, cat, head, tail, sed, awk, or echo commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
   - File search: Use Glob (NOT find or ls)
   - Content search: Use Grep (NOT grep or rg)
