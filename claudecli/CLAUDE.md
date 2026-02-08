@@ -30,11 +30,15 @@ claudecli/
     │   ├── websocket.go        # WebSocket 消息处理 (核心)
     │   ├── handler.go          # REST API 处理器
     │   ├── file_handler.go     # 文件上传下载
+    │   ├── memory_extractor.go # 记忆提取触发器 (WS断开/压缩/手动)
     │   └── middleware.go       # 中间件
+    ├── agent/
+    │   └── types.go            # Agent 分层系统 (6个内置Agent)
     ├── client/
     │   ├── claude.go           # Anthropic API 客户端
     │   ├── handler.go          # 流式响应处理
-    │   ├── stream.go           # SSE 流解析
+    │   ├── stream.go           # SSE 流解析 (含连接重试)
+    │   ├── retry.go            # API 重试机制 (指数退避+jitter)
     │   ├── convert.go          # 消息格式转换
     │   └── types.go            # API 类型定义
     ├── context/
@@ -44,10 +48,35 @@ claudecli/
     │   ├── summary.go          # 摘要生成
     │   ├── summarizer.go       # AI 摘要生成器
     │   ├── session_memory.go   # Session Memory 管理
+    │   ├── memory_generator.go # 记忆生成器
     │   └── tokens.go           # Token 估算
+    ├── embedding/
+    │   ├── client.go           # Embedding 客户端 (SiliconFlow/DashScope)
+    │   ├── config.go           # Embedding 配置
+    │   └── rerank.go           # Rerank 重排序
+    ├── memory/
+    │   ├── memory.go           # 记忆管理 (CRUD + 去重)
+    │   ├── extractor.go        # AI 记忆提取器
+    │   ├── retrieval.go        # 混合检索 (BM25 + Dense Vector)
+    │   ├── semantic.go         # 语义搜索
+    │   ├── bm25.go             # BM25 全文检索
+    │   ├── milvus_amd64.go     # Milvus 向量数据库 (amd64)
+    │   ├── milvus_amd64_ops.go # Milvus 操作 (amd64)
+    │   ├── milvus_stub.go      # Milvus 桩 (非amd64平台)
+    │   └── milvus_types.go     # Milvus 类型定义
+    ├── permissions/
+    │   ├── checker.go          # 权限检查器
+    │   ├── ruleset.go          # Ruleset 评估引擎
+    │   └── wildcard.go         # 通配符匹配
+    ├── profile/
+    │   ├── profile.go          # 用户画像管理
+    │   └── learner.go          # 用户偏好学习
+    ├── variable/
+    │   ├── variable.go         # 变量系统
+    │   └── builtin.go          # 内置变量
     ├── session/
     │   ├── manager.go          # 会话管理器
-    │   ├── session.go          # 会话实体
+    │   ├── session.go          # 会话实体 (含记忆提取状态)
     │   └── persist.go          # 会话持久化
     ├── task/
     │   └── task.go             # 任务管理 (TodoList)
@@ -61,21 +90,27 @@ claudecli/
     │   └── workspace.go        # 用户工作空间隔离
     ├── tools/
     │   ├── registry.go         # 工具注册表
+    │   ├── factory.go          # 工具工厂 (自动验证+截断)
+    │   ├── truncation.go       # 统一输出截断 (2000行/50KB)
+    │   ├── filetime.go         # FileTime 外部修改检测
     │   ├── bash.go             # Bash 命令执行
     │   ├── read.go             # 文件读取 (含二进制检测)
     │   ├── write.go            # 文件写入
-    │   ├── edit.go             # 文件编辑
-    │   ├── edit_replacer.go    # 多层 Replacer 链
-    │   ├── glob.go             # 文件搜索 (含排除模式)
-    │   └── grep.go             # 内容搜索
+    │   ├── edit.go             # 文件编辑 (含diff摘要)
+    │   ├── edit_replacer.go    # 9层 Replacer 链
+    │   ├── glob.go             # 文件搜索 (含排除模式+结果限制)
+    │   ├── grep.go             # 内容搜索 (含结果限制+分组)
+    │   ├── memory_search.go    # 记忆搜索工具 (AI调用)
+    │   ├── memory_save.go      # 记忆保存工具 (AI调用)
+    │   └── memory_list.go      # 记忆列表工具 (AI调用)
     ├── loop/
-    │   └── conversation.go     # 对话循环控制
+    │   └── conversation.go     # 对话循环控制 (Doom Loop检测+步数限制)
     ├── prompt/
-    │   ├── templates.go        # 系统提示词模板
-    │   ├── builder.go          # 提示词构建器
+    │   ├── templates.go        # 系统提示词模板 (含记忆指南)
+    │   ├── builder.go          # 提示词构建器 (含COWORKER.md嵌入)
     │   └── git.go              # Git 状态获取
     └── config/
-        └── config.go           # 配置管理
+        └── config.go           # 配置管理 (含Milvus/Embedding配置)
 ```
 
 ### 前端 (web/src/pages/Coworker/)
@@ -84,6 +119,8 @@ claudecli/
 web/src/pages/Coworker/
 ├── index.jsx                   # 主页面 (WebSocket 连接)
 ├── styles.css                  # 主样式
+├── services/
+│   └── api.js                  # REST API 服务 (记忆/配置/画像)
 └── components/
     ├── MessageBubble.jsx       # 消息气泡 (含 Thinking 折叠)
     ├── ToolCallCard.jsx        # 工具调用卡片
@@ -94,7 +131,15 @@ web/src/pages/Coworker/
     ├── TaskList.jsx            # 任务列表
     ├── TaskList.css
     ├── InlineTaskCard.jsx      # 内联任务卡片
-    └── InlineTaskCard.css
+    ├── InlineTaskCard.css
+    ├── ConfigPanel.jsx         # 配置面板
+    ├── ConfigPanel.css
+    ├── MemoryPanel.jsx         # 记忆管理面板
+    ├── MemoryPanel.css
+    ├── PermissionDialog.jsx    # 权限确认对话框
+    ├── PermissionModeSelector.jsx # 权限模式选择器
+    ├── ProfileSettings.jsx     # 用户画像设置
+    └── ProfileSettings.css
 ```
 
 ---
@@ -239,6 +284,81 @@ if err != nil {
 ---
 
 ## 已完成功能
+
+### 2026-02-08 (COWORKER.md 动态嵌入 + Bug修复)
+
+- [x] COWORKER.md 动态嵌入系统提示词 (`websocket.go` + `builder.go`)
+  - `buildUserSystemPrompt()` 调用 `workspace.LoadConfig(userID)` 加载用户自定义指令
+  - 内容注入到 `PromptContext.CustomRules` 字段
+  - `Build()` 方法将 CustomRules 包装为 `# User Custom Instructions (COWORKER.md)` 段落
+  - 添加全分支诊断日志（成功/失败/空/workspace为nil）
+- [x] stream.go 缺失 `time` 导入修复 (`client/stream.go`)
+  - 上次重试机制修改遗漏的 import
+
+### 2026-02-08 (流式回复重试bug + 标题生成503)
+
+- [x] 流式调用重试逻辑重构 (`client/stream.go`)
+  - 不再用 `retryWithBackoff` 包裹整个流消费循环
+  - 仅在连接建立失败时重试，事件开始产出后不重试（避免重复内容）
+  - `eventStarted` 标志位区分连接失败 vs 流中断
+- [x] 标题生成 503 修复 (`client/stream.go`)
+  - `CreateSimpleMessage` 直接使用主模型，移除 Haiku 硬编码
+- [x] edit.go 缺失 `fmt` 导入修复 (`tools/edit.go`)
+
+### 2026-02-08 (记忆提取去重)
+
+- [x] Session 记忆提取状态追踪 (`session/session.go`)
+  - 添加 `LastExtractedAt` / `LastExtractedMsgCount` 字段
+  - `NeedsMemoryExtraction()` 检查是否有新内容需要提取
+  - `MarkMemoryExtracted()` 标记已提取
+- [x] 记忆去重机制 (`memory/memory.go`)
+  - `ContentHash()` 内容哈希计算
+  - `FindSimilar()` 查找相似记忆
+  - `CreateOrMerge()` 创建或合并重复记忆
+- [x] 提取逻辑优化 (`api/memory_extractor.go`)
+  - 提取前检查会话状态，避免重复提取
+  - 使用 `CreateOrMerge` 替代 `Create`
+  - 提取后标记会话
+- [x] 会话持久化增强 (`session/persist.go`)
+  - 序列化/反序列化记忆提取状态字段
+
+### 2026-02-08 (记忆系统集成 — AI工具 + 三场景自动提取)
+
+- [x] 记忆 AI 工具 (`tools/memory_*.go`)
+  - `MemorySearch` — AI 主动搜索相关记忆
+  - `MemorySave` — AI 主动保存重要信息
+  - `MemoryList` — AI 列出用户记忆
+- [x] 记忆提取三场景 (`api/memory_extractor.go`)
+  - WebSocket 断开时自动提取
+  - 上下文压缩时自动提取
+  - 用户手动触发 (`extract_memories` WebSocket 消息)
+- [x] 系统提示词记忆集成 (`prompt/builder.go` + `templates.go`)
+  - 相关记忆注入系统提示词 (`RelevantMemories` 字段)
+  - 记忆工具使用指南 (`MemoryGuidelines` 模板)
+- [x] WebSocket 记忆消息处理 (`api/websocket.go`)
+  - 记忆搜索/保存/列表/提取消息处理
+
+### 2026-02-08 (Milvus SDK v2 迁移 + 记忆系统基础设施)
+
+- [x] Milvus SDK 迁移 (`memory/milvus_*.go`)
+  - 从 `milvus-sdk-go/v2` 迁移到 `milvus/client/v2` 新 SDK
+  - 更新 Milvus 版本到 v2.5.6
+  - 平台条件编译: amd64 使用 Milvus，其他平台使用桩实现
+- [x] Embedding 客户端 (`embedding/`)
+  - 支持 SiliconFlow / DashScope 两种 Embedding 服务
+  - Rerank 重排序支持
+  - 可配置的模型和维度
+- [x] Memory 包 (`memory/`)
+  - 向量存储和混合搜索
+  - BM25 + Dense Vector 混合检索
+  - 语义搜索和全文检索
+  - AI 记忆提取器
+- [x] 配置扩展 (`config/config.go`)
+  - Milvus 连接配置
+  - Embedding 服务配置
+- [x] 模块初始化集成 (`init.go`)
+  - Memory/Embedding 客户端初始化
+  - 记忆工具注册
 
 ### 2026-02-08 (OpenCode 对比优化 — 对话循环)
 
@@ -433,4 +553,4 @@ if err != nil {
 
 ---
 
-*Last updated: 2026-02-08 (OpenCode 对比优化全量移植)*
+*Last updated: 2026-02-08 (记忆系统 + OpenCode优化 + COWORKER.md嵌入修复)*

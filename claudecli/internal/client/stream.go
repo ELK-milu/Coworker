@@ -1,10 +1,12 @@
 package client
 
 import (
-	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 	"context"
 	"log"
 	"strings"
+	"time"
+
+	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )

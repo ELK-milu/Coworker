@@ -159,9 +159,13 @@ func (b *SystemPromptBuilder) Build(ctx *PromptContext, opts BuildOptions) strin
 		parts = append(parts, ctx.SessionMemory)
 	}
 
-	// 自定义规则
+	// 自定义规则 (COWORKER.md)
 	if ctx.CustomRules != "" {
-		parts = append(parts, ctx.CustomRules)
+		parts = append(parts, fmt.Sprintf(`# User Custom Instructions (COWORKER.md)
+
+The following are user-defined custom instructions. Follow these instructions when applicable:
+
+%s`, ctx.CustomRules))
 	}
 
 	return strings.Join(parts, "\n\n")

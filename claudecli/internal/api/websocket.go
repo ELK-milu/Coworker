@@ -1828,6 +1828,22 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 		}
 	}
 
+	// 加载用户自定义提示词 (COWORKER.md)
+	customRules := ""
+	if h.workspace != nil {
+		content, err := h.workspace.LoadConfig(userID)
+		if err != nil {
+			log.Printf("[WS] Failed to load COWORKER.md for user %s: %v", userID, err)
+		} else if content == "" {
+			log.Printf("[WS] COWORKER.md not found or empty for user %s (path: %s/.claude/COWORKER.md)", userID, h.workspace.GetUserWorkspace(userID))
+		} else {
+			customRules = content
+			log.Printf("[WS] Loaded COWORKER.md for user %s (%d chars)", userID, len(content))
+		}
+	} else {
+		log.Printf("[WS] WARNING: workspace manager is nil, cannot load COWORKER.md")
+	}
+
 	// 构建提示词上下文
 	promptCtx := &prompt.PromptContext{
 		WorkingDir:       virtualWorkDir, // 使用虚拟路径
@@ -1836,6 +1852,7 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 		Platform:         platform,
 		TasksRender:      tasksRender,
 		RelevantMemories: relevantMemories,
+		CustomRules:      customRules,
 		// 用户信息
 		UserName:     userName,
 		CoworkerName: coworkerName,
@@ -1875,7 +1892,8 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 	}
 
 	systemPrompt := prompt.BuildSystemPrompt(promptCtx)
-	log.Printf("[WS] Built system prompt for user %s, length: %d chars, isGitRepo: %v", userID, len(systemPrompt), promptCtx.IsGitRepo)
+	log.Printf("[WS] Built system prompt for user %s, length: %d chars, isGitRepo: %v, hasCoworkerMd: %v",
+		userID, len(systemPrompt), promptCtx.IsGitRepo, customRules != "")
 
 	return systemPrompt
 }

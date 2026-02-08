@@ -186,7 +186,6 @@ func (t *TaskUpdateTool) InputSchema() map[string]interface{} {
 				"description": "Task IDs that block this task",
 			},
 		},
-		"required": []string{"taskId"},
 	}
 }
 
