@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/QuantumNous/new-api/claudecli/internal/agent"
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/embedding"
@@ -55,9 +56,13 @@ type WSHandler struct {
 	mu          sync.Mutex
 	cancelFunc  context.CancelFunc
 	connMu      sync.Mutex
+	// P0.4: 会话 Busy 锁 — 防止同一会话并发处理
+	busySessions sync.Map // map[sessionID]bool
 	// 当前连接的会话信息（用于断开时提取记忆）
 	currentUserID    string
 	currentSessionID string
+	// P2.5: 文件修改时间追踪
+	fileTime *tools.FileTime
 }
 
 // NewWSHandler 创建 WebSocket 处理器
@@ -106,6 +111,11 @@ func (h *WSHandler) SetProfileManager(pm *profile.Manager) {
 	h.profiles = pm
 }
 
+// SetFileTime 设置文件修改时间追踪器
+func (h *WSHandler) SetFileTime(ft *tools.FileTime) {
+	h.fileTime = ft
+}
+
 // SetEmbeddingClient 设置 Embedding 客户端
 func (h *WSHandler) SetEmbeddingClient(ec *embedding.Client) {
 	h.embedding = ec
@@ -128,6 +138,7 @@ type ChatPayload struct {
 	SessionID   string `json:"session_id"`
 	UserID      string `json:"user_id"`
 	WorkingPath string `json:"working_path"` // 前端当前选择的工作路径（相对于 workspace）
+	AgentName   string `json:"agent,omitempty"` // P2.4: 可选的 Agent 名称（默认 build）
 }
 
 // Handle 处理 WebSocket 连接
@@ -366,6 +377,18 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		isNewSession = true
 	}
 
+	// P0.4: 会话 Busy 锁 — 防止同一会话并发处理
+	if _, busy := h.busySessions.LoadOrStore(sess.ID, true); busy {
+		log.Printf("[WS] Session %s is busy, rejecting request", sess.ID)
+		h.sendJSON(conn, map[string]interface{}{
+			"type": "error",
+			"payload": map[string]interface{}{
+				"error": "Session is currently processing a request. Please wait for it to complete or abort the current request.",
+			},
+		})
+		return
+	}
+
 	// 更新当前连接的会话信息（用于断开时提取记忆）
 	h.mu.Lock()
 	h.currentUserID = chat.UserID
@@ -415,17 +438,31 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		})
 	}
 
-	// 启动对话循环（传递沙箱）
-	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, eventCh, conn, isNewSession)
+	// P2.4: 根据 payload 选择 Agent
+	selectedAgent := agent.DefaultRegistry.GetDefault()
+	if chat.AgentName != "" {
+		if a := agent.DefaultRegistry.Get(chat.AgentName); a != nil {
+			selectedAgent = a
+			log.Printf("[WS] Using agent: %s", chat.AgentName)
+		} else {
+			log.Printf("[WS] Unknown agent '%s', using default", chat.AgentName)
+		}
+	}
+
+	// 启动对话循环（传递沙箱和 Agent）
+	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, selectedAgent, eventCh, conn, isNewSession)
 
 	// 异步转发事件到 WebSocket（不阻塞消息读取循环）
 	go h.forwardEvents(conn, sess.ID, eventCh)
 }
 
 // runConversation 运行对话
-func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, eventCh chan loop.LoopEvent, conn *websocket.Conn, isNewSession bool) {
+func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, ag *agent.AgentType, eventCh chan loop.LoopEvent, conn *websocket.Conn, isNewSession bool) {
 	defer close(eventCh)
-	l := loop.NewConversationLoop(h.client, sess, h.tools, systemPrompt, userID, sb, eventCh)
+	// P0.4: 对话结束时释放 Busy 锁
+	defer h.busySessions.Delete(sess.ID)
+
+	l := loop.NewConversationLoop(h.client, sess, h.tools, systemPrompt, userID, sb, h.fileTime, ag, eventCh)
 	l.ProcessMessage(ctx, msg)
 
 	// 对话结束后保存会话
@@ -1844,24 +1881,21 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 }
 
 // generateSessionTitle 异步生成会话标题
+// 参考 OpenCode: ensureTitle() + agent/prompt/title.txt
 func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Session, firstMessage string, conn *websocket.Conn) {
-	// 构建标题生成提示（支持中英文）
-	prompt := `Generate a concise title (5-15 characters) for this conversation.
-Rules:
-- If the message is in Chinese, reply in Chinese
-- If the message is in English, reply in English
-- Reply with ONLY the title, no quotes, no explanation
-- Keep it short and descriptive
-
-User message: ` + firstMessage
-
-	// 限制消息长度
-	if len(prompt) > 500 {
-		prompt = prompt[:500] + "..."
+	// 使用 OpenCode 风格的 TitlePrompt 作为系统提示词
+	// 用户消息作为输入，让 AI 生成标题
+	userMsg := firstMessage
+	if len(userMsg) > 500 {
+		userMsg = userMsg[:500] + "..."
 	}
 
+	// 使用 TitlePrompt 作为系统提示词 + 用户消息作为输入
+	// 参考 OpenCode: agent/prompt/title.txt
+	titlePromptMsg := prompt.TitlePrompt + "\n\nUser message: " + userMsg
+
 	// 使用轻量级模型生成标题
-	title, err := h.client.CreateSimpleMessage(ctx, prompt, 50)
+	title, err := h.client.CreateSimpleMessage(ctx, titlePromptMsg, 50)
 	if err != nil {
 		log.Printf("[WS] Failed to generate title for session %s: %v", sess.ID, err)
 		// 使用消息前缀作为后备标题

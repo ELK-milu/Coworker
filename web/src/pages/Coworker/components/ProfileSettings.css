@@ -1,0 +1,84 @@
+.profile-settings {
+  padding: 16px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.profile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.profile-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--semi-color-text-0);
+}
+
+.profile-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-form {
+  margin-bottom: 24px;
+}
+
+.profile-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+.profile-stats {
+  border-top: 1px solid var(--semi-color-border);
+  padding-top: 16px;
+}
+
+.profile-stats h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: var(--semi-color-text-1);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-item {
+  background: var(--semi-color-bg-1);
+  border: 1px solid var(--semi-color-border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.stat-value {
+  display: block;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--semi-color-primary);
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--semi-color-text-2);
+}
+
+.tool-usage h5 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: var(--semi-color-text-1);
+}
+
+.tool-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

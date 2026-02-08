@@ -240,6 +240,72 @@ if err != nil {
 
 ## 已完成功能
 
+### 2026-02-08 (OpenCode 对比优化 — 对话循环)
+
+- [x] Doom Loop 检测 (`conversation.go`)
+  - 记录最近 5 次工具调用的 (name, inputHash)
+  - 连续 3 次相同调用 → 返回错误提示 AI 换策略
+  - 参考 OpenCode `session/processor.ts:144-169`
+- [x] 循环步数限制 (`conversation.go`)
+  - `maxSteps` 默认 50，Agent 可配置
+  - 达到限制时注入 MaxStepsReached 提示词（参考 OpenCode `prompt/max-steps.txt`）
+  - 最后一次 API 调用不带工具定义，强制文本回复
+- [x] Finish Reason 精确检查 (`conversation.go`)
+  - `end_turn` → 结束循环
+  - `tool_use` → 继续执行工具
+  - `max_tokens` → 注入 system-reminder 包装的 continue 提示
+  - 其他 → 结束循环
+- [x] Context overflow 后检测 (`conversation.go`)
+  - 工具执行后检查 `IsContextNearLimit()`，不仅在循环开始前
+- [x] 会话 Busy 锁 (`websocket.go`)
+  - `sync.Map` 防止同一会话并发处理
+- [x] 会话标题自动生成 (`websocket.go`)
+  - 使用 OpenCode 风格 TitlePrompt（≤50字符、同语言、无工具名）
+
+### 2026-02-08 (OpenCode 对比优化 — 工具系统)
+
+- [x] 统一工具输出截断 (`truncation.go` + `factory.go`)
+  - 最大 2000 行 / 50KB
+  - 截断后保存完整输出到文件
+  - 7 天过期自动清理
+  - 参考 OpenCode `tool/truncation.ts`
+- [x] 工具工厂模式 (`factory.go`)
+  - 自动输入验证 + 输出截断
+  - 参考 OpenCode `tool/tool.ts` 的 `Tool.define()`
+- [x] Edit 9 层 Replacer 链 (`edit_replacer.go`)
+  - 补全至与 OpenCode 完全一致的 9 层
+- [x] Edit diff 摘要输出 (`edit.go`)
+  - 显示 +N/-N 行变更统计
+  - 显示匹配方法（非精确匹配时）
+- [x] FileTime 外部修改检测 (`filetime.go`)
+  - Write/Edit 前检测文件是否被外部修改
+- [x] Glob 结果限制 + 排序 (`glob.go`)
+  - 100 结果硬限制
+  - 按修改时间排序（最新优先）
+  - 超限时返回截断警告
+- [x] Grep 结果限制 + 分组 (`grep.go`)
+  - 100 结果硬限制
+  - 单行 2000 字符截断
+  - 按文件分组输出格式
+  - 超限时返回截断警告
+
+### 2026-02-08 (OpenCode 对比优化 — 架构)
+
+- [x] Agent 分层系统 (`agent/types.go`)
+  - 6 个内置 Agent: build, plan, explore, general, compaction, title
+  - 每个 Agent 独立的工具白名单和步数限制
+- [x] 权限 Ruleset 评估引擎 (`permissions/`)
+  - 规则格式: permission + pattern + action (allow/deny/ask)
+  - 通配符匹配 (`permissions/wildcard.go`)
+  - 层级合并: defaults → agent-specific → user-config
+- [x] API 调用重试机制 (`client/retry.go`)
+  - 指数退避 + jitter
+  - 429/503/529/500 自动重试
+  - 解析 retry-after header
+- [x] 系统提示词增强 (`prompt/templates.go`)
+  - MaxStepsReached、PlanModeReminder、BuildSwitchReminder
+  - CompactionPrompt、TitlePrompt、SummaryPrompt
+
 ### 2026-02-05 (Microsandbox MicroVM 沙箱)
 
 - [x] Microsandbox HTTP API 客户端 (`sandbox/microsandbox_client.go`)
@@ -353,15 +419,18 @@ if err != nil {
 
 ### 中优先级
 
+- [ ] LSP 诊断反馈 (Write/Edit 后返回编译错误，减少 AI 盲目修复)
+- [ ] Bash 实时输出流 (长命令执行时实时更新 UI)
 - [ ] 上下文压缩性能优化
 - [x] 工作空间安全审计 (已通过沙箱隔离实现)
-- [ ] 更多工具支持 (LSP, WebFetch 等)
+- [x] OpenCode 对比优化全量移植 (2026-02-08 完成)
 
 ### 低优先级
 
+- [ ] Instruction 注入 (Read 文件时加载关联 CLAUDE.md 指令)
 - [ ] Prometheus 监控指标
 - [ ] 集成测试
 
 ---
 
-*Last updated: 2026-02-05 (Microsandbox MicroVM 沙箱)*
+*Last updated: 2026-02-08 (OpenCode 对比优化全量移植)*

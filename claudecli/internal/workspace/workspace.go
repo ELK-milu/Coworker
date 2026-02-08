@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -392,4 +393,55 @@ func (m *Manager) SaveConfig(userID string, content string) error {
 
 	configPath := filepath.Join(m.GetUserClaudeDir(userID), "COWORKER.md")
 	return os.WriteFile(configPath, []byte(content), 0644)
+}
+
+// UserInfo 用户信息
+type UserInfo struct {
+	UserName     string `json:"user_name"`
+	CoworkerName string `json:"coworker_name"`
+	Phone        string `json:"phone"`
+	Email        string `json:"email"`
+}
+
+// LoadUserInfo 加载用户信息
+func (m *Manager) LoadUserInfo(userID string) (*UserInfo, error) {
+	infoPath := filepath.Join(m.GetUserClaudeDir(userID), "userinfo.json")
+
+	// 确保用户目录存在
+	if err := m.EnsureUserWorkspace(userID); err != nil {
+		return nil, err
+	}
+
+	// 检查文件是否存在
+	if _, err := os.Stat(infoPath); os.IsNotExist(err) {
+		return &UserInfo{}, nil // 文件不存在返回空结构
+	}
+
+	content, err := os.ReadFile(infoPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var info UserInfo
+	if err := json.Unmarshal(content, &info); err != nil {
+		return nil, err
+	}
+
+	return &info, nil
+}
+
+// SaveUserInfo 保存用户信息
+func (m *Manager) SaveUserInfo(userID string, info *UserInfo) error {
+	// 确保用户目录存在
+	if err := m.EnsureUserWorkspace(userID); err != nil {
+		return err
+	}
+
+	content, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	infoPath := filepath.Join(m.GetUserClaudeDir(userID), "userinfo.json")
+	return os.WriteFile(infoPath, content, 0644)
 }

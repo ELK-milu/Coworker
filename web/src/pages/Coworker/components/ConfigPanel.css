@@ -4,20 +4,62 @@
   height: 100%;
   padding: 12px;
   gap: 12px;
+  overflow-y: auto;
 }
 
-.config-header {
+/* 配置区块 */
+.config-section {
+  background: var(--semi-color-bg-1);
+  border-radius: 8px;
+  border: 1px solid var(--semi-color-border);
+}
+
+.config-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.config-section-header:hover {
+  background: var(--semi-color-fill-0);
+  border-radius: 8px 8px 0 0;
+}
+
+.config-section-content {
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 表单样式 */
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-form-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
+.config-form-item .semi-input-wrapper {
+  width: 100%;
+}
+
+/* 操作按钮 */
 .config-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
 
+/* 编辑器 */
 .config-editor {
   flex: 1;
   overflow: hidden;
@@ -31,9 +73,4 @@
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 12px;
   line-height: 1.5;
-}
-
-.config-footer {
-  padding-top: 8px;
-  border-top: 1px solid var(--semi-color-border);
 }

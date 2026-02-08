@@ -42,6 +42,10 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 		coworkerGroup.GET("/config", claudeCLICtrl.GetConfig)
 		coworkerGroup.PUT("/config", claudeCLICtrl.SaveConfig)
 
+		// 用户信息
+		coworkerGroup.GET("/userinfo", claudeCLICtrl.GetUserInfo)
+		coworkerGroup.PUT("/userinfo", claudeCLICtrl.SaveUserInfo)
+
 		// Job 管理
 		coworkerGroup.GET("/jobs", claudeCLICtrl.ListJobs)
 		coworkerGroup.POST("/jobs", claudeCLICtrl.CreateJob)

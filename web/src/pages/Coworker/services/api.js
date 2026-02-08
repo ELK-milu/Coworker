@@ -173,6 +173,25 @@ export async function saveConfig(userId, content) {
   });
 }
 
+// ========== 用户信息 API ==========
+
+export async function getUserInfo(userId) {
+  return request(`/userinfo?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function saveUserInfo(userId, userInfo) {
+  return request('/userinfo', {
+    method: 'PUT',
+    body: JSON.stringify({
+      user_id: userId,
+      user_name: userInfo.userName,
+      coworker_name: userInfo.coworkerName,
+      phone: userInfo.phone,
+      email: userInfo.email,
+    }),
+  });
+}
+
 // ========== Job 管理 API ==========
 
 export async function listJobs(userId) {

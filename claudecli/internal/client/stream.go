@@ -44,28 +44,37 @@ func (c *ClaudeClient) streamMessages(
 	// 构建系统提示（OAuth 模式需要特殊格式）
 	systemBlocks := formatSystemPrompt(systemPrompt, c.isOAuth)
 
-	// 创建流（使用 Beta API）
-	stream := c.client.Beta.Messages.NewStreaming(ctx, anthropic.BetaMessageNewParams{
+	params := anthropic.BetaMessageNewParams{
 		Model:     anthropic.Model(c.model),
 		MaxTokens: c.maxTokens,
 		System:    systemBlocks,
 		Messages:  apiMessages,
 		Tools:     buildBetaTools(tools),
 		Betas:     betas,
-	})
-
-	// 处理流事件
-	log.Printf("[API] Starting stream processing")
-	for stream.Next() {
-		event := stream.Current()
-		if event.Type != "content_block_delta" {
-			log.Printf("[API] Event type: %s", event.Type)
-		}
-		c.handleBetaStreamEvent(event, eventCh)
 	}
 
-	if err := stream.Err(); err != nil {
-		log.Printf("[API] Stream error: %v", err)
+	// 带重试的流式调用
+	err := retryWithBackoff(ctx, "streamMessages", func() error {
+		stream := c.client.Beta.Messages.NewStreaming(ctx, params)
+
+		log.Printf("[API] Starting stream processing")
+		for stream.Next() {
+			event := stream.Current()
+			if event.Type != "content_block_delta" {
+				log.Printf("[API] Event type: %s", event.Type)
+			}
+			c.handleBetaStreamEvent(event, eventCh)
+		}
+
+		if err := stream.Err(); err != nil {
+			// 检查是否可重试（仅在未产生任何输出时重试）
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("[API] Stream error after retries: %v", err)
 		eventCh <- StreamEvent{Type: EventError, Error: err.Error()}
 	}
 	log.Printf("[API] Stream completed")
@@ -90,22 +99,28 @@ func (c *ClaudeClient) CreateSimpleMessage(ctx context.Context, prompt string, m
 		},
 	}
 
-	response, err := c.client.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
+	params := anthropic.BetaMessageNewParams{
 		Model:     anthropic.Model(model),
 		MaxTokens: maxTokens,
 		Messages:  messages,
-	})
-	if err != nil {
-		return "", err
 	}
 
-	// 提取文本内容
-	var text strings.Builder
-	for _, block := range response.Content {
-		if block.Type == "text" {
-			text.WriteString(block.Text)
+	var result string
+	err := retryWithBackoff(ctx, "CreateSimpleMessage", func() error {
+		response, err := c.client.Beta.Messages.New(ctx, params)
+		if err != nil {
+			return err
 		}
-	}
 
-	return text.String(), nil
+		var text strings.Builder
+		for _, block := range response.Content {
+			if block.Type == "text" {
+				text.WriteString(block.Text)
+			}
+		}
+		result = text.String()
+		return nil
+	})
+
+	return result, err
 }

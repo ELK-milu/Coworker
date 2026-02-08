@@ -15,9 +15,19 @@ const (
 	UserIDKey ContextKey = "user_id"
 	// SessionIDKey 会话 ID 的 context key
 	SessionIDKey ContextKey = "session_id"
+	// MessageIDKey 当前消息 ID 的 context key
+	MessageIDKey ContextKey = "message_id"
 	// SandboxKey 沙箱的 context key
 	SandboxKey ContextKey = "sandbox"
+	// FileTimeKey 文件时间追踪器的 context key
+	FileTimeKey ContextKey = "filetime"
+	// MetadataCallbackKey 元数据回调函数的 context key
+	MetadataCallbackKey ContextKey = "metadata_callback"
 )
+
+// MetadataCallback 元数据回调函数类型
+// 工具执行过程中可通过此回调实时更新元数据（如进度、中间输出等）
+type MetadataCallback func(key string, value interface{})
 
 // GetWorkingDir 从 context 中获取工作目录
 func GetWorkingDir(ctx context.Context, defaultDir string) string {
@@ -25,6 +35,37 @@ func GetWorkingDir(ctx context.Context, defaultDir string) string {
 		return dir
 	}
 	return defaultDir
+}
+
+// GetUserID 从 context 中获取用户 ID
+func GetUserID(ctx context.Context) string {
+	if id, ok := ctx.Value(UserIDKey).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// GetSessionID 从 context 中获取会话 ID
+func GetSessionID(ctx context.Context) string {
+	if id, ok := ctx.Value(SessionIDKey).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// GetMetadataCallback 从 context 中获取元数据回调
+func GetMetadataCallback(ctx context.Context) MetadataCallback {
+	if cb, ok := ctx.Value(MetadataCallbackKey).(MetadataCallback); ok {
+		return cb
+	}
+	return nil
+}
+
+// SendMetadata 通过 context 中的回调发送元数据
+func SendMetadata(ctx context.Context, key string, value interface{}) {
+	if cb := GetMetadataCallback(ctx); cb != nil {
+		cb(key, value)
+	}
 }
 
 // ToolDefinition 工具定义

@@ -743,6 +743,7 @@ const Coworker = () => {
           onRefreshJobs={refreshJobs}
           onReorderJobs={reorderJobs}
           userId={userId}
+          ws={wsRef.current}
         />
 
         {/* 主内容区 */}

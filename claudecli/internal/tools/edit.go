@@ -62,10 +62,24 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	// 获取沙箱
 	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
 
+	// 获取 FileTime 追踪器
+	ft, _ := ctx.Value(types.FileTimeKey).(*FileTime)
+
 	// 使用沙箱解析路径
 	path, err := t.resolvePathWithSandbox(ctx, in.FilePath, sb)
 	if err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
+	}
+
+	// P2.5: FileTime 检查 — 检测文件是否被外部修改
+	if ft != nil {
+		if err := ft.AssertNotModified(path); err != nil {
+			return &types.ToolResult{
+				Success:   false,
+				Error:     err.Error(),
+				ElapsedMs: time.Since(startTime).Milliseconds(),
+			}, nil
+		}
 	}
 
 	content, err := os.ReadFile(path)
@@ -98,10 +112,13 @@ func (t *EditTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
-	output := "File edited successfully"
-	if matchMethod != "" && matchMethod != "SimpleReplacer" {
-		output = "File edited successfully (matched via " + matchMethod + ")"
+	// P2.5: 编辑后更新 FileTime 记录
+	if ft != nil {
+		_ = ft.Update(path)
 	}
+
+	// P3: 生成 diff 摘要（参考 OpenCode edit.ts 的 diffLines 输出）
+	output := t.buildEditOutput(in.FilePath, oldContent, newContent, matchMethod)
 
 	return &types.ToolResult{Success: true, Output: output, ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 }
@@ -120,4 +137,26 @@ func (t *EditTool) resolvePathWithSandbox(ctx context.Context, path string, sb *
 		return sb.ToReal(path)
 	}
 	return t.resolvePath(ctx, path), nil
+}
+
+// buildEditOutput 构建编辑结果输出（含 diff 摘要）
+// 参考 OpenCode edit.ts: diffLines() 统计增删行数
+func (t *EditTool) buildEditOutput(filePath, oldContent, newContent, matchMethod string) string {
+	var out strings.Builder
+
+	oldLines := strings.Split(oldContent, "\n")
+	newLines := strings.Split(newContent, "\n")
+	added, removed := diffLineCount(oldLines, newLines)
+
+	fmt.Fprintf(&out, "Edited %s", filePath)
+	if added > 0 || removed > 0 {
+		fmt.Fprintf(&out, " (+%d/-%d lines)", added, removed)
+	}
+	out.WriteString("\n")
+
+	if matchMethod != "" && matchMethod != "SimpleReplacer" {
+		fmt.Fprintf(&out, "Matched via: %s\n", matchMethod)
+	}
+
+	return out.String()
 }

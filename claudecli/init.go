@@ -180,6 +180,10 @@ func Init() *Module {
 	wsHandler.SetEmbeddingClient(embeddingClient)
 	wsHandler.SetMilvusClient(milvusClient)
 
+	// P2.5: 创建文件修改时间追踪器
+	fileTime := tools.NewFileTime()
+	wsHandler.SetFileTime(fileTime)
+
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)
 
@@ -207,38 +211,48 @@ func Init() *Module {
 	return instance
 }
 
-// registerTools 注册所有工具
+// registerTools 注册所有工具（使用工厂模式）
 func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, memoryManager *memory.Manager, sandboxPool *sandbox.SandboxPool) {
 	workingDir := cfg.Security.WorkingDir
 	blockedCommands := cfg.Security.BlockedCommands
 
-	// 注册基础工具
+	// 创建截断器
+	truncation := tools.NewTruncation(workingDir)
+	truncation.StartCleanup()
+	registry.SetTruncation(truncation)
+
+	// 创建工具工厂（自动验证输入 + 截断输出）
+	factory := tools.NewToolFactory(truncation)
+
+	// 创建 Bash 工具（需要特殊配置）
 	bashTool := tools.NewBashTool(workingDir, blockedCommands)
 	if sandboxPool != nil {
 		bashTool.SetSandboxPool(sandboxPool)
 	}
-	registry.Register(bashTool)
-	registry.Register(tools.NewReadTool(workingDir))
-	registry.Register(tools.NewWriteTool(workingDir))
-	registry.Register(tools.NewEditTool(workingDir))
-	registry.Register(tools.NewGlobTool(workingDir))
-	registry.Register(tools.NewGrepTool(workingDir))
-	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewAskUserQuestionTool())
-	registry.Register(tools.NewStructuredOutputTool())
 
-	// 注册任务工具
-	registry.Register(tools.NewTaskCreateTool(taskManager))
-	registry.Register(tools.NewTaskUpdateTool(taskManager))
-	registry.Register(tools.NewTaskListTool(taskManager))
-	registry.Register(tools.NewTaskGetTool(taskManager))
+	// 使用工厂模式注册基础工具
+	tools.RegisterWithFactory(registry, factory, bashTool)
+	tools.RegisterWithFactory(registry, factory, tools.NewReadTool(workingDir))
+	tools.RegisterWithFactory(registry, factory, tools.NewWriteTool(workingDir))
+	tools.RegisterWithFactory(registry, factory, tools.NewEditTool(workingDir))
+	tools.RegisterWithFactory(registry, factory, tools.NewGlobTool(workingDir))
+	tools.RegisterWithFactory(registry, factory, tools.NewGrepTool(workingDir))
+	tools.RegisterWithFactory(registry, factory, tools.NewWebFetchTool())
+	tools.RegisterWithFactory(registry, factory, tools.NewAskUserQuestionTool())
+	tools.RegisterWithFactory(registry, factory, tools.NewStructuredOutputTool())
 
-	// 注册记忆工具
-	registry.Register(tools.NewMemorySearchTool(memoryManager))
-	registry.Register(tools.NewMemorySaveTool(memoryManager))
-	registry.Register(tools.NewMemoryListTool(memoryManager))
+	// 使用工厂模式注册任务工具
+	tools.RegisterWithFactory(registry, factory, tools.NewTaskCreateTool(taskManager))
+	tools.RegisterWithFactory(registry, factory, tools.NewTaskUpdateTool(taskManager))
+	tools.RegisterWithFactory(registry, factory, tools.NewTaskListTool(taskManager))
+	tools.RegisterWithFactory(registry, factory, tools.NewTaskGetTool(taskManager))
 
-	log.Printf("[ClaudeCLI] Registered %d tools (sandbox pool: %v)", 16, sandboxPool != nil)
+	// 使用工厂模式注册记忆工具
+	tools.RegisterWithFactory(registry, factory, tools.NewMemorySearchTool(memoryManager))
+	tools.RegisterWithFactory(registry, factory, tools.NewMemorySaveTool(memoryManager))
+	tools.RegisterWithFactory(registry, factory, tools.NewMemoryListTool(memoryManager))
+
+	log.Printf("[ClaudeCLI] Registered %d tools with factory pattern (sandbox pool: %v)", 16, sandboxPool != nil)
 }
 
 // Shutdown 优雅关闭模块

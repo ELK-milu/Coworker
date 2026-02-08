@@ -33,6 +33,10 @@ func NewReplacerChain() *ReplacerChain {
 			&BlockAnchorReplacer{threshold: 0.3},
 			&WhitespaceNormalizedReplacer{},
 			&IndentNormalizedReplacer{},
+			// P1.1: 新增 3 层 Replacer（参考 OpenCode）
+			&EscapeNormalizedReplacer{},
+			&TrimmedBoundaryReplacer{},
+			&ContextAwareReplacer{contextLines: 3},
 		},
 	}
 }
@@ -508,4 +512,245 @@ func (r *IndentNormalizedReplacer) FindMatch(content, find string) *Match {
 // normalizeIndent 归一化缩进（tab -> 4空格）
 func normalizeIndent(s string) string {
 	return strings.ReplaceAll(s, "\t", "    ")
+}
+
+// EscapeNormalizedReplacer 转义字符归一化替换器
+// 参考 OpenCode EscapeNormalizedReplacer
+// 处理 AI 生成的代码中转义字符不一致的情况
+type EscapeNormalizedReplacer struct{}
+
+func (r *EscapeNormalizedReplacer) Name() string { return "EscapeNormalizedReplacer" }
+
+func (r *EscapeNormalizedReplacer) FindMatch(content, find string) *Match {
+	normalizedContent := normalizeEscapes(content)
+	normalizedFind := normalizeEscapes(find)
+
+	idx := strings.Index(normalizedContent, normalizedFind)
+	if idx == -1 {
+		return nil
+	}
+
+	// 映射回原始位置
+	start, end := mapEscapePosition(content, normalizedContent, idx, idx+len(normalizedFind))
+
+	return &Match{
+		Start:      start,
+		End:        end,
+		Similarity: 0.75,
+	}
+}
+
+// normalizeEscapes 归一化转义字符
+func normalizeEscapes(s string) string {
+	// 统一常见转义序列
+	replacer := strings.NewReplacer(
+		"\\n", "\n",
+		"\\t", "\t",
+		"\\r", "\r",
+		"\\\"", "\"",
+		"\\'", "'",
+		"\\\\", "\\",
+	)
+	return replacer.Replace(s)
+}
+
+// mapEscapePosition 映射转义归一化后的位置到原始位置
+func mapEscapePosition(original, normalized string, normStart, normEnd int) (int, int) {
+	// 简化实现：通过字符计数映射
+	origIdx := 0
+	normIdx := 0
+	start := 0
+
+	for origIdx < len(original) && normIdx < normEnd {
+		if normIdx == normStart {
+			start = origIdx
+		}
+
+		// 检查原始字符串中是否有转义序列
+		if origIdx+1 < len(original) && original[origIdx] == '\\' {
+			switch original[origIdx+1] {
+			case 'n', 't', 'r', '"', '\'', '\\':
+				origIdx += 2
+				normIdx++
+				continue
+			}
+		}
+
+		origIdx++
+		normIdx++
+	}
+
+	return start, origIdx
+}
+
+// TrimmedBoundaryReplacer 边界空白容忍替换器
+// 参考 OpenCode TrimmedBoundaryReplacer
+// 处理 AI 在代码块首尾添加/遗漏空行的情况
+type TrimmedBoundaryReplacer struct{}
+
+func (r *TrimmedBoundaryReplacer) Name() string { return "TrimmedBoundaryReplacer" }
+
+func (r *TrimmedBoundaryReplacer) FindMatch(content, find string) *Match {
+	// 去除查找字符串首尾的空行
+	trimmedFind := trimBoundaryLines(find)
+	if trimmedFind == "" {
+		return nil
+	}
+
+	// 先尝试直接匹配去除边界后的字符串
+	idx := strings.Index(content, trimmedFind)
+	if idx != -1 {
+		return &Match{
+			Start:      idx,
+			End:        idx + len(trimmedFind),
+			Similarity: 0.7,
+		}
+	}
+
+	// 尝试在内容中也去除边界空行后匹配
+	contentLines := strings.Split(content, "\n")
+	findLines := strings.Split(trimmedFind, "\n")
+
+	if len(findLines) == 0 {
+		return nil
+	}
+
+	for i := 0; i <= len(contentLines)-len(findLines); i++ {
+		matched := true
+		for j, findLine := range findLines {
+			cl := strings.TrimSpace(contentLines[i+j])
+			fl := strings.TrimSpace(findLine)
+			if cl != fl {
+				matched = false
+				break
+			}
+		}
+
+		if matched {
+			start := 0
+			for k := 0; k < i; k++ {
+				start += len(contentLines[k]) + 1
+			}
+			end := start
+			for k := 0; k < len(findLines); k++ {
+				end += len(contentLines[i+k])
+				if i+k < len(contentLines)-1 {
+					end++
+				}
+			}
+			return &Match{
+				Start:      start,
+				End:        end,
+				Similarity: 0.7,
+			}
+		}
+	}
+
+	return nil
+}
+
+// trimBoundaryLines 去除字符串首尾的空行
+func trimBoundaryLines(s string) string {
+	lines := strings.Split(s, "\n")
+
+	// 去除首部空行
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+
+	// 去除尾部空行
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+
+	if start >= end {
+		return ""
+	}
+
+	return strings.Join(lines[start:end], "\n")
+}
+
+// ContextAwareReplacer 上下文感知匹配替换器
+// 参考 OpenCode ContextAwareReplacer
+// 使用查找字符串的前 N 行和后 N 行作为上下文锚点，
+// 在内容中定位匹配区域，容忍中间内容的微小差异
+type ContextAwareReplacer struct {
+	contextLines int // 上下文行数（默认 3）
+}
+
+func (r *ContextAwareReplacer) Name() string { return "ContextAwareReplacer" }
+
+func (r *ContextAwareReplacer) FindMatch(content, find string) *Match {
+	contextSize := r.contextLines
+	if contextSize <= 0 {
+		contextSize = 3
+	}
+
+	contentLines := strings.Split(content, "\n")
+	findLines := strings.Split(find, "\n")
+
+	// 至少需要 2*contextSize+1 行才能使用上下文匹配
+	if len(findLines) < 2*contextSize+1 {
+		return nil
+	}
+
+	// 提取上下文锚点（前 N 行和后 N 行）
+	headContext := findLines[:contextSize]
+	tailContext := findLines[len(findLines)-contextSize:]
+	expectedMiddleLen := len(findLines) - 2*contextSize
+
+	// 在内容中查找头部上下文匹配
+	for i := 0; i <= len(contentLines)-len(findLines); i++ {
+		// 检查头部上下文
+		headMatch := true
+		for j := 0; j < contextSize; j++ {
+			if strings.TrimSpace(contentLines[i+j]) != strings.TrimSpace(headContext[j]) {
+				headMatch = false
+				break
+			}
+		}
+		if !headMatch {
+			continue
+		}
+
+		// 检查尾部上下文（允许中间行数有 ±2 的偏差）
+		for delta := -2; delta <= 2; delta++ {
+			tailStart := i + contextSize + expectedMiddleLen + delta
+			if tailStart < i+contextSize || tailStart+contextSize > len(contentLines) {
+				continue
+			}
+
+			tailMatch := true
+			for j := 0; j < contextSize; j++ {
+				if strings.TrimSpace(contentLines[tailStart+j]) != strings.TrimSpace(tailContext[j]) {
+					tailMatch = false
+					break
+				}
+			}
+
+			if tailMatch {
+				endIdx := tailStart + contextSize - 1
+				start := 0
+				for k := 0; k < i; k++ {
+					start += len(contentLines[k]) + 1
+				}
+				end := start
+				for k := i; k <= endIdx; k++ {
+					end += len(contentLines[k])
+					if k < len(contentLines)-1 {
+						end++
+					}
+				}
+				return &Match{
+					Start:      start,
+					End:        end,
+					Similarity: 0.65,
+				}
+			}
+		}
+	}
+
+	return nil
 }

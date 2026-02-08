@@ -14,11 +14,13 @@ import {
   IconList,
   IconSetting,
   IconClock,
+  IconStar,
 } from '@douyinfe/semi-icons';
 import FileExplorer from './FileExplorer';
 import TaskList from './TaskList';
 import JobList from './JobList';
 import ConfigPanel from './ConfigPanel';
+import MemoryPanel from './MemoryPanel';
 import './SessionSidebar.css';
 
 const { Text } = Typography;
@@ -79,6 +81,8 @@ const SessionSidebar = ({
   onReorderJobs,
   // 用户ID
   userId,
+  // WebSocket 连接
+  ws,
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('history');
@@ -238,6 +242,14 @@ const SessionSidebar = ({
               <IconClock size="small" />
               <span>事项</span>
             </button>
+            <button
+              type="button"
+              className={`tab-btn ${activeTab === 'memory' ? 'active' : ''}`}
+              onClick={() => setActiveTab('memory')}
+            >
+              <IconStar size="small" />
+              <span>记忆</span>
+            </button>
           </div>
         )}
         <Button
@@ -281,6 +293,8 @@ const SessionSidebar = ({
             onRefresh={onRefreshJobs}
             onReorder={onReorderJobs}
           />
+        ) : activeTab === 'memory' ? (
+          <MemoryPanel ws={ws} userId={userId} />
         ) : (
           <FileExplorer
             files={files}

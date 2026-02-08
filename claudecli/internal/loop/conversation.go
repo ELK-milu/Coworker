@@ -1,7 +1,13 @@
 package loop
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+
+	"github.com/QuantumNous/new-api/claudecli/internal/agent"
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
+	"github.com/QuantumNous/new-api/claudecli/internal/prompt"
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
@@ -11,6 +17,19 @@ import (
 	"log"
 	"time"
 )
+
+// 循环控制常量
+const (
+	DefaultMaxSteps       = 50  // 默认最大步数
+	DoomLoopThreshold     = 3   // Doom Loop 检测阈值：连续相同调用次数
+	DoomLoopHistorySize   = 5   // Doom Loop 历史记录大小
+)
+
+// toolCallRecord 工具调用记录（用于 Doom Loop 检测）
+type toolCallRecord struct {
+	Name      string
+	InputHash string
+}
 
 // ConversationLoop 对话循环
 type ConversationLoop struct {
@@ -22,7 +41,18 @@ type ConversationLoop struct {
 	mode      string // normal, plan, acceptEdits, bypassPermissions
 	userID    string // 用户 ID，用于任务工具
 	sandbox   *sandbox.Sandbox // 沙箱，用于路径隔离
+	fileTime  *tools.FileTime  // 文件修改时间追踪
 	startTime int64
+
+	// P2.4: Agent 分层系统
+	agent *agent.AgentType // 当前 Agent（nil = 使用默认 build agent）
+
+	// P0.2: Doom Loop 检测
+	recentCalls []toolCallRecord // 最近的工具调用记录
+
+	// P0.3: 循环步数限制
+	maxSteps    int  // 最大步数（0 = 使用默认值）
+	currentStep int  // 当前步数
 }
 
 // LoopEvent 循环事件
@@ -97,17 +127,44 @@ func NewConversationLoop(
 	systemPrompt string,
 	userID string,
 	sb *sandbox.Sandbox,
+	ft *tools.FileTime,
+	ag *agent.AgentType,
 	eventCh chan<- LoopEvent,
 ) *ConversationLoop {
+	// 使用 Agent 的 MaxTurns 作为默认步数限制
+	maxSteps := DefaultMaxSteps
+	if ag != nil && ag.MaxTurns > 0 {
+		maxSteps = ag.MaxTurns
+	}
+
+	// 如果 Agent 有自定义提示词，追加到系统提示词
+	if ag != nil && ag.Prompt != "" {
+		systemPrompt = systemPrompt + "\n\n" + ag.Prompt
+	}
+
 	return &ConversationLoop{
-		client:  c,
-		session: sess,
-		tools:   registry,
-		system:  systemPrompt,
-		eventCh: eventCh,
-		mode:    "normal",
-		userID:  userID,
-		sandbox: sb,
+		client:      c,
+		session:     sess,
+		tools:       registry,
+		system:      systemPrompt,
+		eventCh:     eventCh,
+		mode:        "normal",
+		userID:      userID,
+		sandbox:     sb,
+		fileTime:    ft,
+		agent:       ag,
+		recentCalls: make([]toolCallRecord, 0, DoomLoopHistorySize),
+		maxSteps:    maxSteps,
+		currentStep: 0,
+	}
+}
+
+// SetMaxSteps 设置最大步数（0 = 使用默认值）
+func (l *ConversationLoop) SetMaxSteps(steps int) {
+	if steps <= 0 {
+		l.maxSteps = DefaultMaxSteps
+	} else {
+		l.maxSteps = steps
 	}
 }
 
@@ -131,6 +188,8 @@ func (l *ConversationLoop) ProcessMessage(ctx context.Context, userInput string)
 // runLoop 运行对话循环
 func (l *ConversationLoop) runLoop(ctx context.Context) error {
 	l.startTime = time.Now().UnixMilli()
+	l.currentStep = 0
+	l.recentCalls = l.recentCalls[:0]
 
 	for {
 		// 检查上下文是否被取消
@@ -142,6 +201,31 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		default:
 		}
 
+		// P0.3: 检查步数限制
+		l.currentStep++
+		if l.currentStep > l.maxSteps {
+			log.Printf("[Loop] Max steps reached (%d), stopping loop", l.maxSteps)
+			// 注入 OpenCode 风格的 max-steps 提示词（强制文本回复）
+			// 参考 OpenCode: packages/opencode/src/session/prompt/max-steps.txt
+			l.session.AddMessage(types.Message{
+				Role: "user",
+				Content: []interface{}{types.TextBlock{
+					Type: "text",
+					Text: prompt.MaxStepsReached,
+				}},
+			})
+			// 做最后一次 API 调用（不带工具定义，强制文本回复）
+			streamCh, err := l.client.CreateMessageStream(ctx, l.session.Messages, nil, l.system)
+			if err != nil {
+				l.eventCh <- LoopEvent{Type: EventTypeError, Error: err.Error()}
+				return err
+			}
+			_, _, _ = l.processStream(ctx, streamCh)
+			l.sendStatusEvent()
+			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
+			return nil
+		}
+
 		// 检查上下文是否接近限制，如果是则压缩
 		if l.session.IsContextNearLimit() {
 			log.Printf("[Loop] Context near limit, compacting...")
@@ -151,11 +235,14 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		// 发送状态事件（开始处理）
 		l.sendStatusEvent()
 
+		// P2.4: 根据 Agent 过滤工具定义
+		toolDefs := l.getFilteredToolDefinitions()
+
 		// 调用 Claude API
 		streamCh, err := l.client.CreateMessageStream(
 			ctx,
 			l.session.Messages,
-			l.tools.GetDefinitions(),
+			toolDefs,
 			l.system,
 		)
 		if err != nil {
@@ -172,15 +259,39 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		// 发送状态事件（处理完成）
 		l.sendStatusEvent()
 
-		// 如果没有工具调用，结束循环
-		if stopReason != "tool_use" || len(toolCalls) == 0 {
+		// P2.1: Finish Reason 精确检查
+		switch types.StopReason(stopReason) {
+		case types.StopReasonToolUse:
+			if len(toolCalls) == 0 {
+				log.Printf("[Loop] stop_reason=tool_use but no tool calls, ending")
+				l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
+				return nil
+			}
+			// 继续执行工具
+		case types.StopReasonMaxTokens:
+			log.Printf("[Loop] max_tokens reached, injecting continue prompt")
+			// 参考 OpenCode: 使用 system-reminder 包装系统注入消息
+			l.session.AddMessage(types.Message{
+				Role: "user",
+				Content: []interface{}{types.TextBlock{
+					Type: "text",
+					Text: "<system-reminder>\nYour response was cut off because it exceeded the maximum token limit. " +
+						"Please continue from where you left off.\n</system-reminder>",
+				}},
+			})
+			continue
+		case types.StopReasonEndTurn:
+			log.Printf("[Loop] Conversation ended: end_turn")
+			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
+			return nil
+		default:
 			log.Printf("[Loop] Conversation ended: stopReason=%s, toolCalls=%d", stopReason, len(toolCalls))
 			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
 			return nil
 		}
 
 		// 记录 Claude 请求的工具调用
-		log.Printf("[Loop] Claude requested %d tool calls:", len(toolCalls))
+		log.Printf("[Loop] Step %d/%d: Claude requested %d tool calls:", l.currentStep, l.maxSteps, len(toolCalls))
 		for i, tc := range toolCalls {
 			log.Printf("[Loop]   [%d] %s (id=%s)", i+1, tc.Name, tc.ID)
 		}
@@ -188,6 +299,13 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		// 执行工具调用
 		if err := l.executeTools(ctx, toolCalls); err != nil {
 			return err
+		}
+
+		// P3.1: 工具执行后检测 context overflow（参考 OpenCode SessionCompaction.isOverflow）
+		// OpenCode 在每步结束后检测，而非仅在循环开始前
+		if l.session.IsContextNearLimit() {
+			log.Printf("[Loop] Context overflow detected after tool execution (step %d), compacting...", l.currentStep)
+			l.session.CompactContext()
 		}
 	}
 }
@@ -300,16 +418,50 @@ func (l *ConversationLoop) saveAssistantMessage(text string, calls []toolCall) {
 func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) error {
 	results := make([]interface{}, 0, len(calls))
 
-	// 将会话的工作目录、用户 ID、会话 ID 和沙箱放入 context
+	// 将会话的工作目录、用户 ID、会话 ID、沙箱和文件时间追踪放入 context
 	workDir := l.session.GetWorkingDir()
 	toolCtx := context.WithValue(ctx, types.WorkingDirKey, workDir)
 	toolCtx = context.WithValue(toolCtx, types.UserIDKey, l.userID)
 	toolCtx = context.WithValue(toolCtx, types.SessionIDKey, l.session.ID)
 	toolCtx = context.WithValue(toolCtx, types.SandboxKey, l.sandbox)
+	toolCtx = context.WithValue(toolCtx, types.FileTimeKey, l.fileTime)
 
 	for _, tc := range calls {
 		log.Printf("[Tool] Executing: name=%s, id=%s, workDir=%s", tc.Name, tc.ID, workDir)
 		log.Printf("[Tool] Input: %s", tc.Input)
+
+		// P0.2: Doom Loop 检测
+		if l.isDoomLoop(tc.Name, tc.Input) {
+			log.Printf("[Tool] DOOM LOOP detected: %s called %d times with same input", tc.Name, DoomLoopThreshold)
+			doomResult := types.ToolResultBlock{
+				Type:      "tool_result",
+				ToolUseID: tc.ID,
+				Content: fmt.Sprintf(
+					"[Doom Loop Detected] The tool '%s' has been called %d consecutive times with identical arguments. "+
+						"This indicates a repetitive pattern. Please try a different approach:\n"+
+						"- Use a different tool\n"+
+						"- Change the arguments\n"+
+						"- Reconsider your strategy\n"+
+						"- If stuck, explain the issue to the user",
+					tc.Name, DoomLoopThreshold,
+				),
+				IsError: true,
+			}
+			results = append(results, doomResult)
+			l.recordToolCall(tc.Name, tc.Input)
+			l.eventCh <- LoopEvent{
+				Type:       EventTypeToolEnd,
+				ToolID:     tc.ID,
+				ToolName:   tc.Name,
+				ToolInput:  tc.Input,
+				ToolResult: doomResult.Content,
+				IsError:    true,
+			}
+			continue
+		}
+
+		// 记录本次工具调用
+		l.recordToolCall(tc.Name, tc.Input)
 
 		// 在执行前发送工具输入，让前端可以显示完整的输入参数
 		log.Printf("[Tool] Sending tool_input event for %s (id=%s)", tc.Name, tc.ID)
@@ -405,6 +557,84 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 	// 添加工具结果消息
 	l.session.AddMessage(types.Message{Role: "user", Content: results})
 	return nil
+}
+
+// hashToolCall 计算工具调用的哈希值（用于 Doom Loop 检测）
+func hashToolCall(name string, input string) string {
+	h := sha256.New()
+	h.Write([]byte(name))
+	h.Write([]byte(":"))
+	h.Write([]byte(input))
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// recordToolCall 记录工具调用（用于 Doom Loop 检测）
+func (l *ConversationLoop) recordToolCall(name string, input string) {
+	record := toolCallRecord{
+		Name:      name,
+		InputHash: hashToolCall(name, input),
+	}
+	l.recentCalls = append(l.recentCalls, record)
+	// 保持历史记录在限定大小内
+	if len(l.recentCalls) > DoomLoopHistorySize {
+		l.recentCalls = l.recentCalls[len(l.recentCalls)-DoomLoopHistorySize:]
+	}
+}
+
+// isDoomLoop 检测是否陷入 Doom Loop
+// 检查最近 N 次调用是否为相同工具+相同输入
+func (l *ConversationLoop) isDoomLoop(name string, input string) bool {
+	if len(l.recentCalls) < DoomLoopThreshold-1 {
+		return false
+	}
+
+	currentHash := hashToolCall(name, input)
+
+	// 检查最近 DoomLoopThreshold-1 次调用是否都相同
+	count := 0
+	for i := len(l.recentCalls) - 1; i >= 0 && count < DoomLoopThreshold-1; i-- {
+		if l.recentCalls[i].Name == name && l.recentCalls[i].InputHash == currentHash {
+			count++
+		} else {
+			break
+		}
+	}
+
+	return count >= DoomLoopThreshold-1
+}
+
+// getFilteredToolDefinitions 根据 Agent 权限过滤工具定义
+// 参考 OpenCode: PermissionNext.disabled() + tool registry filtering
+func (l *ConversationLoop) getFilteredToolDefinitions() []types.ToolDefinition {
+	allDefs := l.tools.GetDefinitions()
+
+	// 无 Agent 或 Agent 允许所有工具 → 返回全部
+	if l.agent == nil {
+		return allDefs
+	}
+
+	var filtered []types.ToolDefinition
+	for _, def := range allDefs {
+		if l.agent.IsToolAllowed(def.Name) {
+			filtered = append(filtered, def)
+		}
+	}
+
+	if len(filtered) == 0 {
+		log.Printf("[Loop] WARNING: Agent '%s' has no allowed tools, returning all", l.agent.Name)
+		return allDefs
+	}
+
+	log.Printf("[Loop] Agent '%s' filtered tools: %d/%d", l.agent.Name, len(filtered), len(allDefs))
+	return filtered
+}
+
+// SetAgent 设置当前 Agent
+func (l *ConversationLoop) SetAgent(ag *agent.AgentType) {
+	l.agent = ag
+	if ag != nil && ag.MaxTurns > 0 {
+		l.maxSteps = ag.MaxTurns
+	}
 }
 
 // sendStatusEvent 发送状态事件

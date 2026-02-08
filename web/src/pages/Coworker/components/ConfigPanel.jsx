@@ -2,9 +2,9 @@
 Copyright (C) 2025 QuantumNous
 */
 
-import React, { useRef, useEffect } from 'react';
-import { Button, Typography, Toast, TextArea } from '@douyinfe/semi-ui';
-import { IconUpload, IconDownload, IconSave, IconRefresh } from '@douyinfe/semi-icons';
+import React, { useRef, useEffect, useState } from 'react';
+import { Button, Typography, Toast, TextArea, Input, Collapsible } from '@douyinfe/semi-ui';
+import { IconUpload, IconDownload, IconSave, IconRefresh, IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
 import * as api from '../services/api';
 import './ConfigPanel.css';
 
@@ -12,6 +12,17 @@ const { Text, Title } = Typography;
 
 const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChange }) => {
   const fileInputRef = useRef(null);
+
+  // 用户信息状态
+  const [userInfo, setUserInfo] = useState({
+    userName: '',
+    coworkerName: '',
+    phone: '',
+    email: ''
+  });
+  const [userInfoLoading, setUserInfoLoading] = useState(false);
+  const [userInfoExpanded, setUserInfoExpanded] = useState(true);
+  const [promptExpanded, setPromptExpanded] = useState(true);
 
   // 加载配置文件 (REST API)
   const loadConfig = async () => {
@@ -26,16 +37,48 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     }
   };
 
+  // 加载用户信息
+  const loadUserInfo = async () => {
+    setUserInfoLoading(true);
+    try {
+      const data = await api.getUserInfo(userId);
+      setUserInfo({
+        userName: data.user_name || '',
+        coworkerName: data.coworker_name || '',
+        phone: data.phone || '',
+        email: data.email || ''
+      });
+    } catch (error) {
+      // 如果没有用户信息，使用默认值
+      console.log('No user info found, using defaults');
+    } finally {
+      setUserInfoLoading(false);
+    }
+  };
+
   // 保存配置文件 (REST API)
   const saveConfig = async () => {
     onLoadingChange(true);
     try {
       await api.saveConfig(userId, content);
-      Toast.success('配置已保存');
+      Toast.success('提示词配置已保存');
     } catch (error) {
       Toast.error('保存失败: ' + error.message);
     } finally {
       onLoadingChange(false);
+    }
+  };
+
+  // 保存用户信息
+  const saveUserInfo = async () => {
+    setUserInfoLoading(true);
+    try {
+      await api.saveUserInfo(userId, userInfo);
+      Toast.success('用户信息已保存');
+    } catch (error) {
+      Toast.error('保存失败: ' + error.message);
+    } finally {
+      setUserInfoLoading(false);
     }
   };
 
@@ -77,70 +120,145 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   useEffect(() => {
     if (userId) {
       loadConfig();
+      loadUserInfo();
     }
   }, [userId]);
 
   return (
     <div className="config-panel">
-      <div className="config-header">
-        <Title heading={6}>系统提示词配置</Title>
-        <Text type="tertiary" size="small">
-          上传 COWORKER.md 文件自定义系统提示词
-        </Text>
+      {/* 用户信息配置 */}
+      <div className="config-section">
+        <div
+          className="config-section-header"
+          onClick={() => setUserInfoExpanded(!userInfoExpanded)}
+        >
+          <Title heading={6}>用户信息</Title>
+          {userInfoExpanded ? <IconChevronUp /> : <IconChevronDown />}
+        </div>
+
+        {userInfoExpanded && (
+          <div className="config-section-content">
+            <div className="config-form">
+              <div className="config-form-item">
+                <Text size="small" type="secondary">用户称呼</Text>
+                <Input
+                  value={userInfo.userName}
+                  onChange={(v) => setUserInfo({ ...userInfo, userName: v })}
+                  placeholder="您希望 AI 如何称呼您"
+                  size="small"
+                />
+              </div>
+              <div className="config-form-item">
+                <Text size="small" type="secondary">Coworker 称呼</Text>
+                <Input
+                  value={userInfo.coworkerName}
+                  onChange={(v) => setUserInfo({ ...userInfo, coworkerName: v })}
+                  placeholder="您希望如何称呼 AI 助手"
+                  size="small"
+                />
+              </div>
+              <div className="config-form-item">
+                <Text size="small" type="secondary">手机号</Text>
+                <Input
+                  value={userInfo.phone}
+                  onChange={(v) => setUserInfo({ ...userInfo, phone: v })}
+                  placeholder="用于接收通知（可选）"
+                  size="small"
+                />
+              </div>
+              <div className="config-form-item">
+                <Text size="small" type="secondary">邮箱</Text>
+                <Input
+                  value={userInfo.email}
+                  onChange={(v) => setUserInfo({ ...userInfo, email: v })}
+                  placeholder="用于接收通知（可选）"
+                  size="small"
+                />
+              </div>
+            </div>
+            <Button
+              icon={<IconSave />}
+              theme="solid"
+              onClick={saveUserInfo}
+              loading={userInfoLoading}
+              size="small"
+              style={{ marginTop: 8 }}
+            >
+              保存用户信息
+            </Button>
+          </div>
+        )}
       </div>
 
-      <div className="config-actions">
-        <input
-          type="file"
-          ref={fileInputRef}
-          accept=".md"
-          style={{ display: 'none' }}
-          onChange={handleUpload}
-        />
-        <Button
-          icon={<IconUpload />}
-          onClick={() => fileInputRef.current?.click()}
-          size="small"
+      {/* 系统提示词配置 */}
+      <div className="config-section">
+        <div
+          className="config-section-header"
+          onClick={() => setPromptExpanded(!promptExpanded)}
         >
-          上传
-        </Button>
-        <Button
-          icon={<IconDownload />}
-          onClick={handleDownload}
-          size="small"
-          disabled={!content}
-        >
-          下载
-        </Button>
-        <Button
-          icon={<IconRefresh />}
-          onClick={loadConfig}
-          size="small"
-          loading={loading}
-        >
-          刷新
-        </Button>
-      </div>
+          <Title heading={6}>系统提示词</Title>
+          {promptExpanded ? <IconChevronUp /> : <IconChevronDown />}
+        </div>
 
-      <div className="config-editor">
-        <TextArea
-          value={content}
-          onChange={onContentChange}
-          placeholder="在此编辑系统提示词，或上传 COWORKER.md 文件..."
-          autosize={{ minRows: 10, maxRows: 20 }}
-        />
-      </div>
+        {promptExpanded && (
+          <div className="config-section-content">
+            <Text type="tertiary" size="small">
+              上传 COWORKER.md 文件自定义系统提示词
+            </Text>
 
-      <div className="config-footer">
-        <Button
-          icon={<IconSave />}
-          theme="solid"
-          onClick={saveConfig}
-          loading={loading}
-          block
-        >
-          保存配置
-        </Button>
+            <div className="config-actions">
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".md"
+                style={{ display: 'none' }}
+                onChange={handleUpload}
+              />
+              <Button
+                icon={<IconUpload />}
+                onClick={() => fileInputRef.current?.click()}
+                size="small"
+              >
+                上传
+              </Button>
+              <Button
+                icon={<IconDownload />}
+                onClick={handleDownload}
+                size="small"
+                disabled={!content}
+              >
+                下载
+              </Button>
+              <Button
+                icon={<IconRefresh />}
+                onClick={loadConfig}
+                size="small"
+                loading={loading}
+              >
+                刷新
+              </Button>
+            </div>
+
+            <div className="config-editor">
+              <TextArea
+                value={content}
+                onChange={onContentChange}
+                placeholder="在此编辑系统提示词，或上传 COWORKER.md 文件..."
+                autosize={{ minRows: 8, maxRows: 15 }}
+              />
+            </div>
+
+            <Button
+              icon={<IconSave />}
+              theme="solid"
+              onClick={saveConfig}
+              loading={loading}
+              size="small"
+            >
+              保存提示词
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

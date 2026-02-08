@@ -13,6 +13,13 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
+// Read 工具常量
+const (
+	ReadMaxLines       = 2000           // 最大行数
+	ReadMaxBytes       = 50 * 1024      // 50KB 字节限制
+	ReadMaxLineLength  = 2000           // 单行最大字符数
+)
+
 // ReadTool 文件读取工具
 type ReadTool struct {
 	workingDir string
@@ -94,7 +101,76 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
-	return &types.ToolResult{Success: true, Output: string(content), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
+	// P1.2: 字节限制检查
+	if len(content) > ReadMaxBytes && in.Offset == 0 && in.Limit == 0 {
+		return &types.ToolResult{
+			Success: false,
+			Error: fmt.Sprintf(
+				"File %s is too large (%d bytes, limit %d bytes). "+
+					"Use the offset and limit parameters to read specific sections, "+
+					"or use Grep to search for specific content.",
+				in.FilePath, len(content), ReadMaxBytes,
+			),
+			ElapsedMs: time.Since(startTime).Milliseconds(),
+		}, nil
+	}
+
+	// 按行处理
+	lines := strings.Split(string(content), "\n")
+	totalLines := len(lines)
+
+	// 应用 offset 和 limit
+	offset := in.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= totalLines {
+		return &types.ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("offset %d exceeds total lines %d", offset, totalLines),
+			ElapsedMs: time.Since(startTime).Milliseconds(),
+		}, nil
+	}
+
+	limit := in.Limit
+	if limit <= 0 {
+		limit = ReadMaxLines
+	}
+	if limit > ReadMaxLines {
+		limit = ReadMaxLines
+	}
+
+	end := offset + limit
+	if end > totalLines {
+		end = totalLines
+	}
+
+	// P1.4: 行号格式化输出（参考 OpenCode 的 00001| 格式）
+	selectedLines := lines[offset:end]
+	var output strings.Builder
+	lineNumWidth := len(fmt.Sprintf("%d", end))
+	if lineNumWidth < 5 {
+		lineNumWidth = 5
+	}
+
+	for i, line := range selectedLines {
+		lineNum := offset + i + 1 // 1-based line number
+
+		// 单行长度截断
+		if len(line) > ReadMaxLineLength {
+			line = line[:ReadMaxLineLength] + "... (truncated)"
+		}
+
+		fmt.Fprintf(&output, "%*d\t%s\n", lineNumWidth, lineNum, line)
+	}
+
+	// 添加文件信息提示
+	result := output.String()
+	if offset > 0 || end < totalLines {
+		result += fmt.Sprintf("\n(Showing lines %d-%d of %d total)", offset+1, end, totalLines)
+	}
+
+	return &types.ToolResult{Success: true, Output: result, ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 }
 
 func (t *ReadTool) resolvePath(ctx context.Context, path string) string {

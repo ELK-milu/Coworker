@@ -455,6 +455,64 @@ func (h *RESTHandler) SaveConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// ========== 用户信息 API ==========
+
+// GetUserInfo 获取用户信息
+func (h *RESTHandler) GetUserInfo(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	info, err := h.workspace.LoadUserInfo(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user_name":     info.UserName,
+		"coworker_name": info.CoworkerName,
+		"phone":         info.Phone,
+		"email":         info.Email,
+	})
+}
+
+// SaveUserInfo 保存用户信息
+func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
+	var req struct {
+		UserID       string `json:"user_id"`
+		UserName     string `json:"user_name"`
+		CoworkerName string `json:"coworker_name"`
+		Phone        string `json:"phone"`
+		Email        string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	info := &workspace.UserInfo{
+		UserName:     req.UserName,
+		CoworkerName: req.CoworkerName,
+		Phone:        req.Phone,
+		Email:        req.Email,
+	}
+
+	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
 // ========== Job 管理 API ==========
 
 // ListJobs 获取 Job 列表

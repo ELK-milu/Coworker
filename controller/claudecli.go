@@ -125,6 +125,18 @@ func (ctrl *ClaudeCLIController) SaveConfig(c *gin.Context) {
 	ctrl.module.RESTHandler.SaveConfig(c)
 }
 
+// ========== 用户信息 ==========
+
+// GetUserInfo 获取用户信息
+func (ctrl *ClaudeCLIController) GetUserInfo(c *gin.Context) {
+	ctrl.module.RESTHandler.GetUserInfo(c)
+}
+
+// SaveUserInfo 保存用户信息
+func (ctrl *ClaudeCLIController) SaveUserInfo(c *gin.Context) {
+	ctrl.module.RESTHandler.SaveUserInfo(c)
+}
+
 // ========== Job 管理 ==========
 
 // ListJobs 获取 Job 列表

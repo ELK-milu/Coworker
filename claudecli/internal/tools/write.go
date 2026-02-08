@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
@@ -54,12 +56,35 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 	// 获取沙箱
 	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
 
+	// 获取 FileTime 追踪器
+	ft, _ := ctx.Value(types.FileTimeKey).(*FileTime)
+
 	// 使用沙箱解析路径
 	path, err := t.resolvePathWithSandbox(ctx, in.FilePath, sb)
 	if err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 	log.Printf("[Write] Input path: %s, Resolved path: %s", in.FilePath, path)
+
+	// P2.5: FileTime 检查 — 检测文件是否被外部修改
+	if ft != nil {
+		if err := ft.AssertNotModified(path); err != nil {
+			return &types.ToolResult{
+				Success:   false,
+				Error:     err.Error(),
+				ElapsedMs: time.Since(startTime).Milliseconds(),
+			}, nil
+		}
+	}
+
+	// 读取旧内容（用于生成 diff）
+	var oldContent string
+	isNewFile := false
+	if oldBytes, err := os.ReadFile(path); err == nil {
+		oldContent = string(oldBytes)
+	} else {
+		isNewFile = true
+	}
 
 	// 确保目录存在
 	dir := filepath.Dir(path)
@@ -71,9 +96,20 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (*types.
 		return &types.ToolResult{Success: false, Error: err.Error(), ElapsedMs: time.Since(startTime).Milliseconds()}, nil
 	}
 
-	// 返回虚拟路径
+	// P2.5: 写入后更新 FileTime 记录
+	if ft != nil {
+		_ = ft.Update(path)
+	}
+
+	// 生成输出信息（含 diff 摘要）
 	outputPath := in.FilePath
-	return &types.ToolResult{Success: true, Output: "File written successfully to " + outputPath, ElapsedMs: time.Since(startTime).Milliseconds()}, nil
+	output := t.buildOutput(outputPath, oldContent, in.Content, isNewFile)
+
+	return &types.ToolResult{
+		Success:   true,
+		Output:    output,
+		ElapsedMs: time.Since(startTime).Milliseconds(),
+	}, nil
 }
 
 func (t *WriteTool) resolvePath(ctx context.Context, path string) string {
@@ -91,4 +127,58 @@ func (t *WriteTool) resolvePathWithSandbox(ctx context.Context, path string, sb 
 		return sb.ToReal(path)
 	}
 	return t.resolvePath(ctx, path), nil
+}
+
+// buildOutput 构建写入结果输出（含 diff 摘要）
+func (t *WriteTool) buildOutput(filePath, oldContent, newContent string, isNewFile bool) string {
+	var out strings.Builder
+
+	if isNewFile {
+		newLines := strings.Count(newContent, "\n") + 1
+		fmt.Fprintf(&out, "Created new file %s (%d lines)\n", filePath, newLines)
+		return out.String()
+	}
+
+	// 计算 diff 摘要
+	oldLines := strings.Split(oldContent, "\n")
+	newLines := strings.Split(newContent, "\n")
+
+	added, removed := diffLineCount(oldLines, newLines)
+
+	fmt.Fprintf(&out, "File written: %s\n", filePath)
+	fmt.Fprintf(&out, "Changes: %d lines added, %d lines removed (total: %d → %d lines)\n",
+		added, removed, len(oldLines), len(newLines))
+
+	return out.String()
+}
+
+// diffLineCount 计算新增和删除的行数（简单 LCS 近似）
+func diffLineCount(oldLines, newLines []string) (added, removed int) {
+	oldSet := make(map[string]int)
+	for _, line := range oldLines {
+		oldSet[line]++
+	}
+
+	newSet := make(map[string]int)
+	for _, line := range newLines {
+		newSet[line]++
+	}
+
+	// 计算删除的行
+	for line, count := range oldSet {
+		newCount := newSet[line]
+		if newCount < count {
+			removed += count - newCount
+		}
+	}
+
+	// 计算新增的行
+	for line, count := range newSet {
+		oldCount := oldSet[line]
+		if oldCount < count {
+			added += count - oldCount
+		}
+	}
+
+	return added, removed
 }

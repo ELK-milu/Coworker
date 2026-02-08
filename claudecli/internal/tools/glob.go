@@ -3,12 +3,20 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
+)
+
+// 参考 OpenCode glob.ts: 结果限制 + 修改时间排序
+const (
+	GlobMaxResults = 100 // 最大返回结果数（参考 OpenCode）
 )
 
 // GlobTool 文件模式匹配工具
@@ -103,14 +111,34 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	// 过滤排除的路径
 	filtered := filterExcluded(matches, excludePatterns)
 
+	// P3: 按修改时间排序（最新优先），参考 OpenCode glob.ts
+	sortByModTime(filtered)
+
+	// P3: 结果限制 + 截断警告，参考 OpenCode glob.ts
+	totalCount := len(filtered)
+	truncated := false
+	if totalCount > GlobMaxResults {
+		filtered = filtered[:GlobMaxResults]
+		truncated = true
+	}
+
 	// 虚拟化输出路径
 	if sb != nil {
 		filtered = sb.VirtualizePaths(filtered)
 	}
 
+	// 构建输出
+	var out strings.Builder
+	out.WriteString(strings.Join(filtered, "\n"))
+
+	if truncated {
+		fmt.Fprintf(&out, "\n\n(%d results truncated. Only showing top %d of %d matches, sorted by modification time."+
+			" Use a more specific pattern to narrow results.)", totalCount-GlobMaxResults, GlobMaxResults, totalCount)
+	}
+
 	return &types.ToolResult{
 		Success:   true,
-		Output:    strings.Join(filtered, "\n"),
+		Output:    out.String(),
 		ElapsedMs: time.Since(startTime).Milliseconds(),
 	}, nil
 }
@@ -147,4 +175,31 @@ func shouldExclude(path string, excludePatterns []string) bool {
 		}
 	}
 	return false
+}
+
+// sortByModTime 按修改时间排序（最新优先）
+// 参考 OpenCode glob.ts: results sorted by modification time
+func sortByModTime(paths []string) {
+	type fileWithTime struct {
+		path    string
+		modTime time.Time
+	}
+
+	items := make([]fileWithTime, 0, len(paths))
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			items = append(items, fileWithTime{path: p, modTime: time.Time{}})
+			continue
+		}
+		items = append(items, fileWithTime{path: p, modTime: info.ModTime()})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].modTime.After(items[j].modTime)
+	})
+
+	for i, item := range items {
+		paths[i] = item.path
+	}
 }

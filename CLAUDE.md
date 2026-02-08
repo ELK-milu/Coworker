@@ -637,6 +637,60 @@ MSB_EXEC_TIMEOUT=120     # 执行超时（秒）
 
 ---
 
+## Microsandbox 配置
+
+### 镜像下载（中国大陆服务器）
+
+由于中国大陆服务器无法直接访问 Docker Hub，需要使用 SSH 反向隧道代理方式下载镜像。
+
+**前提条件：**
+- 本地 Windows 机器运行 Clash 代理（监听 127.0.0.1:7890）
+- 华为云服务器已安装 microsandbox
+
+**步骤 1：建立 SSH 反向隧道**
+
+在 Windows PowerShell 中运行（保持窗口打开）：
+```powershell
+ssh -R 7890:127.0.0.1:7890 root@<华为云服务器IP>
+```
+
+**步骤 2：测试代理连通性**
+
+在华为云服务器上：
+```bash
+curl -x http://127.0.0.1:7890 https://registry-1.docker.io/v2/
+# 返回 {"errors":[{"code":"UNAUTHORIZED"...}]} 说明代理工作正常
+```
+
+**步骤 3：拉取镜像**
+
+```bash
+# 设置代理环境变量并拉取镜像
+HTTP_PROXY=http://127.0.0.1:7890 \
+HTTPS_PROXY=http://127.0.0.1:7890 \
+msb pull sandboxes.io/python
+
+# 也可以拉取其他镜像
+HTTP_PROXY=http://127.0.0.1:7890 \
+HTTPS_PROXY=http://127.0.0.1:7890 \
+msb pull alpine
+```
+
+**步骤 4：启动 msbserver**
+
+```bash
+HTTP_PROXY=http://127.0.0.1:7890 \
+HTTPS_PROXY=http://127.0.0.1:7890 \
+msbserver --dev
+```
+
+**注意事项：**
+- SSH 隧道断开后代理失效，需要重新建立
+- 不要设置 `OCI_REGISTRY_DOMAIN` 为中国镜像源（不支持）
+- `--dev` 模式用于开发，生产环境需要配置 key
+
+---
+
 ## Recent Changes (2026-02-02)
 
 ### Tool Execution Enhancement
