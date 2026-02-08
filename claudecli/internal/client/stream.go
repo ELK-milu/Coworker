@@ -53,38 +53,69 @@ func (c *ClaudeClient) streamMessages(
 		Betas:     betas,
 	}
 
-	// 带重试的流式调用
-	err := retryWithBackoff(ctx, "streamMessages", func() error {
+	// 流式调用（仅在连接建立失败时重试，流开始后不重试）
+	var streamErr error
+	for attempt := 0; attempt <= MaxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("[API] Stream connection retry %d/%d", attempt, MaxRetries)
+		}
+
 		stream := c.client.Beta.Messages.NewStreaming(ctx, params)
+		eventStarted := false
 
 		log.Printf("[API] Starting stream processing")
 		for stream.Next() {
 			event := stream.Current()
+			if !eventStarted {
+				eventStarted = true
+			}
 			if event.Type != "content_block_delta" {
 				log.Printf("[API] Event type: %s", event.Type)
 			}
 			c.handleBetaStreamEvent(event, eventCh)
 		}
 
-		if err := stream.Err(); err != nil {
-			// 检查是否可重试（仅在未产生任何输出时重试）
-			return err
+		streamErr = stream.Err()
+		if streamErr == nil {
+			// 流正常完成
+			break
 		}
-		return nil
-	})
 
-	if err != nil {
-		log.Printf("[API] Stream error after retries: %v", err)
-		eventCh <- StreamEvent{Type: EventError, Error: err.Error()}
+		// 流已经开始产出事件 → 不重试（避免重复内容）
+		if eventStarted {
+			log.Printf("[API] Stream error after events started, not retrying: %v", streamErr)
+			break
+		}
+
+		// 流未开始就失败 → 检查是否可重试
+		retryErr := isRetryableError(streamErr)
+		if retryErr == nil || attempt >= MaxRetries {
+			break
+		}
+
+		backoff := calculateBackoff(attempt, retryErr.RetryAfterMs)
+		log.Printf("[API] Stream connection failed (status=%d), waiting %v before retry",
+			retryErr.StatusCode, backoff)
+
+		select {
+		case <-ctx.Done():
+			streamErr = ctx.Err()
+			break
+		case <-time.After(backoff):
+			continue
+		}
+		break
+	}
+
+	if streamErr != nil {
+		log.Printf("[API] Stream error: %v", streamErr)
+		eventCh <- StreamEvent{Type: EventError, Error: streamErr.Error()}
 	}
 	log.Printf("[API] Stream completed")
 }
 
 // CreateSimpleMessage 创建简单消息（非流式，用于标题生成等轻量级任务）
 func (c *ClaudeClient) CreateSimpleMessage(ctx context.Context, prompt string, maxTokens int64) (string, error) {
-	// 使用 Haiku 模型降低成本
-	model := "claude-3-5-haiku-latest"
-
 	messages := []anthropic.BetaMessageParam{
 		{
 			Role: "user",
@@ -100,27 +131,21 @@ func (c *ClaudeClient) CreateSimpleMessage(ctx context.Context, prompt string, m
 	}
 
 	params := anthropic.BetaMessageNewParams{
-		Model:     anthropic.Model(model),
+		Model:     anthropic.Model(c.model),
 		MaxTokens: maxTokens,
 		Messages:  messages,
 	}
 
-	var result string
-	err := retryWithBackoff(ctx, "CreateSimpleMessage", func() error {
-		response, err := c.client.Beta.Messages.New(ctx, params)
-		if err != nil {
-			return err
-		}
+	response, err := c.client.Beta.Messages.New(ctx, params)
+	if err != nil {
+		return "", err
+	}
 
-		var text strings.Builder
-		for _, block := range response.Content {
-			if block.Type == "text" {
-				text.WriteString(block.Text)
-			}
+	var text strings.Builder
+	for _, block := range response.Content {
+		if block.Type == "text" {
+			text.WriteString(block.Text)
 		}
-		result = text.String()
-		return nil
-	})
-
-	return result, err
+	}
+	return text.String(), nil
 }
