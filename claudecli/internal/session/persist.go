@@ -20,6 +20,9 @@ type SessionData struct {
 	TotalCost  float64         `json:"total_cost"`
 	WorkingDir string          `json:"working_dir"`
 	TokenUsage TokenUsage      `json:"token_usage"`
+	// 记忆提取状态
+	LastExtractedAt       int64 `json:"last_extracted_at,omitempty"`
+	LastExtractedMsgCount int   `json:"last_extracted_msg_count,omitempty"`
 }
 
 // TokenUsage token使用统计
@@ -35,14 +38,16 @@ func (s *Session) ToSessionData() *SessionData {
 	defer s.mu.RUnlock()
 
 	return &SessionData{
-		ID:         s.ID,
-		UserID:     s.UserID,
-		Title:      s.Title,
-		Messages:   s.Messages,
-		CreatedAt:  s.CreatedAt,
-		UpdatedAt:  s.UpdatedAt,
-		TotalCost:  s.TotalCost,
-		WorkingDir: s.WorkingDir,
+		ID:                    s.ID,
+		UserID:                s.UserID,
+		Title:                 s.Title,
+		Messages:              s.Messages,
+		CreatedAt:             s.CreatedAt,
+		UpdatedAt:             s.UpdatedAt,
+		TotalCost:             s.TotalCost,
+		WorkingDir:            s.WorkingDir,
+		LastExtractedAt:       s.LastExtractedAt,
+		LastExtractedMsgCount: s.LastExtractedMsgCount,
 	}
 }
 
@@ -54,14 +59,16 @@ func FromSessionData(data *SessionData) *Session {
 		workingDir = filepath.Join(userBaseDir, data.UserID, "workspace")
 	}
 	return &Session{
-		ID:         data.ID,
-		UserID:     data.UserID,
-		Title:      data.Title,
-		Messages:   data.Messages,
-		CreatedAt:  data.CreatedAt,
-		UpdatedAt:  data.UpdatedAt,
-		TotalCost:  data.TotalCost,
-		WorkingDir: workingDir,
+		ID:                    data.ID,
+		UserID:                data.UserID,
+		Title:                 data.Title,
+		Messages:              data.Messages,
+		CreatedAt:             data.CreatedAt,
+		UpdatedAt:             data.UpdatedAt,
+		TotalCost:             data.TotalCost,
+		WorkingDir:            workingDir,
+		LastExtractedAt:       data.LastExtractedAt,
+		LastExtractedMsgCount: data.LastExtractedMsgCount,
 	}
 }
 

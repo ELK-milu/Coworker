@@ -1,11 +1,14 @@
 package memory
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -308,4 +311,163 @@ func (m *Manager) Retrieve(userID, query string, limit int) []*Memory {
 // FormatForPrompt 格式化记忆用于系统提示词（便捷方法）
 func (m *Manager) FormatForPrompt(memories []*Memory) string {
 	return FormatForPrompt(memories)
+}
+
+// ContentHash 计算内容哈希（用于去重）
+func ContentHash(content string) string {
+	// 标准化内容：去除多余空白、转小写
+	normalized := strings.ToLower(strings.TrimSpace(content))
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	hash := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(hash[:8]) // 只取前8字节
+}
+
+// FindSimilar 查找相似记忆
+// 基于标签重叠和内容哈希判断相似性
+func (m *Manager) FindSimilar(userID string, mem *Memory) *Memory {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	userMems, ok := m.memories[userID]
+	if !ok {
+		return nil
+	}
+
+	newHash := ContentHash(mem.Content)
+
+	for _, existing := range userMems {
+		// 1. 内容哈希完全匹配 = 重复
+		if ContentHash(existing.Content) == newHash {
+			return existing
+		}
+
+		// 2. 标签高度重叠 + 来源相同 = 可能相似
+		if existing.Source == mem.Source && m.tagOverlap(existing.Tags, mem.Tags) >= 0.7 {
+			// 检查内容相似度（简单的词重叠）
+			if m.contentSimilarity(existing.Content, mem.Content) >= 0.6 {
+				return existing
+			}
+		}
+	}
+
+	return nil
+}
+
+// tagOverlap 计算标签重叠率
+func (m *Manager) tagOverlap(tags1, tags2 []string) float64 {
+	if len(tags1) == 0 || len(tags2) == 0 {
+		return 0
+	}
+
+	set1 := make(map[string]bool)
+	for _, t := range tags1 {
+		set1[strings.ToLower(t)] = true
+	}
+
+	overlap := 0
+	for _, t := range tags2 {
+		if set1[strings.ToLower(t)] {
+			overlap++
+		}
+	}
+
+	// Jaccard 相似度
+	union := len(tags1) + len(tags2) - overlap
+	if union == 0 {
+		return 0
+	}
+	return float64(overlap) / float64(union)
+}
+
+// contentSimilarity 计算内容相似度（词重叠）
+func (m *Manager) contentSimilarity(content1, content2 string) float64 {
+	words1 := strings.Fields(strings.ToLower(content1))
+	words2 := strings.Fields(strings.ToLower(content2))
+
+	if len(words1) == 0 || len(words2) == 0 {
+		return 0
+	}
+
+	set1 := make(map[string]bool)
+	for _, w := range words1 {
+		set1[w] = true
+	}
+
+	overlap := 0
+	for _, w := range words2 {
+		if set1[w] {
+			overlap++
+		}
+	}
+
+	// Jaccard 相似度
+	union := len(words1) + len(words2) - overlap
+	if union == 0 {
+		return 0
+	}
+	return float64(overlap) / float64(union)
+}
+
+// CreateOrMerge 创建新记忆或合并到现有相似记忆
+// 返回: (记忆, 是否为新创建, 错误)
+func (m *Manager) CreateOrMerge(userID string, mem *Memory) (*Memory, bool, error) {
+	// 查找相似记忆
+	similar := m.FindSimilar(userID, mem)
+
+	if similar != nil {
+		// 合并到现有记忆
+		merged, err := m.mergeMemory(userID, similar, mem)
+		if err != nil {
+			return nil, false, err
+		}
+		return merged, false, nil
+	}
+
+	// 创建新记忆
+	created, err := m.Create(userID, mem)
+	if err != nil {
+		return nil, false, err
+	}
+	return created, true, nil
+}
+
+// mergeMemory 合并两条记忆
+func (m *Manager) mergeMemory(userID string, existing, newMem *Memory) (*Memory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 合并标签（去重）
+	tagSet := make(map[string]bool)
+	for _, t := range existing.Tags {
+		tagSet[strings.ToLower(t)] = true
+	}
+	for _, t := range newMem.Tags {
+		if !tagSet[strings.ToLower(t)] {
+			existing.Tags = append(existing.Tags, t)
+			tagSet[strings.ToLower(t)] = true
+		}
+	}
+
+	// 更新权重（取较高值）
+	if newMem.Weight > existing.Weight {
+		existing.Weight = newMem.Weight
+	}
+
+	// 增加访问计数
+	existing.AccessCnt++
+	existing.UpdatedAt = time.Now().Unix()
+	existing.LastAccess = time.Now().Unix()
+
+	// 更新标签索引
+	m.removeFromTagIndex(userID, existing)
+	for _, tag := range existing.Tags {
+		m.tagIndex[userID][tag] = append(m.tagIndex[userID][tag], existing.ID)
+	}
+
+	// 持久化
+	if err := m.saveMemory(userID, existing); err != nil {
+		return nil, err
+	}
+
+	return existing, nil
 }

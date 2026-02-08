@@ -19,7 +19,10 @@ type Session struct {
 	TotalCost  float64
 	WorkingDir string
 	Context    *context.Manager // 上下文管理器
-	mu         sync.RWMutex
+	// 记忆提取状态追踪
+	LastExtractedAt       int64 // 上次提取记忆的时间戳
+	LastExtractedMsgCount int   // 上次提取时的消息数量
+	mu                    sync.RWMutex
 }
 
 // NewSession 创建新会话
@@ -112,4 +115,51 @@ func (s *Session) SetTitle(title string) {
 	defer s.mu.Unlock()
 	s.Title = title
 	s.UpdatedAt = time.Now()
+}
+
+// NeedsMemoryExtraction 检查是否需要提取记忆
+// 只有当会话有新消息时才需要提取
+func (s *Session) NeedsMemoryExtraction() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// 消息数量少于2条不提取
+	if len(s.Messages) < 2 {
+		return false
+	}
+
+	// 从未提取过，需要提取
+	if s.LastExtractedAt == 0 {
+		return true
+	}
+
+	// 消息数量增加了，需要提取
+	if len(s.Messages) > s.LastExtractedMsgCount {
+		return true
+	}
+
+	return false
+}
+
+// MarkMemoryExtracted 标记记忆已提取
+func (s *Session) MarkMemoryExtracted() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastExtractedAt = time.Now().Unix()
+	s.LastExtractedMsgCount = len(s.Messages)
+}
+
+// GetExtractionState 获取提取状态（用于持久化）
+func (s *Session) GetExtractionState() (int64, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.LastExtractedAt, s.LastExtractedMsgCount
+}
+
+// SetExtractionState 设置提取状态（从持久化恢复）
+func (s *Session) SetExtractionState(extractedAt int64, msgCount int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastExtractedAt = extractedAt
+	s.LastExtractedMsgCount = msgCount
 }

@@ -23,6 +23,12 @@ func (h *WSHandler) extractMemoriesFromSession(userID string, sess *session.Sess
 		return
 	}
 
+	// 检查是否需要提取（避免重复提取）
+	if !sess.NeedsMemoryExtraction() {
+		log.Printf("[Memory] Session %s has no new content since last extraction, skipping", sess.ID)
+		return
+	}
+
 	messages := sess.GetMessages()
 	if len(messages) < 2 {
 		log.Printf("[Memory] Not enough messages to extract (%d), skipping", len(messages))
@@ -38,20 +44,30 @@ func (h *WSHandler) extractMemoriesFromSession(userID string, sess *session.Sess
 
 	if len(extracted) == 0 {
 		log.Printf("[Memory] No memories extracted from session %s", sess.ID)
+		// 即使没有提取到记忆，也标记为已提取，避免重复尝试
+		sess.MarkMemoryExtracted()
 		return
 	}
 
-	// 保存提取的记忆
-	savedCount := 0
+	// 保存提取的记忆（使用 CreateOrMerge 避免重复）
+	newCount := 0
+	mergedCount := 0
 	for _, mem := range extracted {
-		if _, err := h.memories.Create(userID, mem); err != nil {
+		_, isNew, err := h.memories.CreateOrMerge(userID, mem)
+		if err != nil {
 			log.Printf("[Memory] Failed to save memory: %v", err)
+		} else if isNew {
+			newCount++
 		} else {
-			savedCount++
+			mergedCount++
 		}
 	}
 
-	log.Printf("[Memory] Extracted and saved %d memories from session %s", savedCount, sess.ID)
+	// 标记会话已提取
+	sess.MarkMemoryExtracted()
+
+	log.Printf("[Memory] Extraction complete for session %s: %d new, %d merged",
+		sess.ID, newCount, mergedCount)
 }
 
 // extractMemoriesAsync 异步提取记忆
