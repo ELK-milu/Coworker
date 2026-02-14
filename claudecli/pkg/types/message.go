@@ -47,6 +47,17 @@ type ToolResultBlock struct {
 
 func (t ToolResultBlock) GetType() string { return "tool_result" }
 
+// SystemBlock 系统注入内容块
+// 用于在 user 消息中嵌入系统级指令（如 reminder、continue prompt 等）
+// 内部存储时不包含 <system-reminder> 标签，仅在 convert.go 转换为 API 格式时包裹标签
+// 这样可以防止用户伪造 <system-reminder> 标签进行提示词注入
+type SystemBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func (t SystemBlock) GetType() string { return "system_block" }
+
 // Message 消息
 type Message struct {
 	Role    MessageRole   `json:"role"`

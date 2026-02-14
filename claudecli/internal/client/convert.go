@@ -1,6 +1,8 @@
 package client
 
 import (
+	"fmt"
+
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -21,6 +23,10 @@ func convertMessage(msg types.Message) anthropic.MessageParam {
 		switch v := c.(type) {
 		case types.TextBlock:
 			blocks = append(blocks, anthropic.NewTextBlock(v.Text))
+		case types.SystemBlock:
+			// SystemBlock → 包裹 <system-reminder> 标签后作为文本块发送
+			wrapped := fmt.Sprintf("<system-reminder>\n%s\n</system-reminder>", v.Text)
+			blocks = append(blocks, anthropic.NewTextBlock(wrapped))
 		case types.ToolResultBlock:
 			blocks = append(blocks, anthropic.NewToolResultBlock(v.ToolUseID, v.Content, v.IsError))
 		}
@@ -49,6 +55,15 @@ func convertBetaMessage(msg types.Message) anthropic.BetaMessageParam {
 				OfText: &anthropic.BetaTextBlockParam{
 					Type: "text",
 					Text: v.Text,
+				},
+			})
+		case types.SystemBlock:
+			// SystemBlock → 包裹 <system-reminder> 标签后作为文本块发送
+			wrapped := fmt.Sprintf("<system-reminder>\n%s\n</system-reminder>", v.Text)
+			blocks = append(blocks, anthropic.BetaContentBlockParamUnion{
+				OfText: &anthropic.BetaTextBlockParam{
+					Type: "text",
+					Text: wrapped,
 				},
 			})
 		case types.ToolUseBlock:
@@ -98,6 +113,15 @@ func convertMapToBlock(m map[string]interface{}) *anthropic.BetaContentBlockPara
 			OfText: &anthropic.BetaTextBlockParam{
 				Type: "text",
 				Text: text,
+			},
+		}
+	case "system_block":
+		text, _ := m["text"].(string)
+		wrapped := fmt.Sprintf("<system-reminder>\n%s\n</system-reminder>", text)
+		return &anthropic.BetaContentBlockParamUnion{
+			OfText: &anthropic.BetaTextBlockParam{
+				Type: "text",
+				Text: wrapped,
 			},
 		}
 	case "tool_use":

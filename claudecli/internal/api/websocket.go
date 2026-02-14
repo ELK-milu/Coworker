@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/profile"
 	"github.com/QuantumNous/new-api/claudecli/internal/prompt"
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
+	"github.com/QuantumNous/new-api/claudecli/internal/sanitize"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
@@ -368,6 +369,9 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		h.sendError(conn, "invalid chat payload")
 		return
 	}
+
+	// 防提示词注入：剥离用户输入中的系统标签
+	chat.Message = sanitize.UserInput(chat.Message)
 
 	// 获取或创建会话
 	isNewSession := false

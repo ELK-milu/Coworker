@@ -121,16 +121,16 @@ func (m *Manager) GetReminders(hasActiveTasks bool, contextUsagePercent float64)
 	return reminders
 }
 
-// FormatReminders 格式化提醒为系统消息
+// FormatReminders 格式化提醒为纯文本（不含 system-reminder 标签）
+// 调用方应使用 types.SystemBlock 包裹，由 convert.go 在 API 边界自动添加标签
 func FormatReminders(reminders []Reminder) string {
 	if len(reminders) == 0 {
 		return ""
 	}
 
-	result := "<system-reminder>\n"
+	result := ""
 	for _, r := range reminders {
 		result += r.Message + "\n"
 	}
-	result += "</system-reminder>"
 	return result
 }

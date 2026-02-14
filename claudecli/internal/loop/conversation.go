@@ -270,13 +270,13 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 			// 继续执行工具
 		case types.StopReasonMaxTokens:
 			log.Printf("[Loop] max_tokens reached, injecting continue prompt")
-			// 参考 OpenCode: 使用 system-reminder 包装系统注入消息
+			// 使用 SystemBlock：转换为 API 格式时自动包裹 <system-reminder> 标签
 			l.session.AddMessage(types.Message{
 				Role: "user",
-				Content: []interface{}{types.TextBlock{
-					Type: "text",
-					Text: "<system-reminder>\nYour response was cut off because it exceeded the maximum token limit. " +
-						"Please continue from where you left off.\n</system-reminder>",
+				Content: []interface{}{types.SystemBlock{
+					Type: "system_block",
+					Text: "Your response was cut off because it exceeded the maximum token limit. " +
+						"Please continue from where you left off.",
 				}},
 			})
 			continue
