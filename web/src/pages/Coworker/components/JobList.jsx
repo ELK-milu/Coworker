@@ -331,16 +331,12 @@ const JobList = ({
                 onClick={(e) => handleEdit(job, e)}
               />
             </Tooltip>
-            <Popconfirm
-              title="确定删除此事项？"
-              content="删除后无法恢复"
-              onConfirm={(e) => {
-                e.stopPropagation();
-                onDeleteJob(job.id);
-              }}
-              onCancel={(e) => e.stopPropagation()}
-            >
-              <Tooltip content="删除">
+            <Tooltip content="删除">
+              <Popconfirm
+                title="确定删除此事项？"
+                content="删除后无法恢复"
+                onConfirm={() => onDeleteJob(job.id)}
+              >
                 <Button
                   icon={<IconDelete />}
                   size="small"
@@ -349,8 +345,8 @@ const JobList = ({
                   className="job-delete-btn"
                   onClick={(e) => e.stopPropagation()}
                 />
-              </Tooltip>
-            </Popconfirm>
+              </Popconfirm>
+            </Tooltip>
           </div>
         </div>
         {isExpanded && (
@@ -514,7 +510,7 @@ const JobList = ({
               size="small"
               theme="solid"
               onClick={handleSubmit}
-              disabled={!formData.name.trim() || !formData.cron_expr.trim() || !formData.command.trim()}
+              disabled={!formData.name.trim() || !formData.command.trim() || (formData.schedule_type === 'cron' && !formData.cron_expr.trim())}
             >
               {editingJob ? '保存' : '创建'}
             </Button>

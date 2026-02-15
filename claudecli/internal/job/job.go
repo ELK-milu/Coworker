@@ -209,33 +209,53 @@ func (m *Manager) Update(userID, jobID string, updates map[string]interface{}) (
 	}
 
 	// 应用更新
+	scheduleChanged := false
+
 	if name, ok := updates["name"].(string); ok {
 		job.Name = name
 	}
 	if cronExpr, ok := updates["cron_expr"].(string); ok {
-		nextRun, err := m.scheduler.NextRunTime(cronExpr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid cron expression: %v", err)
-		}
 		job.CronExpr = cronExpr
-		job.NextRun = nextRun
+		scheduleChanged = true
 	}
 	if command, ok := updates["command"].(string); ok {
 		job.Command = command
 	}
 	if enabled, ok := updates["enabled"].(bool); ok {
 		job.Enabled = enabled
-		if enabled {
-			// 重新计算下次执行时间
-			nextRun, _ := m.scheduler.NextRunTime(job.CronExpr)
-			job.NextRun = nextRun
-		}
+		scheduleChanged = true
 	}
 	if status, ok := updates["status"].(string); ok {
 		job.Status = Status(status)
 	}
 	if lastError, ok := updates["last_error"].(string); ok {
 		job.LastError = lastError
+	}
+	if scheduleType, ok := updates["schedule_type"].(string); ok {
+		job.ScheduleType = ScheduleType(scheduleType)
+		scheduleChanged = true
+	}
+	if timeStr, ok := updates["time"].(string); ok {
+		job.Time = timeStr
+		scheduleChanged = true
+	}
+	if weekdays, ok := updates["weekdays"].([]int); ok {
+		job.Weekdays = weekdays
+		scheduleChanged = true
+	}
+	if intervalMinutes, ok := updates["interval_minutes"].(int); ok {
+		job.IntervalMinutes = intervalMinutes
+		scheduleChanged = true
+	}
+	if runAt, ok := updates["run_at"].(int64); ok {
+		job.RunAt = runAt
+		scheduleChanged = true
+	}
+
+	// 调度配置变更时重新计算下次执行时间
+	if scheduleChanged && job.Enabled {
+		nextRun, _ := m.scheduler.CalculateNextRun(job)
+		job.NextRun = nextRun
 	}
 
 	job.UpdatedAt = time.Now().UnixMilli()

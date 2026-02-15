@@ -604,11 +604,16 @@ func (h *RESTHandler) CreateJob(c *gin.Context) {
 func (h *RESTHandler) UpdateJob(c *gin.Context) {
 	jobID := c.Param("id")
 	var req struct {
-		UserID   string `json:"user_id"`
-		Name     string `json:"name,omitempty"`
-		CronExpr string `json:"cron_expr,omitempty"`
-		Command  string `json:"command,omitempty"`
-		Enabled  *bool  `json:"enabled,omitempty"`
+		UserID          string `json:"user_id"`
+		Name            string `json:"name,omitempty"`
+		CronExpr        string `json:"cron_expr,omitempty"`
+		Command         string `json:"command,omitempty"`
+		Enabled         *bool  `json:"enabled,omitempty"`
+		ScheduleType    string `json:"schedule_type,omitempty"`
+		Time            string `json:"time,omitempty"`
+		Weekdays        []int  `json:"weekdays,omitempty"`
+		IntervalMinutes *int   `json:"interval_minutes,omitempty"`
+		RunAt           string `json:"run_at,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -637,6 +642,24 @@ func (h *RESTHandler) UpdateJob(c *gin.Context) {
 	}
 	if req.Enabled != nil {
 		updates["enabled"] = *req.Enabled
+	}
+	if req.ScheduleType != "" {
+		updates["schedule_type"] = req.ScheduleType
+	}
+	if req.Time != "" {
+		updates["time"] = req.Time
+	}
+	if len(req.Weekdays) > 0 {
+		updates["weekdays"] = req.Weekdays
+	}
+	if req.IntervalMinutes != nil {
+		updates["interval_minutes"] = *req.IntervalMinutes
+	}
+	if req.RunAt != "" {
+		// 解析 datetime-local 格式
+		if t, err := time.Parse("2006-01-02T15:04", req.RunAt); err == nil {
+			updates["run_at"] = t.UnixMilli()
+		}
 	}
 
 	updatedJob, err := h.jobs.Update(req.UserID, jobID, updates)
