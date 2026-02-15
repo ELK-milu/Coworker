@@ -12,6 +12,7 @@ import (
 // 1. WS 断开连接时
 // 2. 上下文压缩时
 // 3. 用户主动要求时
+// 4. 每轮对话结束后（增量提取）
 func (h *WSHandler) extractMemoriesFromSession(userID string, sess *session.Session) {
 	if h.memories == nil {
 		log.Printf("[Memory] Memory manager not initialized, skipping extraction")
@@ -38,8 +39,11 @@ func (h *WSHandler) extractMemoriesFromSession(userID string, sess *session.Sess
 	log.Printf("[Memory] Starting memory extraction for user %s, session %s (%d messages)",
 		userID, sess.ID, len(messages))
 
-	// 使用 Extractor 提取记忆
+	// 使用 Extractor 提取记忆（注入 AI 客户端）
 	extractor := memory.NewExtractor(h.memories)
+	if h.client != nil {
+		extractor.SetAIClient(h.client)
+	}
 	extracted := extractor.ExtractFromConversation(userID, sess.ID, messages)
 
 	if len(extracted) == 0 {

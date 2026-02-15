@@ -183,24 +183,58 @@ User: "Show me the directory structure"
 Assistant: [shows directory] "Here is the directory structure. Would you like me to do anything else?"`
 
 // MemoryGuidelines 记忆工具使用指南
-const MemoryGuidelines = `# Memory Tools
+const MemoryGuidelines = `# Memory Tools — Long-Term Knowledge Management
 
-You have access to memory tools (MemorySearch, MemorySave, MemoryList) to manage user's long-term memories.
+You have memory tools (MemorySearch, MemorySave, MemoryList) to persist important information across sessions.
 
-## When to use MemorySearch:
-- When you need to recall user's preferences or past decisions
-- When the user asks about something discussed before
-- When you want to provide personalized responses
+## MemorySearch — ALWAYS search first
+Call MemorySearch at the START of every conversation turn when:
+- User asks about their project, preferences, or past work
+- User references something discussed "before" or "last time"
+- You need context about the user's environment, stack, or conventions
+- Before asking the user for information they may have already shared
 
-## When to use MemorySave:
-- When user explicitly asks you to remember something
-- When you discover important user preferences
-- When you solve a problem that might be useful later
+## MemorySave — Trigger conditions (MUST save when ANY of these occur)
 
-## Best Practices:
-- Be selective - only save truly valuable information
-- Use descriptive tags for easy retrieval
-- Search memories before asking user for information they may have shared before`
+### 1. User states a preference or correction
+- "I prefer X over Y" / "Don't use X, use Y instead" / "Always do X"
+- "我习惯用..." / "不要用..." / "以后都..."
+→ Save as: tags=["preference", "<domain>"], weight=0.8
+
+### 2. Architecture or design decision is made
+- Technology choice, library selection, API design pattern
+- Database schema decision, deployment strategy
+→ Save as: tags=["decision", "architecture"], weight=0.7
+
+### 3. Bug is diagnosed and fixed
+- Root cause identified + solution applied
+- Workaround for a known issue
+→ Save as: tags=["error-solution", "<technology>"], weight=0.8
+
+### 4. Project context is shared
+- Project name, structure, conventions, team practices
+- Build commands, test commands, deployment steps
+→ Save as: tags=["project", "context"], weight=0.6
+
+### 5. User explicitly asks to remember
+- "Remember this" / "记住这个" / "Save this for later"
+→ Save as: tags=["user-requested"], weight=0.9
+
+### 6. Workflow pattern is established
+- User's preferred git workflow, code review process, naming conventions
+→ Save as: tags=["workflow", "convention"], weight=0.7
+
+## When NOT to save
+- Routine code edits (the code itself is the record)
+- Temporary debugging steps that won't recur
+- Information already in CLAUDE.md or project config files
+- Generic knowledge not specific to this user
+
+## Content quality rules
+- Be SPECIFIC: "User prefers PostgreSQL over MySQL for this project" not "User likes databases"
+- Include CONTEXT: "Chose React Server Components for /dashboard because of SEO requirements"
+- Keep it ACTIONABLE: information that changes how you should behave in future sessions
+- One concept per memory — don't bundle unrelated facts`
 
 // MaxStepsReached 最大步数达到提示词
 // 参考 OpenCode: packages/opencode/src/session/prompt/max-steps.txt

@@ -476,6 +476,9 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 		log.Printf("[WS] Session saved: %s", sess.ID)
 	}
 
+	// 每轮对话结束后异步提取记忆（增量提取，不再仅依赖 WS 断开）
+	h.extractMemoriesAsync(userID, sess)
+
 	// 如果是新会话且还没有标题，异步生成标题
 	// 注意：使用新的 context，因为对话的 ctx 可能已被取消
 	if isNewSession && sess.GetTitle() == "" {

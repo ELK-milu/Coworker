@@ -1,15 +1,25 @@
 package memory
 
 import (
-	"regexp"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
+// AIClient AI 客户端接口（用于记忆提取）
+type AIClient interface {
+	CreateSimpleMessage(ctx context.Context, prompt string, maxTokens int64) (string, error)
+}
+
 // Extractor 记忆提取器
 type Extractor struct {
-	manager *Manager
+	manager  *Manager
+	aiClient AIClient // 可选的 AI 客户端
 }
 
 // NewExtractor 创建提取器
@@ -17,161 +27,268 @@ func NewExtractor(manager *Manager) *Extractor {
 	return &Extractor{manager: manager}
 }
 
+// SetAIClient 设置 AI 客户端（启用 AI 提取）
+func (e *Extractor) SetAIClient(client AIClient) {
+	e.aiClient = client
+}
+
 // ExtractFromConversation 从对话中提取记忆
+// 优先使用 AI 提取，降级为关键词提取
 func (e *Extractor) ExtractFromConversation(userID, sessionID string, messages []types.Message) []*Memory {
+	// 只提取有实质内容的消息
+	if len(messages) < 2 {
+		return nil
+	}
+
+	// 优先使用 AI 提取
+	if e.aiClient != nil {
+		extracted := e.extractWithAI(userID, sessionID, messages)
+		if len(extracted) > 0 {
+			return extracted
+		}
+		log.Printf("[MemoryExtractor] AI extraction returned empty, falling back to keyword extraction")
+	}
+
+	// 降级：关键词提取
+	return e.extractWithKeywords(userID, sessionID, messages)
+}
+
+// extractWithAI 使用 AI 从对话中提取记忆
+func (e *Extractor) extractWithAI(userID, sessionID string, messages []types.Message) []*Memory {
+	// 构建对话摘要（限制 token 消耗）
+	conversationText := e.buildConversationText(messages, 4000)
+	if conversationText == "" {
+		return nil
+	}
+
+	prompt := fmt.Sprintf(`%s
+
+<conversation>
+%s
+</conversation>
+
+Respond with ONLY a JSON array. No explanation, no markdown fences.`, GetExtractionPrompt(), conversationText)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	response, err := e.aiClient.CreateSimpleMessage(ctx, prompt, 2000)
+	if err != nil {
+		log.Printf("[MemoryExtractor] AI extraction failed: %v", err)
+		return nil
+	}
+
+	// 解析 JSON 响应
+	return e.parseAIResponse(response, sessionID)
+}
+
+// extractedItem AI 提取结果的 JSON 结构
+type extractedItem struct {
+	Tags    []string `json:"tags"`
+	Content string   `json:"content"`
+	Summary string   `json:"summary"`
+	Weight  float64  `json:"weight"`
+}
+
+// parseAIResponse 解析 AI 返回的 JSON
+func (e *Extractor) parseAIResponse(response, sessionID string) []*Memory {
+	// 清理响应：去除 markdown 代码块标记
+	response = strings.TrimSpace(response)
+	if strings.HasPrefix(response, "```") {
+		// 去除 ```json 和 ```
+		lines := strings.Split(response, "\n")
+		if len(lines) > 2 {
+			response = strings.Join(lines[1:len(lines)-1], "\n")
+		}
+	}
+
+	var items []extractedItem
+	if err := json.Unmarshal([]byte(response), &items); err != nil {
+		log.Printf("[MemoryExtractor] Failed to parse AI response: %v, response: %.200s", err, response)
+		return nil
+	}
+
+	if len(items) == 0 {
+		return nil
+	}
+
+	// 限制最多 10 条
+	if len(items) > 10 {
+		items = items[:10]
+	}
+
+	var memories []*Memory
+	for _, item := range items {
+		if item.Content == "" || len(item.Tags) == 0 {
+			continue
+		}
+
+		weight := item.Weight
+		if weight <= 0 || weight > 1 {
+			weight = 0.5
+		}
+
+		memories = append(memories, &Memory{
+			Tags:      normalizeTags(item.Tags),
+			Content:   item.Content,
+			Summary:   item.Summary,
+			Source:    "ai_extracted",
+			SessionID: sessionID,
+			Weight:    weight,
+		})
+	}
+
+	log.Printf("[MemoryExtractor] AI extracted %d memories", len(memories))
+	return memories
+}
+
+// buildConversationText 构建对话文本（限制长度）
+func (e *Extractor) buildConversationText(messages []types.Message, maxChars int) string {
+	var sb strings.Builder
+
+	// 收集所有消息文本
+	texts := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		text := getMessageText(msg)
+		if text == "" {
+			continue
+		}
+
+		role := "User"
+		if msg.Role == "assistant" {
+			role = "Assistant"
+		}
+
+		// 截断单条过长的消息
+		if len(text) > 800 {
+			text = text[:800] + "..."
+		}
+
+		texts = append(texts, fmt.Sprintf("[%s]: %s", role, text))
+	}
+
+	// 从最新的消息开始取，直到达到字符限制
+	startIdx := len(texts)
+	remaining := maxChars
+	for i := len(texts) - 1; i >= 0; i-- {
+		lineLen := len(texts[i]) + 1
+		if remaining-lineLen < 0 {
+			break
+		}
+		remaining -= lineLen
+		startIdx = i
+	}
+
+	// 正序输出
+	for i := startIdx; i < len(texts); i++ {
+		sb.WriteString(texts[i])
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+// extractWithKeywords 关键词提取（降级方案）
+func (e *Extractor) extractWithKeywords(userID, sessionID string, messages []types.Message) []*Memory {
 	var extracted []*Memory
 
-	// 提取技术偏好
-	techPrefs := e.extractTechPreferences(messages)
-	if len(techPrefs) > 0 {
-		mem := &Memory{
-			Tags:      []string{"preferences", "tech-stack"},
-			Content:   strings.Join(techPrefs, "\n"),
-			Summary:   "User's technology preferences",
-			Source:    "extracted",
-			SessionID: sessionID,
-			Weight:    0.7,
+	// 扫描用户消息中的偏好表达
+	for _, msg := range messages {
+		if msg.Role != "user" {
+			continue
 		}
-		extracted = append(extracted, mem)
+		text := getMessageText(msg)
+		if text == "" {
+			continue
+		}
+
+		// 检测偏好表达
+		if pref := detectPreference(text); pref != "" {
+			extracted = append(extracted, &Memory{
+				Tags:      []string{"preference"},
+				Content:   pref,
+				Summary:   "User preference",
+				Source:    "keyword_extracted",
+				SessionID: sessionID,
+				Weight:    0.7,
+			})
+		}
 	}
 
-	// 提取项目信息
-	projectInfo := e.extractProjectInfo(messages)
-	if projectInfo != "" {
-		mem := &Memory{
-			Tags:      []string{"project", "context"},
-			Content:   projectInfo,
-			Summary:   "Project context information",
-			Source:    "extracted",
-			SessionID: sessionID,
-			Weight:    0.6,
-		}
-		extracted = append(extracted, mem)
-	}
-
-	// 提取错误和解决方案
-	errorSolutions := e.extractErrorSolutions(messages)
-	for _, es := range errorSolutions {
-		mem := &Memory{
-			Tags:      []string{"error", "solution", "troubleshooting"},
-			Content:   es,
-			Summary:   "Error and solution",
-			Source:    "extracted",
-			SessionID: sessionID,
-			Weight:    0.8,
-		}
-		extracted = append(extracted, mem)
+	// 限制数量
+	if len(extracted) > 5 {
+		extracted = extracted[:5]
 	}
 
 	return extracted
 }
 
-// extractTechPreferences 提取技术偏好
-func (e *Extractor) extractTechPreferences(messages []types.Message) []string {
-	var prefs []string
+// detectPreference 检测偏好表达
+func detectPreference(text string) string {
+	// 中文偏好表达
+	cnPatterns := []string{
+		"我习惯", "我喜欢用", "我偏好", "以后都用", "不要用", "别用",
+		"我一般用", "我通常用", "请记住",
+	}
+	for _, p := range cnPatterns {
+		if idx := strings.Index(text, p); idx >= 0 {
+			// 提取偏好句子（从关键词开始，到句号或换行）
+			rest := text[idx:]
+			if end := strings.IndexAny(rest, "。\n"); end > 0 {
+				return rest[:end]
+			}
+			if len(rest) > 200 {
+				return rest[:200]
+			}
+			return rest
+		}
+	}
+
+	// 英文偏好表达
+	enPatterns := []string{
+		"I prefer", "I always use", "Don't use", "Never use",
+		"I like to", "Remember that", "Please remember",
+	}
+	lower := strings.ToLower(text)
+	for _, p := range enPatterns {
+		if idx := strings.Index(lower, strings.ToLower(p)); idx >= 0 {
+			rest := text[idx:]
+			if end := strings.IndexAny(rest, ".\n"); end > 0 {
+				return rest[:end]
+			}
+			if len(rest) > 200 {
+				return rest[:200]
+			}
+			return rest
+		}
+	}
+
+	return ""
+}
+
+// normalizeTags 标准化标签（去重、小写、去空）
+func normalizeTags(tags []string) []string {
 	seen := make(map[string]bool)
-
-	// 常见技术关键词
-	techKeywords := []string{
-		"react", "vue", "angular", "svelte",
-		"python", "golang", "rust", "typescript", "javascript",
-		"postgresql", "mysql", "mongodb", "redis",
-		"docker", "kubernetes", "aws", "gcp", "azure",
-		"gin", "fastapi", "express", "nextjs",
-	}
-
-	for _, msg := range messages {
-		content := getMessageText(msg)
-		contentLower := strings.ToLower(content)
-
-		for _, tech := range techKeywords {
-			if strings.Contains(contentLower, tech) && !seen[tech] {
-				seen[tech] = true
-				prefs = append(prefs, tech)
-			}
+	var result []string
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag != "" && !seen[tag] {
+			seen[tag] = true
+			result = append(result, tag)
 		}
 	}
-
-	return prefs
-}
-
-// extractProjectInfo 提取项目信息
-func (e *Extractor) extractProjectInfo(messages []types.Message) string {
-	var info strings.Builder
-
-	// 查找项目相关的描述
-	projectPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)project\s+(?:is|called|named)\s+["']?(\w+)["']?`),
-		regexp.MustCompile(`(?i)working\s+on\s+["']?(\w+)["']?`),
-		regexp.MustCompile(`(?i)building\s+(?:a|an)\s+(\w+(?:\s+\w+)?)`),
-	}
-
-	for _, msg := range messages {
-		if msg.Role != "user" {
-			continue
-		}
-
-		content := getMessageText(msg)
-		for _, pattern := range projectPatterns {
-			if matches := pattern.FindStringSubmatch(content); len(matches) > 1 {
-				info.WriteString("- ")
-				info.WriteString(matches[1])
-				info.WriteString("\n")
-			}
-		}
-	}
-
-	return info.String()
-}
-
-// extractErrorSolutions 提取错误和解决方案
-func (e *Extractor) extractErrorSolutions(messages []types.Message) []string {
-	var solutions []string
-
-	errorPattern := regexp.MustCompile(`(?i)(error|failed|exception|cannot|unable)[\s:]+(.{10,100})`)
-
-	for i, msg := range messages {
-		content := getMessageText(msg)
-
-		// 查找错误
-		if matches := errorPattern.FindStringSubmatch(content); len(matches) > 2 {
-			errorDesc := strings.TrimSpace(matches[2])
-
-			// 查找后续的解决方案
-			if i+1 < len(messages) && messages[i+1].Role == "assistant" {
-				nextContent := getMessageText(messages[i+1])
-				if len(nextContent) > 50 {
-					// 截取解决方案摘要
-					solution := nextContent
-					if len(solution) > 500 {
-						solution = solution[:500] + "..."
-					}
-
-					solutions = append(solutions, "Error: "+errorDesc+"\nSolution: "+solution)
-				}
-			}
-		}
-	}
-
-	// 限制数量
-	if len(solutions) > 5 {
-		solutions = solutions[:5]
-	}
-
-	return solutions
+	return result
 }
 
 // getMessageText 获取消息文本内容
 func getMessageText(msg types.Message) string {
 	var parts []string
 	for _, item := range msg.Content {
-		// 处理 map[string]interface{} 类型 (JSON 反序列化后的格式)
 		if m, ok := item.(map[string]interface{}); ok {
 			if text, ok := m["text"].(string); ok {
 				parts = append(parts, text)
 			}
 		}
-		// 处理 types.TextBlock 类型
 		if tb, ok := item.(types.TextBlock); ok {
 			parts = append(parts, tb.Text)
 		}
@@ -181,22 +298,29 @@ func getMessageText(msg types.Message) string {
 
 // GetExtractionPrompt 获取 AI 提取提示词
 func GetExtractionPrompt() string {
-	return `Analyze the conversation and extract information worth remembering long-term:
+	return `You are a memory extraction assistant. Analyze the conversation below and extract information worth remembering long-term.
 
-1. User preferences (programming languages, frameworks, coding style)
-2. Project information (name, structure, tech stack)
-3. Important decisions (architecture choices, design patterns)
-4. Common issues (errors, solutions)
+Extract ONLY these categories:
+1. User preferences — coding style, tool choices, language preferences, workflow habits
+2. Project context — project name, tech stack, architecture decisions, conventions
+3. Important decisions — why a specific approach was chosen over alternatives
+4. Error solutions — specific error + root cause + fix (only if clearly resolved)
+5. User corrections — when user corrects AI behavior ("don't do X, do Y instead")
 
-Output JSON format:
+Rules:
+- Be SPECIFIC and ACTIONABLE — "User prefers PostgreSQL for this project" not "User likes databases"
+- One concept per item — don't bundle unrelated facts
+- Skip routine code edits, temporary debugging, and generic knowledge
+- Skip information that would be in project config files (package.json, go.mod, etc.)
+- Return empty array [] if nothing significant was discussed
+
+Output JSON array:
 [
   {
-    "tags": ["tag1", "tag2"],
-    "content": "detailed content",
-    "summary": "brief summary",
+    "tags": ["preference", "coding-style"],
+    "content": "User prefers using functional components with hooks in React, avoids class components",
+    "summary": "React: functional components + hooks preferred",
     "weight": 0.8
   }
-]
-
-Only extract truly valuable information. Return empty array [] if nothing significant.`
+]`
 }
