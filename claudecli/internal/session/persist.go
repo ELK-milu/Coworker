@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/QuantumNous/new-api/claudecli/internal/context"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
@@ -23,6 +24,8 @@ type SessionData struct {
 	// 记忆提取状态
 	LastExtractedAt       int64 `json:"last_extracted_at,omitempty"`
 	LastExtractedMsgCount int   `json:"last_extracted_msg_count,omitempty"`
+	// 上下文窗口索引（压缩次数）
+	WindowIndex int `json:"window_index,omitempty"`
 }
 
 // TokenUsage token使用统计
@@ -37,6 +40,11 @@ func (s *Session) ToSessionData() *SessionData {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// 从 Context 同步最新窗口索引
+	if s.Context != nil {
+		s.WindowIndex = s.Context.GetWindowIndex()
+	}
+
 	return &SessionData{
 		ID:                    s.ID,
 		UserID:                s.UserID,
@@ -48,6 +56,7 @@ func (s *Session) ToSessionData() *SessionData {
 		WorkingDir:            s.WorkingDir,
 		LastExtractedAt:       s.LastExtractedAt,
 		LastExtractedMsgCount: s.LastExtractedMsgCount,
+		WindowIndex:           s.WindowIndex,
 	}
 }
 
@@ -58,6 +67,12 @@ func FromSessionData(data *SessionData) *Session {
 	if workingDir == "" && userBaseDir != "" && data.UserID != "" {
 		workingDir = filepath.Join(userBaseDir, data.UserID, "workspace")
 	}
+	// 恢复上下文管理器及窗口索引
+	ctx := context.NewManager(nil)
+	if data.WindowIndex > 0 {
+		ctx.SetWindowIndex(data.WindowIndex)
+	}
+
 	return &Session{
 		ID:                    data.ID,
 		UserID:                data.UserID,
@@ -67,6 +82,8 @@ func FromSessionData(data *SessionData) *Session {
 		UpdatedAt:             data.UpdatedAt,
 		TotalCost:             data.TotalCost,
 		WorkingDir:            workingDir,
+		Context:               ctx,
+		WindowIndex:           data.WindowIndex,
 		LastExtractedAt:       data.LastExtractedAt,
 		LastExtractedMsgCount: data.LastExtractedMsgCount,
 	}

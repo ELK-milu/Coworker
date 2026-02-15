@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/eventbus"
@@ -16,6 +17,7 @@ type SessionAccessor interface {
 
 // MemoryHandlers 记忆系统事件处理器
 // 注册到 EventBus，统一处理所有记忆提取场景
+// 核心策略：每个上下文窗口只维护一条记忆，通过 WindowID 做精确匹配
 type MemoryHandlers struct {
 	manager  *Manager
 	aiClient AIClient
@@ -36,6 +38,19 @@ func (h *MemoryHandlers) Register(bus *eventbus.Bus) {
 	bus.OnAsync(eventbus.EventSessionEnd, h.HandleSessionEnd)
 }
 
+// makeWindowID 生成窗口 ID
+func makeWindowID(sessionID string, windowIndex int) string {
+	return fmt.Sprintf("%s-w%d", sessionID, windowIndex)
+}
+
+// getWindowIndex 从事件数据中提取窗口索引
+func getWindowIndex(event eventbus.Event) int {
+	if idx, ok := event.Data["window_index"].(int); ok {
+		return idx
+	}
+	return 0
+}
+
 // HandleBeforeCompact 压缩前提取上下文窗口总结（同步）
 // 必须在压缩前完成，否则详细对话内容会丢失
 func (h *MemoryHandlers) HandleBeforeCompact(event eventbus.Event) {
@@ -49,15 +64,15 @@ func (h *MemoryHandlers) HandleBeforeCompact(event eventbus.Event) {
 		return
 	}
 
-	// 从事件数据中获取即将被压缩的消息
 	messages, ok := event.Data["messages"].([]types.Message)
 	if !ok || len(messages) < 4 {
 		log.Printf("[MemoryHandlers] BeforeCompact: not enough messages for summary, skipping")
 		return
 	}
 
-	log.Printf("[MemoryHandlers] BeforeCompact: extracting window summary for session %s (%d messages)",
-		sessionID, len(messages))
+	windowID := makeWindowID(sessionID, getWindowIndex(event))
+	log.Printf("[MemoryHandlers] BeforeCompact: extracting window summary for %s (%d messages)",
+		windowID, len(messages))
 
 	extractor := NewExtractor(h.manager)
 	if h.aiClient != nil {
@@ -65,28 +80,24 @@ func (h *MemoryHandlers) HandleBeforeCompact(event eventbus.Event) {
 	}
 
 	summary := extractor.ExtractSessionSummary(userID, sessionID, messages)
-	if summary == nil {
-		log.Printf("[MemoryHandlers] BeforeCompact: no summary extracted")
+	if summary == nil || summary.Content == "trivial" {
+		log.Printf("[MemoryHandlers] BeforeCompact: trivial or empty, skipping")
 		return
 	}
 
-	// 检查是否为 trivial 对话
-	if summary.Content == "trivial" {
-		log.Printf("[MemoryHandlers] BeforeCompact: trivial conversation, skipping")
-		return
-	}
-
-	_, isNew, err := h.manager.CreateOrMerge(userID, summary)
+	summary.WindowID = windowID
+	_, isNew, err := h.manager.UpsertByWindowID(userID, summary)
 	if err != nil {
-		log.Printf("[MemoryHandlers] BeforeCompact: failed to save summary: %v", err)
+		log.Printf("[MemoryHandlers] BeforeCompact: failed to save: %v", err)
 	} else if isNew {
-		log.Printf("[MemoryHandlers] BeforeCompact: window summary saved for session %s", sessionID)
+		log.Printf("[MemoryHandlers] BeforeCompact: window memory created for %s", windowID)
 	} else {
-		log.Printf("[MemoryHandlers] BeforeCompact: window summary merged for session %s", sessionID)
+		log.Printf("[MemoryHandlers] BeforeCompact: window memory updated for %s", windowID)
 	}
 }
 
-// HandleTurnCompleted 对话轮次结束后提取离散事实（异步）
+// HandleTurnCompleted 对话轮次结束后更新当前窗口记忆（异步）
+// 每个窗口只维护一条记忆，每轮对话后替换其内容
 func (h *MemoryHandlers) HandleTurnCompleted(event eventbus.Event) {
 	if h.manager == nil {
 		return
@@ -98,55 +109,50 @@ func (h *MemoryHandlers) HandleTurnCompleted(event eventbus.Event) {
 		return
 	}
 
-	// 从事件数据中获取 session accessor
 	sess, ok := event.Data["session"].(SessionAccessor)
 	if !ok || sess == nil {
 		log.Printf("[MemoryHandlers] TurnCompleted: session not available")
 		return
 	}
 
-	// 检查是否需要提取（避免重复）
 	if !sess.NeedsMemoryExtraction() {
 		return
 	}
 
 	messages := sess.GetMessages()
-	if len(messages) < 2 {
+	if len(messages) < 4 {
 		return
 	}
 
-	log.Printf("[MemoryHandlers] TurnCompleted: extracting facts for session %s (%d messages)",
-		sessionID, len(messages))
+	windowID := makeWindowID(sessionID, getWindowIndex(event))
+	log.Printf("[MemoryHandlers] TurnCompleted: updating window memory %s (%d messages)",
+		windowID, len(messages))
 
 	extractor := NewExtractor(h.manager)
 	if h.aiClient != nil {
 		extractor.SetAIClient(h.aiClient)
 	}
 
-	extracted := extractor.ExtractFromConversation(userID, sessionID, messages)
+	summary := extractor.ExtractSessionSummary(userID, sessionID, messages)
+	if summary == nil || summary.Content == "trivial" {
+		sess.MarkMemoryExtracted()
+		return
+	}
 
-	newCount := 0
-	mergedCount := 0
-	for _, mem := range extracted {
-		_, isNew, err := h.manager.CreateOrMerge(userID, mem)
-		if err != nil {
-			log.Printf("[MemoryHandlers] TurnCompleted: failed to save: %v", err)
-		} else if isNew {
-			newCount++
-		} else {
-			mergedCount++
-		}
+	summary.WindowID = windowID
+	_, isNew, err := h.manager.UpsertByWindowID(userID, summary)
+	if err != nil {
+		log.Printf("[MemoryHandlers] TurnCompleted: failed to save: %v", err)
+	} else if isNew {
+		log.Printf("[MemoryHandlers] TurnCompleted: window memory created for %s", windowID)
+	} else {
+		log.Printf("[MemoryHandlers] TurnCompleted: window memory updated for %s", windowID)
 	}
 
 	sess.MarkMemoryExtracted()
-
-	if newCount > 0 || mergedCount > 0 {
-		log.Printf("[MemoryHandlers] TurnCompleted: session %s — %d new, %d merged",
-			sessionID, newCount, mergedCount)
-	}
 }
 
-// HandleSessionEnd 会话结束时提取最后一个窗口的总结（异步）
+// HandleSessionEnd 会话结束时最终更新窗口记忆（异步）
 func (h *MemoryHandlers) HandleSessionEnd(event eventbus.Event) {
 	if h.manager == nil {
 		return
@@ -168,27 +174,23 @@ func (h *MemoryHandlers) HandleSessionEnd(event eventbus.Event) {
 		return
 	}
 
-	log.Printf("[MemoryHandlers] SessionEnd: extracting final summary for session %s", sessionID)
+	windowID := makeWindowID(sessionID, getWindowIndex(event))
+	log.Printf("[MemoryHandlers] SessionEnd: finalizing window memory %s", windowID)
 
 	extractor := NewExtractor(h.manager)
 	if h.aiClient != nil {
 		extractor.SetAIClient(h.aiClient)
 	}
 
-	// 1. 提取窗口总结
 	summary := extractor.ExtractSessionSummary(userID, sessionID, messages)
-	if summary != nil && summary.Content != "trivial" {
-		if _, _, err := h.manager.CreateOrMerge(userID, summary); err != nil {
-			log.Printf("[MemoryHandlers] SessionEnd: failed to save summary: %v", err)
-		}
+	if summary == nil || summary.Content == "trivial" {
+		return
 	}
 
-	// 2. 提取离散事实（如果还有未提取的）
-	if sess.NeedsMemoryExtraction() {
-		extracted := extractor.ExtractFromConversation(userID, sessionID, messages)
-		for _, mem := range extracted {
-			h.manager.CreateOrMerge(userID, mem)
-		}
-		sess.MarkMemoryExtracted()
+	summary.WindowID = windowID
+	if _, _, err := h.manager.UpsertByWindowID(userID, summary); err != nil {
+		log.Printf("[MemoryHandlers] SessionEnd: failed to save: %v", err)
 	}
+
+	sess.MarkMemoryExtracted()
 }

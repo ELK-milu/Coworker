@@ -233,6 +233,21 @@ func (m *Manager) IsNearLimit() bool {
 	return float64(used)/float64(total) >= m.config.SummarizeThreshold
 }
 
+// GetWindowIndex 获取当前上下文窗口索引（即压缩次数）
+// 用于生成窗口 ID: sessionID-wN
+func (m *Manager) GetWindowIndex() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.compressionCount
+}
+
+// SetWindowIndex 设置窗口索引（从持久化恢复时使用）
+func (m *Manager) SetWindowIndex(idx int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.compressionCount = idx
+}
+
 // maybeCompress 检查并执行压缩
 func (m *Manager) maybeCompress() {
 	threshold := float64(m.config.MaxTokens) * m.config.SummarizeThreshold
@@ -486,6 +501,9 @@ func (m *Manager) emitBeforeCompact(turns []ConversationTurn) {
 
 	log.Printf("[Context] Emitting BeforeCompact event (%d messages)", len(messages))
 
+	// 当前窗口索引（压缩前的值，压缩后会 +1）
+	windowIndex := m.compressionCount
+
 	// 临时释放锁，让 handler 可以执行（handler 不回调 context.Manager）
 	m.mu.Unlock()
 	m.bus.Emit(eventbus.Event{
@@ -493,7 +511,8 @@ func (m *Manager) emitBeforeCompact(turns []ConversationTurn) {
 		UserID:    m.userID,
 		SessionID: m.sessionID,
 		Data: map[string]interface{}{
-			"messages": messages,
+			"messages":     messages,
+			"window_index": windowIndex,
 		},
 	})
 	m.mu.Lock()

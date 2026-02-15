@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/memory"
@@ -543,18 +544,23 @@ func (h *RESTHandler) ListJobs(c *gin.Context) {
 // CreateJob 创建 Job
 func (h *RESTHandler) CreateJob(c *gin.Context) {
 	var req struct {
-		UserID   string `json:"user_id"`
-		Name     string `json:"name"`
-		CronExpr string `json:"cron_expr"`
-		Command  string `json:"command"`
+		UserID          string `json:"user_id"`
+		Name            string `json:"name"`
+		Command         string `json:"command"`
+		ScheduleType    string `json:"schedule_type"`
+		Time            string `json:"time,omitempty"`
+		Weekdays        []int  `json:"weekdays,omitempty"`
+		IntervalMinutes int    `json:"interval_minutes,omitempty"`
+		RunAt           string `json:"run_at,omitempty"`
+		CronExpr        string `json:"cron_expr,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if req.UserID == "" || req.Name == "" || req.CronExpr == "" || req.Command == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id, name, cron_expr and command are required"})
+	if req.UserID == "" || req.Name == "" || req.Command == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id, name and command are required"})
 		return
 	}
 
@@ -563,7 +569,29 @@ func (h *RESTHandler) CreateJob(c *gin.Context) {
 		return
 	}
 
-	newJob, err := h.jobs.Create(req.UserID, req.Name, req.CronExpr, req.Command)
+	// 默认调度类型
+	scheduleType := job.ScheduleType(req.ScheduleType)
+	if scheduleType == "" {
+		if req.CronExpr != "" {
+			scheduleType = job.ScheduleCron
+		} else {
+			scheduleType = job.ScheduleDaily
+		}
+	}
+
+	// 解析 run_at（前端传 datetime-local 格式 "2026-02-15T09:00"）
+	var runAt int64
+	if req.RunAt != "" {
+		if t, err := time.Parse("2006-01-02T15:04", req.RunAt); err == nil {
+			runAt = t.UnixMilli()
+		}
+	}
+
+	newJob, err := h.jobs.CreateWithSchedule(
+		req.UserID, req.Name, req.Command,
+		scheduleType, req.CronExpr, req.Time,
+		req.Weekdays, req.IntervalMinutes, runAt,
+	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -729,9 +757,15 @@ func (h *RESTHandler) ListMemories(c *gin.Context) {
 
 	memories := h.memories.List(userID)
 
-	// 按 weight 降序排序
+	// 排序：weight 降序 → access_cnt 降序 → summary 字母序
 	sort.Slice(memories, func(i, j int) bool {
-		return memories[i].Weight > memories[j].Weight
+		if memories[i].Weight != memories[j].Weight {
+			return memories[i].Weight > memories[j].Weight
+		}
+		if memories[i].AccessCnt != memories[j].AccessCnt {
+			return memories[i].AccessCnt > memories[j].AccessCnt
+		}
+		return memories[i].Summary < memories[j].Summary
 	})
 
 	c.JSON(http.StatusOK, gin.H{"memories": memories})
@@ -902,10 +936,16 @@ func (h *RESTHandler) SearchMemories(c *gin.Context) {
 	h.memories.LoadUserMemories(userID)
 
 	if query == "" {
-		// 无查询词时返回全部（按 weight 降序）
+		// 无查询词时返回全部
 		memories := h.memories.List(userID)
 		sort.Slice(memories, func(i, j int) bool {
-			return memories[i].Weight > memories[j].Weight
+			if memories[i].Weight != memories[j].Weight {
+				return memories[i].Weight > memories[j].Weight
+			}
+			if memories[i].AccessCnt != memories[j].AccessCnt {
+				return memories[i].AccessCnt > memories[j].AccessCnt
+			}
+			return memories[i].Summary < memories[j].Summary
 		})
 		c.JSON(http.StatusOK, gin.H{"memories": memories})
 		return
@@ -913,9 +953,15 @@ func (h *RESTHandler) SearchMemories(c *gin.Context) {
 
 	memories := h.memories.Retrieve(userID, query, 20)
 
-	// 按 weight 降序排序
+	// 排序：weight 降序 → access_cnt 降序 → summary 字母序
 	sort.Slice(memories, func(i, j int) bool {
-		return memories[i].Weight > memories[j].Weight
+		if memories[i].Weight != memories[j].Weight {
+			return memories[i].Weight > memories[j].Weight
+		}
+		if memories[i].AccessCnt != memories[j].AccessCnt {
+			return memories[i].AccessCnt > memories[j].AccessCnt
+		}
+		return memories[i].Summary < memories[j].Summary
 	})
 
 	c.JSON(http.StatusOK, gin.H{"memories": memories})

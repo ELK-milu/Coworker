@@ -126,13 +126,20 @@ const MemoryPanel = ({ userId }) => {
     loadMemories();
   }, [loadMemories]);
 
-  // 按标签分组（组内已按 weight 降序）
+  // 按标签分组，组内按 weight 降序 → access_cnt 降序 → summary 字母序
   const groupedMemories = memories.reduce((acc, mem) => {
     const primaryTag = mem.tags[0] || 'other';
     if (!acc[primaryTag]) acc[primaryTag] = [];
     acc[primaryTag].push(mem);
     return acc;
   }, {});
+  for (const tag of Object.keys(groupedMemories)) {
+    groupedMemories[tag].sort((a, b) => {
+      if ((b.weight || 0) !== (a.weight || 0)) return (b.weight || 0) - (a.weight || 0);
+      if ((b.access_cnt || 0) !== (a.access_cnt || 0)) return (b.access_cnt || 0) - (a.access_cnt || 0);
+      return (a.summary || '').localeCompare(b.summary || '');
+    });
+  }
 
   // 组按最高 weight 排序
   const sortedGroups = Object.entries(groupedMemories).sort((a, b) => {

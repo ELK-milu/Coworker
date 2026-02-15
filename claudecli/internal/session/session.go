@@ -18,7 +18,8 @@ type Session struct {
 	UpdatedAt  time.Time
 	TotalCost  float64
 	WorkingDir string
-	Context    *context.Manager // 上下文管理器
+	Context     *context.Manager // 上下文管理器
+	WindowIndex int              // 上下文窗口索引（压缩次数），持久化字段
 	// 记忆提取状态追踪
 	LastExtractedAt       int64 // 上次提取记忆的时间戳
 	LastExtractedMsgCount int   // 上次提取时的消息数量

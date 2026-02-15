@@ -24,6 +24,7 @@ type Memory struct {
 	Summary    string                 `json:"summary"`     // 简短摘要
 	Source     string                 `json:"source"`      // 来源: manual, conversation, extracted
 	SessionID  string                 `json:"session_id"`  // 关联会话
+	WindowID   string                 `json:"window_id"`   // 上下文窗口 ID (sessionID-wN)
 	Weight     float64                `json:"weight"`      // 重要性权重 (0-1)
 	AccessCnt  int                    `json:"access_cnt"`  // 访问次数
 	Metadata   map[string]interface{} `json:"metadata"`
@@ -323,7 +324,7 @@ func ContentHash(content string) string {
 }
 
 // FindSimilar 查找相似记忆
-// 基于标签重叠和内容哈希判断相似性
+// 基于标签重叠、内容哈希、摘要相似度判断
 func (m *Manager) FindSimilar(userID string, mem *Memory) *Memory {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -335,19 +336,38 @@ func (m *Manager) FindSimilar(userID string, mem *Memory) *Memory {
 
 	newHash := ContentHash(mem.Content)
 
+	var bestMatch *Memory
+	bestScore := 0.0
+
 	for _, existing := range userMems {
 		// 1. 内容哈希完全匹配 = 重复
 		if ContentHash(existing.Content) == newHash {
 			return existing
 		}
 
-		// 2. 标签高度重叠 + 来源相同 = 可能相似
-		if existing.Source == mem.Source && m.tagOverlap(existing.Tags, mem.Tags) >= 0.7 {
-			// 检查内容相似度（简单的词重叠）
-			if m.contentSimilarity(existing.Content, mem.Content) >= 0.6 {
+		// 2. 摘要高度相似 = 很可能是同一概念
+		if mem.Summary != "" && existing.Summary != "" {
+			summarySim := m.contentSimilarity(existing.Summary, mem.Summary)
+			if summarySim >= 0.6 {
 				return existing
 			}
 		}
+
+		// 3. 综合评分：标签重叠 + 内容相似度（不再要求 source 相同）
+		tagScore := m.tagOverlap(existing.Tags, mem.Tags)
+		contentScore := m.contentSimilarity(existing.Content, mem.Content)
+
+		// 加权综合分：标签 40% + 内容 60%
+		combined := tagScore*0.4 + contentScore*0.6
+		if combined > bestScore {
+			bestScore = combined
+			bestMatch = existing
+		}
+	}
+
+	// 综合分超过 0.45 视为相似（比之前的双重 0.7+0.6 门槛宽松很多）
+	if bestScore >= 0.45 {
+		return bestMatch
 	}
 
 	return nil
@@ -470,4 +490,66 @@ func (m *Manager) mergeMemory(userID string, existing, newMem *Memory) (*Memory,
 	}
 
 	return existing, nil
+}
+
+// FindByWindowID 根据窗口 ID 查找记忆
+func (m *Manager) FindByWindowID(userID, windowID string) *Memory {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if windowID == "" {
+		return nil
+	}
+
+	userMems, ok := m.memories[userID]
+	if !ok {
+		return nil
+	}
+
+	for _, mem := range userMems {
+		if mem.WindowID == windowID {
+			return mem
+		}
+	}
+	return nil
+}
+
+// UpsertByWindowID 按窗口 ID 创建或替换记忆
+// 同一个窗口只维护一条记忆，后续提取直接替换标题和内容
+func (m *Manager) UpsertByWindowID(userID string, mem *Memory) (*Memory, bool, error) {
+	existing := m.FindByWindowID(userID, mem.WindowID)
+
+	if existing != nil {
+		// 替换内容和摘要
+		m.mu.Lock()
+		existing.Content = mem.Content
+		existing.Summary = mem.Summary
+		existing.Tags = mem.Tags
+		if mem.Weight > existing.Weight {
+			existing.Weight = mem.Weight
+		}
+		existing.AccessCnt++
+		existing.UpdatedAt = time.Now().Unix()
+		existing.LastAccess = time.Now().Unix()
+
+		// 更新标签索引
+		m.removeFromTagIndex(userID, existing)
+		for _, tag := range existing.Tags {
+			m.tagIndex[userID][tag] = append(m.tagIndex[userID][tag], existing.ID)
+		}
+
+		if err := m.saveMemory(userID, existing); err != nil {
+			m.mu.Unlock()
+			return nil, false, err
+		}
+		m.mu.Unlock()
+		return existing, false, nil
+	}
+
+	// 新窗口，创建记忆
+	created, err := m.Create(userID, mem)
+	if err != nil {
+		return nil, false, err
+	}
+	return created, true, nil
 }

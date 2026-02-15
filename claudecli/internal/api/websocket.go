@@ -177,12 +177,17 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 			if sess := h.sessions.Get(sessionID); sess != nil {
 				log.Printf("[WS] Connection closed, emitting SessionEnd for user %s, session %s", userID, sessionID)
 				if h.bus != nil {
+					windowIndex := 0
+					if sess.Context != nil {
+						windowIndex = sess.Context.GetWindowIndex()
+					}
 					h.bus.Emit(eventbus.Event{
 						Type:      eventbus.EventSessionEnd,
 						UserID:    userID,
 						SessionID: sessionID,
 						Data: map[string]interface{}{
-							"session": sess,
+							"session":      sess,
+							"window_index": windowIndex,
 						},
 					})
 				}
@@ -480,7 +485,7 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, selectedAgent, eventCh, conn, isNewSession)
 
 	// 异步转发事件到 WebSocket（不阻塞消息读取循环）
-	go h.forwardEvents(conn, sess.ID, eventCh)
+	go h.forwardEvents(conn, sess.ID, chat.UserID, eventCh)
 }
 
 // runConversation 运行对话
@@ -501,12 +506,17 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 
 	// 每轮对话结束后通过 EventBus 通知记忆系统（增量提取）
 	if h.bus != nil {
+		windowIndex := 0
+		if sess.Context != nil {
+			windowIndex = sess.Context.GetWindowIndex()
+		}
 		h.bus.Emit(eventbus.Event{
 			Type:      eventbus.EventTurnCompleted,
 			UserID:    userID,
 			SessionID: sess.ID,
 			Data: map[string]interface{}{
-				"session": sess,
+				"session":      sess,
+				"window_index": windowIndex,
 			},
 		})
 	}
@@ -799,7 +809,7 @@ func ConvertMessagesToFrontend(messages []types.Message) []map[string]interface{
 }
 
 // forwardEvents 转发事件到 WebSocket
-func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <-chan loop.LoopEvent) {
+func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, userID string, eventCh <-chan loop.LoopEvent) {
 	for event := range eventCh {
 		payload := map[string]interface{}{
 			"session_id": sessID,
@@ -852,6 +862,20 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, eventCh <
 			"type":    event.Type,
 			"payload": payload,
 		})
+
+		// 任务变更后，额外发送完整任务列表快照（用于前端对话流中嵌入历史进度）
+		if event.Type == loop.EventTypeTaskChanged && h.tasks != nil {
+			taskList := h.tasks.List(userID, "default")
+			if len(taskList) > 0 {
+				h.sendJSON(conn, map[string]interface{}{
+					"type": "task_progress",
+					"payload": map[string]interface{}{
+						"session_id": sessID,
+						"tasks":      taskList,
+					},
+				})
+			}
+		}
 	}
 }
 

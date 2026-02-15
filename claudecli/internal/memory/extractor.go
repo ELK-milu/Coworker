@@ -64,15 +64,18 @@ func (e *Extractor) extractWithAI(userID, sessionID string, messages []types.Mes
 	// 检测对话语言，指导 AI 用相同语言提取记忆
 	langHint := detectLanguageHint(conversationText)
 
-	prompt := fmt.Sprintf(`%s
+	// 获取已有记忆摘要，让 AI 避免重复提取
+	existingHint := e.buildExistingMemoriesHint(userID)
 
+	prompt := fmt.Sprintf(`%s
+%s
 %s
 
 <conversation>
 %s
 </conversation>
 
-Respond with ONLY a JSON array. No explanation, no markdown fences.`, GetExtractionPrompt(), langHint, conversationText)
+Respond with ONLY a JSON array. No explanation, no markdown fences.`, GetExtractionPrompt(), existingHint, langHint, conversationText)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -85,6 +88,29 @@ Respond with ONLY a JSON array. No explanation, no markdown fences.`, GetExtract
 
 	// 解析 JSON 响应
 	return e.parseAIResponse(response, sessionID)
+}
+
+// buildExistingMemoriesHint 构建已有记忆提示，让 AI 避免重复提取
+func (e *Extractor) buildExistingMemoriesHint(userID string) string {
+	existing := e.manager.List(userID)
+	if len(existing) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n<existing_memories>\nThe following memories already exist. Do NOT extract information that overlaps with these:\n")
+
+	// 限制最多展示 30 条，避免 prompt 过长
+	limit := len(existing)
+	if limit > 30 {
+		limit = 30
+	}
+	for i := 0; i < limit; i++ {
+		mem := existing[i]
+		sb.WriteString(fmt.Sprintf("- [%s] %s\n", strings.Join(mem.Tags, ","), mem.Summary))
+	}
+	sb.WriteString("</existing_memories>")
+	return sb.String()
 }
 
 // extractedItem AI 提取结果的 JSON 结构
@@ -442,7 +468,8 @@ Rules:
 - One concept per item — don't bundle unrelated facts
 - Skip routine code edits, temporary debugging, and generic knowledge
 - Skip information that would be in project config files (package.json, go.mod, etc.)
-- Return empty array [] if nothing significant was discussed
+- CRITICAL: If <existing_memories> is provided, do NOT extract anything that overlaps with or restates those memories. Only extract genuinely NEW information.
+- Return empty array [] if nothing significant or new was discussed
 
 Output JSON array:
 [
