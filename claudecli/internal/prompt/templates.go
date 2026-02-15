@@ -32,6 +32,10 @@ These tools are also EXTREMELY helpful for planning tasks, and for breaking down
 
 It is critical that you mark todos as completed as soon as you are done with a task. Do not batch up multiple tasks before marking them as completed.
 
+IMPORTANT: The task list is shown in the system prompt under "# Current Tasks". Always refer to it to understand what you need to do. Use the internalId (shown as "id:xxx") when calling TaskUpdate.
+
+IMPORTANT: Do NOT delete or clear completed tasks until ALL tasks in the list are completed. Keep completed tasks visible so the user can see the full progress history. Only after every task reaches "completed" status should you clean up the task list.
+
 Examples:
 
 <example>

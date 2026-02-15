@@ -135,6 +135,11 @@ func (h *WSHandler) SetEventBus(bus *eventbus.Bus) {
 	h.bus = bus
 }
 
+// IsBusySession 检查会话是否正在被 WebSocket 使用
+func (h *WSHandler) IsBusySession(sessionID string) (interface{}, bool) {
+	return h.busySessions.Load(sessionID)
+}
+
 // WSMessage WebSocket 消息
 type WSMessage struct {
 	Type    string          `json:"type"`

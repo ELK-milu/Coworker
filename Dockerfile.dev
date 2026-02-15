@@ -4,7 +4,7 @@
 FROM golang:1.24-alpine
 
 # 安装必要的工具（包括 docker CLI 用于调用 nsjail 沙箱）
-RUN apk add --no-cache git make bash curl docker-cli
+RUN apk add --no-cache git make bash curl docker-cli tzdata
 
 # 配置 Go 代理（使用国内镜像）
 ENV GOPROXY=https://goproxy.cn,direct

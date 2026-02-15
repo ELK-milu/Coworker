@@ -129,10 +129,10 @@ const cronToReadable = (cronExpr) => {
   return cronExpr;
 };
 
-// 格式化时间戳
+// 格式化时间戳（后端存储为 UnixMilli 毫秒）
 const formatTime = (timestamp) => {
   if (!timestamp) return '-';
-  const date = new Date(timestamp * 1000);
+  const date = new Date(timestamp);
   return date.toLocaleString('zh-CN', {
     month: 'numeric',
     day: 'numeric',

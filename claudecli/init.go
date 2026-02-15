@@ -213,6 +213,25 @@ func Init() *Module {
 		FileHandler: fileHandler,
 	}
 
+	// 创建 Job AI 执行器
+	busyChecker := job.NewBusySessionChecker(func(sessionID string) bool {
+		_, busy := wsHandler.IsBusySession(sessionID)
+		return busy
+	})
+	jobExecutor := job.NewAIExecutor(&job.JobExecutorDeps{
+		Client:       claudeClient,
+		Sessions:     sessionManager,
+		Tools:        toolRegistry,
+		Workspace:    workspaceManager,
+		Tasks:        taskManager,
+		Memories:     memoryManager,
+		Config:       cfg,
+		Bus:          bus,
+		FileTime:     fileTime,
+		BusySessions: busyChecker,
+	})
+	jobManager.SetExecutor(jobExecutor)
+
 	// 启动 Job 调度器
 	jobManager.Start()
 

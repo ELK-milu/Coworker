@@ -76,9 +76,47 @@ func NewManager(baseDir string) *Manager {
 	return m
 }
 
+// SetExecutor 设置 Job 执行器
+func (m *Manager) SetExecutor(executor JobExecutor) {
+	m.scheduler.SetExecutor(executor)
+}
+
 // Start 启动调度器
 func (m *Manager) Start() {
 	m.scheduler.Start()
+}
+
+// RunNow 立即执行指定 Job（异步）
+func (m *Manager) RunNow(userID, jobID string) error {
+	m.mu.RLock()
+	if m.jobs[userID] == nil {
+		m.mu.RUnlock()
+		m.mu.Lock()
+		m.loadUserJobs(userID)
+		m.mu.Unlock()
+		m.mu.RLock()
+	}
+	j := m.jobs[userID][jobID]
+	m.mu.RUnlock()
+
+	if j == nil {
+		return fmt.Errorf("job not found: %s", jobID)
+	}
+
+	if j.Status == StatusRunning {
+		return fmt.Errorf("job is already running: %s", jobID)
+	}
+
+	m.scheduler.mu.Lock()
+	executor := m.scheduler.executor
+	m.scheduler.mu.Unlock()
+
+	if executor == nil {
+		return fmt.Errorf("no executor set, cannot run job")
+	}
+
+	go m.scheduler.executeJob(j, executor)
+	return nil
 }
 
 // Stop 停止调度器

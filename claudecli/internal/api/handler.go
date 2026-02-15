@@ -721,13 +721,16 @@ func (h *RESTHandler) RunJob(c *gin.Context) {
 		return
 	}
 
-	// 标记为运行中
-	h.jobs.MarkRunning(req.UserID, jobID)
+	// 异步触发执行
+	if err := h.jobs.RunNow(req.UserID, jobID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"job":     jobItem,
-		"message": "Job triggered manually. Check WebSocket for execution events.",
+		"message": "Job triggered. AI is processing in background.",
 	})
 }
 

@@ -160,6 +160,7 @@ func formatMemoriesForTool(memories []*memory.Memory, query string) string {
 
 	for i, mem := range memories {
 		sb.WriteString(fmt.Sprintf("--- Memory %d ---\n", i+1))
+		sb.WriteString(fmt.Sprintf("ID: %s\n", mem.ID))
 
 		if len(mem.Tags) > 0 {
 			sb.WriteString(fmt.Sprintf("Tags: %s\n", strings.Join(mem.Tags, ", ")))

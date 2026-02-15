@@ -7,6 +7,7 @@ import { Button, Typography, Spin, TextArea, Toast } from '@douyinfe/semi-ui';
 import { IconSend, IconStop } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
+import InlineTaskCard from './components/InlineTaskCard';
 import SessionSidebar from './components/SessionSidebar';
 import * as api from './services/api';
 import './styles.css';
@@ -75,6 +76,7 @@ const Coworker = () => {
   const abortedRef = useRef(false);
   const currentPathRef = useRef(currentPath);  // 用于在闭包中获取最新的 currentPath
   const pendingMessageRef = useRef(null);  // 待发送的消息（用于 WS 重连后发送）
+  const tasksRef = useRef(tasks);  // 用于在 WebSocket 闭包中获取最新的 tasks
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -89,6 +91,11 @@ const Coworker = () => {
   useEffect(() => {
     currentPathRef.current = currentPath;
   }, [currentPath]);
+
+  // 同步 tasks 到 ref，解决 WebSocket 闭包问题
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   // 加载会话列表 (REST API)
   const loadSessionsList = useCallback(async () => {
@@ -273,14 +280,22 @@ const Coworker = () => {
       case 'text':
         setThinking(false);
         setMessages(prev => {
-          const last = prev[prev.length - 1];
-          if (last?.type === 'assistant' && last.streaming) {
-            // 追加内容，保留原 timestamp
-            console.log('[Coworker] text: appending to existing message, keeping timestamp:', last.timestamp);
-            return [...prev.slice(0, -1), { ...last, content: last.content + payload.content }];
+          // 向后查找最近的 streaming assistant 消息（跳过中间的 task_progress 等）
+          let streamIdx = -1;
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].type === 'assistant' && prev[i].streaming) {
+              streamIdx = i;
+              break;
+            }
+            // 只跳过 task_progress，遇到其他类型就停止查找
+            if (prev[i].type !== 'task_progress') break;
+          }
+          if (streamIdx >= 0) {
+            const updated = [...prev];
+            updated[streamIdx] = { ...updated[streamIdx], content: updated[streamIdx].content + payload.content };
+            return updated;
           }
           const newTs = Date.now();
-          console.log('[Coworker] text: creating new message with timestamp:', newTs);
           return [...prev, { type: 'assistant', content: payload.content, streaming: true, timestamp: newTs }];
         });
         break;
@@ -288,9 +303,18 @@ const Coworker = () => {
       case 'thinking':
         // 处理 thinking 消息，用不同样式显示
         setMessages(prev => {
-          const last = prev[prev.length - 1];
-          if (last?.type === 'thinking' && last.streaming) {
-            return [...prev.slice(0, -1), { ...last, content: last.content + payload.content }];
+          let streamIdx = -1;
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].type === 'thinking' && prev[i].streaming) {
+              streamIdx = i;
+              break;
+            }
+            if (prev[i].type !== 'task_progress') break;
+          }
+          if (streamIdx >= 0) {
+            const updated = [...prev];
+            updated[streamIdx] = { ...updated[streamIdx], content: updated[streamIdx].content + payload.content };
+            return updated;
           }
           return [...prev, { type: 'thinking', content: payload.content, streaming: true, timestamp: Date.now() }];
         });
@@ -371,18 +395,38 @@ const Coworker = () => {
         });
         break;
 
-      // AI 工具触发的任务变更事件 (保留，用于实时同步)
+      // AI 工具触发的任务变更事件 — 仅更新侧边栏状态
       case 'task_changed':
-        if (payload.action === 'created' && payload.task) {
-          // 添加新任务并按 order 排序
-          setTasks(prev => [...prev, payload.task].sort((a, b) => a.order - b.order));
-          console.log('[Coworker] Task created by AI:', payload.task.id);
-        } else if (payload.action === 'updated' && payload.task) {
-          setTasks(prev => prev.map(t => t.id === payload.task.id ? payload.task : t));
-          console.log('[Coworker] Task updated by AI:', payload.task.id);
-        } else if (payload.action === 'deleted' && payload.task) {
-          setTasks(prev => prev.filter(t => t.id !== payload.task.id));
-          console.log('[Coworker] Task deleted by AI:', payload.task.id);
+        {
+          let newTasks;
+          const currentTasks = tasksRef.current;
+          if (payload.action === 'created' && payload.task) {
+            newTasks = [...currentTasks, payload.task].sort((a, b) => a.order - b.order);
+          } else if (payload.action === 'updated' && payload.task) {
+            newTasks = currentTasks.map(t => t.id === payload.task.id ? payload.task : t);
+          } else if (payload.action === 'deleted' && payload.task) {
+            newTasks = currentTasks.filter(t => t.id !== payload.task.id);
+          }
+          if (newTasks) {
+            setTasks(newTasks);
+            tasksRef.current = newTasks;
+          }
+        }
+        break;
+
+      // 后端发送的任务进度快照 — 嵌入对话流作为历史记录
+      case 'task_progress':
+        if (payload.tasks && payload.tasks.length > 0) {
+          // 同步侧边栏状态
+          const sorted = [...payload.tasks].sort((a, b) => a.order - b.order);
+          setTasks(sorted);
+          tasksRef.current = sorted;
+          // 插入对话流
+          setMessages(prev => [...prev, {
+            type: 'task_progress',
+            tasks: sorted.map(t => ({ ...t })),
+            timestamp: Date.now(),
+          }]);
         }
         break;
 
@@ -691,10 +735,16 @@ const Coworker = () => {
         />
       );
     }
-    // 在最后一条 assistant 消息中显示任务卡片
-    const isLastAssistant = msg.type === 'assistant' &&
-      index === messages.length - 1 &&
-      tasks.length > 0;
+    // 任务进度快照 — 嵌入对话流中作为历史记录
+    if (msg.type === 'task_progress') {
+      return (
+        <InlineTaskCard
+          key={`task-progress-${index}`}
+          tasks={msg.tasks}
+          editable={false}
+        />
+      );
+    }
     return (
       <MessageBubble
         key={`msg-${index}`}
@@ -702,8 +752,6 @@ const Coworker = () => {
         content={msg.content}
         timestamp={msg.timestamp}
         aborted={msg.aborted}
-        tasks={isLastAssistant ? tasks : null}
-        onUpdateTask={updateTask}
       />
     );
   };

@@ -465,16 +465,16 @@ func (m *Manager) Render(userID, listID string) string {
 		var line string
 		switch t.Status {
 		case StatusCompleted:
-			line = fmt.Sprintf("[x] %s", t.Subject)
+			line = fmt.Sprintf("[x] (id:%s) %s", t.InternalID, t.Subject)
 			completed++
 		case StatusInProgress:
 			if t.ActiveForm != "" {
-				line = fmt.Sprintf("[>] %s <- %s", t.Subject, t.ActiveForm)
+				line = fmt.Sprintf("[>] (id:%s) %s <- %s", t.InternalID, t.Subject, t.ActiveForm)
 			} else {
-				line = fmt.Sprintf("[>] %s", t.Subject)
+				line = fmt.Sprintf("[>] (id:%s) %s", t.InternalID, t.Subject)
 			}
 		default:
-			line = fmt.Sprintf("[ ] %s", t.Subject)
+			line = fmt.Sprintf("[ ] (id:%s) %s", t.InternalID, t.Subject)
 		}
 		lines = append(lines, line)
 	}
@@ -521,9 +521,9 @@ func (m *Manager) RenderCompact(userID, listID string, maxItems int) string {
 			break
 		}
 		if t.ActiveForm != "" {
-			lines = append(lines, fmt.Sprintf("[>] %s <- %s", t.Subject, t.ActiveForm))
+			lines = append(lines, fmt.Sprintf("[>] (id:%s) %s <- %s", t.InternalID, t.Subject, t.ActiveForm))
 		} else {
-			lines = append(lines, fmt.Sprintf("[>] %s", t.Subject))
+			lines = append(lines, fmt.Sprintf("[>] (id:%s) %s", t.InternalID, t.Subject))
 		}
 		count++
 	}
@@ -533,7 +533,7 @@ func (m *Manager) RenderCompact(userID, listID string, maxItems int) string {
 		if count >= maxItems {
 			break
 		}
-		lines = append(lines, fmt.Sprintf("[ ] %s", t.Subject))
+		lines = append(lines, fmt.Sprintf("[ ] (id:%s) %s", t.InternalID, t.Subject))
 		count++
 	}
 
@@ -542,7 +542,7 @@ func (m *Manager) RenderCompact(userID, listID string, maxItems int) string {
 		if count >= maxItems {
 			break
 		}
-		lines = append(lines, fmt.Sprintf("[x] %s", t.Subject))
+		lines = append(lines, fmt.Sprintf("[x] (id:%s) %s", t.InternalID, t.Subject))
 		count++
 	}
 
