@@ -1,9 +1,11 @@
 package context
 
 import (
+	"log"
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/claudecli/internal/eventbus"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
@@ -95,6 +97,9 @@ type Manager struct {
 	compressionCount   int
 	savedTokens        int
 	boundaryMessages   []types.Message // 压缩边界消息（append-only）
+	bus                *eventbus.Bus   // 事件总线（可选）
+	userID             string          // 当前用户 ID（用于事件）
+	sessionID          string          // 当前会话 ID（用于事件）
 	mu                 sync.RWMutex
 }
 
@@ -115,6 +120,21 @@ func (m *Manager) SetSystemPrompt(prompt string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.systemPrompt = prompt
+}
+
+// SetEventBus 设置事件总线
+func (m *Manager) SetEventBus(bus *eventbus.Bus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bus = bus
+}
+
+// SetEventContext 设置事件上下文（userID, sessionID）
+func (m *Manager) SetEventContext(userID, sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.userID = userID
+	m.sessionID = sessionID
 }
 
 // AddTurn 添加对话轮次
@@ -233,6 +253,9 @@ func (m *Manager) maybeCompress() {
 		return
 	}
 
+	// 压缩前发射 BeforeCompact 事件（提取窗口总结）
+	m.emitBeforeCompact(toSummarize)
+
 	beforeTokens := 0
 	for _, t := range toSummarize {
 		beforeTokens += t.TokenEstimate
@@ -289,7 +312,7 @@ func (m *Manager) Compact() {
 	compactedMessages := Microcompact(messages)
 	m.updateMessagesFromCompacted(compactedMessages)
 
-	// 2. 执行摘要压缩
+	// 3. 执行摘要压缩
 	recentCount := m.config.KeepRecentMessages
 	if len(m.turns) <= recentCount {
 		return
@@ -311,6 +334,9 @@ func (m *Manager) Compact() {
 	if alreadySummarized {
 		return
 	}
+
+	// 压缩前发射 BeforeCompact 事件（提取窗口总结）
+	m.emitBeforeCompact(toSummarize)
 
 	beforeTokens := 0
 	for _, t := range toSummarize {
@@ -435,4 +461,40 @@ func (m *Manager) Export() map[string]interface{} {
 		"compression_count": m.compressionCount,
 		"saved_tokens":      m.savedTokens,
 	}
+}
+
+// emitBeforeCompact 在压缩前发射事件
+// 从即将被压缩的 turns 中提取消息，通过 EventBus 通知记忆系统
+// 注意：此方法在持有 mu 锁时调用，handler 不应回调 Manager 方法
+func (m *Manager) emitBeforeCompact(turns []ConversationTurn) {
+	if m.bus == nil {
+		return
+	}
+
+	// 收集即将被压缩的消息
+	messages := make([]types.Message, 0, len(turns)*2)
+	for _, t := range turns {
+		if !t.Summarized {
+			messages = append(messages, t.User)
+			messages = append(messages, t.Assistant)
+		}
+	}
+
+	if len(messages) < 4 {
+		return
+	}
+
+	log.Printf("[Context] Emitting BeforeCompact event (%d messages)", len(messages))
+
+	// 临时释放锁，让 handler 可以执行（handler 不回调 context.Manager）
+	m.mu.Unlock()
+	m.bus.Emit(eventbus.Event{
+		Type:      eventbus.EventBeforeCompact,
+		UserID:    m.userID,
+		SessionID: m.sessionID,
+		Data: map[string]interface{}{
+			"messages": messages,
+		},
+	})
+	m.mu.Lock()
 }

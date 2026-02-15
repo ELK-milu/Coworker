@@ -50,13 +50,16 @@ claudecli/
     │   ├── session_memory.go   # Session Memory 管理
     │   ├── memory_generator.go # 记忆生成器
     │   └── tokens.go           # Token 估算
+    ├── eventbus/
+    │   └── eventbus.go         # 事件总线 (同步/异步 handler)
     ├── embedding/
     │   ├── client.go           # Embedding 客户端 (SiliconFlow/DashScope)
     │   ├── config.go           # Embedding 配置
     │   └── rerank.go           # Rerank 重排序
     ├── memory/
     │   ├── memory.go           # 记忆管理 (CRUD + 去重)
-    │   ├── extractor.go        # AI 记忆提取器
+    │   ├── extractor.go        # AI 记忆提取器 (含上下文窗口总结)
+    │   ├── handlers.go         # 记忆事件处理器 (EventBus 注册)
     │   ├── retrieval.go        # 混合检索 (BM25 + Dense Vector)
     │   ├── semantic.go         # 语义搜索
     │   ├── bm25.go             # BM25 全文检索
@@ -284,6 +287,39 @@ if err != nil {
 ---
 
 ## 已完成功能
+
+### 2026-02-15 (EventBus + 上下文窗口记忆 + Compact 集成)
+
+- [x] EventBus 事件总线 (`eventbus/eventbus.go`)
+  - 同步 handler（`OnSync`）：阻塞等待完成，用于 BeforeCompact 等必须先完成的场景
+  - 异步 handler（`OnAsync`）：goroutine 执行，用于 TurnCompleted/SessionEnd 等不阻塞主流程的场景
+  - `Emit()` 先同步后异步，`EmitSync()` 等待所有 handler 完成
+  - panic recovery 保护，防止单个 handler 崩溃影响整体
+- [x] 上下文窗口级记忆总结 (`memory/extractor.go`)
+  - `ExtractSessionSummary()` — 将整个上下文窗口的对话总结为一条综合性记忆
+  - `GetSessionSummaryPrompt()` — 专注于成果、决策、问题解决的总结提示词
+  - `detectLanguageHint()` — 检测对话主要语言（中文占比 >15% 则用中文总结）
+  - `generateSummaryTitle()` — 从总结内容生成简短标题
+  - 触发时机：compaction 前（BeforeCompact）、会话结束时（SessionEnd）
+- [x] 记忆事件处理器 (`memory/handlers.go`)
+  - `HandleBeforeCompact`（同步）— 压缩前提取窗口总结，防止详细对话内容丢失
+  - `HandleTurnCompleted`（异步）— 每轮对话后提取离散事实
+  - `HandleSessionEnd`（异步）— 会话结束时提取最后窗口总结 + 剩余事实
+  - `SessionAccessor` 接口避免 memory↔session 循环依赖
+- [x] Context Manager EventBus 集成 (`context/context.go`)
+  - `SetEventBus()` / `SetEventContext()` 注入事件总线和用户/会话上下文
+  - `emitBeforeCompact()` — 在 `maybeCompress()` 和 `Compact()` 中自动触发
+  - 临时释放 `m.mu` 锁让同步 handler 执行，避免死锁
+  - 所有 compaction 路径（自动/手动/AddTurn触发）统一通过 EventBus 通知记忆系统
+- [x] WebSocket EventBus 集成 (`api/websocket.go`)
+  - `handleConnection` defer → 发射 `EventSessionEnd`（替代直接调用 `extractMemoriesAsync`）
+  - `runConversation` 结束 → 发射 `EventTurnCompleted`（替代直接调用 `extractMemoriesAsync`）
+  - `handleCompact` → 移除显式记忆提取（由 context.Manager 内部 BeforeCompact 处理）
+  - 聊天开始时注入 EventBus 到会话的 Context Manager
+- [x] 模块初始化集成 (`init.go`)
+  - 创建 EventBus 实例
+  - 创建 MemoryHandlers 并注册到 EventBus
+  - 注入 EventBus 到 WSHandler
 
 ### 2026-02-08 (COWORKER.md 动态嵌入 + Bug修复)
 
@@ -553,4 +589,4 @@ if err != nil {
 
 ---
 
-*Last updated: 2026-02-08 (记忆系统 + OpenCode优化 + COWORKER.md嵌入修复)*
+*Last updated: 2026-02-15 (EventBus + 上下文窗口记忆 + Compact集成)*

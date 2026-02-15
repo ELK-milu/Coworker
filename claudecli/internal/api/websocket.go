@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/embedding"
+	"github.com/QuantumNous/new-api/claudecli/internal/eventbus"
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/loop"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
@@ -64,6 +65,8 @@ type WSHandler struct {
 	currentSessionID string
 	// P2.5: 文件修改时间追踪
 	fileTime *tools.FileTime
+	// 事件总线
+	bus *eventbus.Bus
 }
 
 // NewWSHandler 创建 WebSocket 处理器
@@ -127,6 +130,11 @@ func (h *WSHandler) SetMilvusClient(mc *memory.MilvusClient) {
 	h.milvus = mc
 }
 
+// SetEventBus 设置事件总线
+func (h *WSHandler) SetEventBus(bus *eventbus.Bus) {
+	h.bus = bus
+}
+
 // WSMessage WebSocket 消息
 type WSMessage struct {
 	Type    string          `json:"type"`
@@ -158,7 +166,7 @@ func (h *WSHandler) Handle(c *gin.Context) {
 
 // handleConnection 处理连接
 func (h *WSHandler) handleConnection(conn *websocket.Conn) {
-	// 连接断开时提取记忆
+	// 连接断开时通过 EventBus 通知记忆系统
 	defer func() {
 		h.mu.Lock()
 		userID := h.currentUserID
@@ -167,8 +175,17 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 
 		if userID != "" && sessionID != "" {
 			if sess := h.sessions.Get(sessionID); sess != nil {
-				log.Printf("[WS] Connection closed, extracting memories for user %s, session %s", userID, sessionID)
-				h.extractMemoriesAsync(userID, sess)
+				log.Printf("[WS] Connection closed, emitting SessionEnd for user %s, session %s", userID, sessionID)
+				if h.bus != nil {
+					h.bus.Emit(eventbus.Event{
+						Type:      eventbus.EventSessionEnd,
+						UserID:    userID,
+						SessionID: sessionID,
+						Data: map[string]interface{}{
+							"session": sess,
+						},
+					})
+				}
 			}
 		}
 	}()
@@ -399,6 +416,12 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	h.currentSessionID = sess.ID
 	h.mu.Unlock()
 
+	// 注入 EventBus 到会话的上下文管理器（用于 compaction 时自动触发记忆提取）
+	if h.bus != nil && sess.Context != nil {
+		sess.Context.SetEventBus(h.bus)
+		sess.Context.SetEventContext(chat.UserID, sess.ID)
+	}
+
 	// 获取用户工作空间路径
 	userWorkDir := h.workspace.GetUserWorkDir(chat.UserID)
 
@@ -476,8 +499,17 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 		log.Printf("[WS] Session saved: %s", sess.ID)
 	}
 
-	// 每轮对话结束后异步提取记忆（增量提取，不再仅依赖 WS 断开）
-	h.extractMemoriesAsync(userID, sess)
+	// 每轮对话结束后通过 EventBus 通知记忆系统（增量提取）
+	if h.bus != nil {
+		h.bus.Emit(eventbus.Event{
+			Type:      eventbus.EventTurnCompleted,
+			UserID:    userID,
+			SessionID: sess.ID,
+			Data: map[string]interface{}{
+				"session": sess,
+			},
+		})
+	}
 
 	// 如果是新会话且还没有标题，异步生成标题
 	// 注意：使用新的 context，因为对话的 ctx 可能已被取消
@@ -1351,14 +1383,8 @@ func (h *WSHandler) handleCompact(conn *websocket.Conn, payload json.RawMessage)
 
 	// 异步执行压缩操作
 	go func() {
-		// 压缩前先提取记忆（保存重要信息）
-		h.mu.Lock()
-		userID := h.currentUserID
-		h.mu.Unlock()
-		if userID != "" {
-			log.Printf("[WS] Extracting memories before compact for session %s", req.SessionID)
-			h.extractMemoriesFromSession(userID, sess)
-		}
+		// 注意：压缩前的记忆提取现在由 context.Manager 内部通过 EventBus 的
+		// BeforeCompact 事件自动触发，无需在此显式调用
 
 		// 执行压缩
 		sess.CompactContext()

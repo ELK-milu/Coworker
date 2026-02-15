@@ -296,6 +296,131 @@ func getMessageText(msg types.Message) string {
 	return strings.Join(parts, "\n")
 }
 
+// ExtractSessionSummary 提取上下文窗口级总结
+// 将整个上下文窗口的对话总结为一条综合性记忆
+// 触发时机：compaction 前、会话结束时
+func (e *Extractor) ExtractSessionSummary(userID, sessionID string, messages []types.Message) *Memory {
+	if e.aiClient == nil {
+		log.Printf("[MemoryExtractor] AI client not available, skipping session summary")
+		return nil
+	}
+
+	if len(messages) < 4 {
+		log.Printf("[MemoryExtractor] Too few messages (%d) for session summary, skipping", len(messages))
+		return nil
+	}
+
+	// 构建对话文本（窗口总结需要更多上下文，允许 8000 字符）
+	conversationText := e.buildConversationText(messages, 8000)
+	if conversationText == "" {
+		return nil
+	}
+
+	// 检测对话主要语言
+	langHint := detectLanguageHint(conversationText)
+
+	prompt := fmt.Sprintf(`%s
+
+%s
+
+<conversation>
+%s
+</conversation>
+
+Respond with ONLY a single paragraph. No JSON, no markdown, no explanation.`, GetSessionSummaryPrompt(), langHint, conversationText)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	response, err := e.aiClient.CreateSimpleMessage(ctx, prompt, 1000)
+	if err != nil {
+		log.Printf("[MemoryExtractor] Session summary extraction failed: %v", err)
+		return nil
+	}
+
+	response = strings.TrimSpace(response)
+	if response == "" || len(response) < 20 {
+		log.Printf("[MemoryExtractor] Session summary too short, skipping")
+		return nil
+	}
+
+	// 生成简短标题作为 summary
+	summaryTitle := generateSummaryTitle(response)
+
+	log.Printf("[MemoryExtractor] Session summary extracted (%d chars)", len(response))
+	return &Memory{
+		Tags:      []string{"session-summary"},
+		Content:   response,
+		Summary:   summaryTitle,
+		Source:    "context_window_summary",
+		SessionID: sessionID,
+		Weight:    0.6,
+	}
+}
+
+// detectLanguageHint 检测对话主要语言并返回语言提示
+func detectLanguageHint(text string) string {
+	// 统计中文字符占比
+	cnCount := 0
+	total := 0
+	for _, r := range text {
+		if r > 127 {
+			cnCount++
+		}
+		total++
+		if total > 500 {
+			break // 只检测前 500 个字符
+		}
+	}
+
+	if total > 0 && float64(cnCount)/float64(total) > 0.15 {
+		return "IMPORTANT: The conversation is primarily in Chinese. Write the summary in Chinese (中文)."
+	}
+	return ""
+}
+
+// generateSummaryTitle 从总结内容生成简短标题
+func generateSummaryTitle(content string) string {
+	// 取第一句话作为标题
+	for _, sep := range []string{"。", ". ", "，", ", "} {
+		if idx := strings.Index(content, sep); idx > 0 && idx < 80 {
+			return content[:idx]
+		}
+	}
+	// 截断到 60 字符
+	if len(content) > 60 {
+		// 找到最近的空格或标点断开
+		cutoff := 60
+		for i := cutoff; i > 30; i-- {
+			if content[i] == ' ' || content[i] == ',' {
+				cutoff = i
+				break
+			}
+		}
+		return content[:cutoff] + "..."
+	}
+	return content
+}
+
+// GetSessionSummaryPrompt 获取上下文窗口总结提示词
+func GetSessionSummaryPrompt() string {
+	return `You are a session summarizer. Summarize the conversation below as a concise session log.
+
+Focus on:
+1. What the user was working on (project, feature, task)
+2. What was accomplished (completed changes, files modified, problems solved)
+3. Key decisions made and why
+4. Problems encountered and their solutions
+5. Any unfinished work or next steps mentioned
+
+Rules:
+- Write a single cohesive paragraph, 100-300 words
+- Be specific: include file names, function names, technology choices
+- Focus on OUTCOMES, not the back-and-forth process
+- Skip greetings, small talk, and routine tool operations
+- If the conversation was trivial (just greetings or simple questions), respond with just "trivial"`
+}
+
 // GetExtractionPrompt 获取 AI 提取提示词
 func GetExtractionPrompt() string {
 	return `You are a memory extraction assistant. Analyze the conversation below and extract information worth remembering long-term.

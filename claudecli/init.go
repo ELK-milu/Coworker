@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
 	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/embedding"
+	"github.com/QuantumNous/new-api/claudecli/internal/eventbus"
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/memory"
@@ -183,6 +184,13 @@ func Init() *Module {
 	// P2.5: 创建文件修改时间追踪器
 	fileTime := tools.NewFileTime()
 	wsHandler.SetFileTime(fileTime)
+
+	// 创建 EventBus 并注册记忆事件处理器
+	bus := eventbus.New()
+	memoryHandlers := memory.NewMemoryHandlers(memoryManager, claudeClient)
+	memoryHandlers.Register(bus)
+	wsHandler.SetEventBus(bus)
+	log.Println("[ClaudeCLI] EventBus initialized with memory handlers")
 
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)
