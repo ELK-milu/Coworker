@@ -128,6 +128,77 @@ func (m *Manager) GetByID(userID, memoryID string) *Memory {
 	return nil
 }
 
+// ReadFromDisk 直接从磁盘读取记忆（不依赖内存缓存）
+func (m *Manager) ReadFromDisk(userID, memoryID string) *Memory {
+	path := filepath.Join(m.GetMemoriesDir(userID), memoryID+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var mem Memory
+	if json.Unmarshal(data, &mem) != nil {
+		return nil
+	}
+	return &mem
+}
+
+// UpsertByID 按 ID 创建或覆盖记忆（直接读写磁盘）
+// 若 ID 对应的文件存在则覆盖内容，不存在则创建
+func (m *Manager) UpsertByID(userID string, mem *Memory) (*Memory, bool, error) {
+	now := time.Now().Unix()
+
+	existing := m.ReadFromDisk(userID, mem.ID)
+	if existing != nil {
+		// 覆盖内容，保留创建时间
+		existing.Content = mem.Content
+		if mem.Summary != "" {
+			existing.Summary = mem.Summary
+		}
+		if len(mem.Tags) > 0 {
+			existing.Tags = mem.Tags
+		}
+		if mem.Weight > 0 {
+			existing.Weight = mem.Weight
+		}
+		existing.AccessCnt++
+		existing.UpdatedAt = now
+		existing.LastAccess = now
+
+		if err := m.saveMemory(userID, existing); err != nil {
+			return nil, false, err
+		}
+
+		// 同步到内存缓存（如果已加载）
+		m.mu.Lock()
+		if m.memories[userID] != nil {
+			m.memories[userID][existing.ID] = existing
+		}
+		m.mu.Unlock()
+
+		return existing, false, nil
+	}
+
+	// 不存在，创建新记忆
+	mem.UserID = userID
+	mem.CreatedAt = now
+	mem.UpdatedAt = now
+	mem.LastAccess = now
+
+	if err := m.saveMemory(userID, mem); err != nil {
+		return nil, false, err
+	}
+
+	// 同步到内存缓存
+	m.mu.Lock()
+	if m.memories[userID] == nil {
+		m.memories[userID] = make(map[string]*Memory)
+	}
+	m.memories[userID][mem.ID] = mem
+	m.mu.Unlock()
+
+	return mem, true, nil
+}
+
 // Update 更新记忆
 func (m *Manager) Update(userID, memoryID string, updates map[string]interface{}) (*Memory, error) {
 	m.mu.Lock()
@@ -492,36 +563,54 @@ func (m *Manager) mergeMemory(userID string, existing, newMem *Memory) (*Memory,
 	return existing, nil
 }
 
-// FindByWindowID 根据窗口 ID 查找记忆
+// FindByWindowID 根据窗口 ID 查找记忆（直接读磁盘，不依赖内存缓存）
+// 优先按 windowID 作为文件名查找，兼容旧数据时扫描目录
 func (m *Manager) FindByWindowID(userID, windowID string) *Memory {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	if windowID == "" {
 		return nil
 	}
 
-	userMems, ok := m.memories[userID]
-	if !ok {
-		return nil
+	dir := m.GetMemoriesDir(userID)
+
+	// 优先：windowID 直接作为文件名（新格式）
+	path := filepath.Join(dir, windowID+".json")
+	if data, err := os.ReadFile(path); err == nil {
+		var mem Memory
+		if json.Unmarshal(data, &mem) == nil && mem.WindowID == windowID {
+			return &mem
+		}
 	}
 
-	for _, mem := range userMems {
-		if mem.WindowID == windowID {
-			return mem
+	// 兼容：扫描目录查找旧格式（UUID 文件名但 window_id 字段匹配）
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var mem Memory
+		if json.Unmarshal(data, &mem) == nil && mem.WindowID == windowID {
+			return &mem
 		}
 	}
 	return nil
 }
 
-// UpsertByWindowID 按窗口 ID 创建或替换记忆
-// 同一个窗口只维护一条记忆，后续提取直接替换标题和内容
+// UpsertByWindowID 按窗口 ID 创建或覆盖记忆（直接读写磁盘）
+// 同一个窗口只维护一条记忆，windowID 即为文件名
 func (m *Manager) UpsertByWindowID(userID string, mem *Memory) (*Memory, bool, error) {
 	existing := m.FindByWindowID(userID, mem.WindowID)
 
+	now := time.Now().Unix()
+
 	if existing != nil {
-		// 替换内容和摘要
-		m.mu.Lock()
+		// 覆盖内容，保留 ID 和创建时间
 		existing.Content = mem.Content
 		existing.Summary = mem.Summary
 		existing.Tags = mem.Tags
@@ -529,27 +618,43 @@ func (m *Manager) UpsertByWindowID(userID string, mem *Memory) (*Memory, bool, e
 			existing.Weight = mem.Weight
 		}
 		existing.AccessCnt++
-		existing.UpdatedAt = time.Now().Unix()
-		existing.LastAccess = time.Now().Unix()
-
-		// 更新标签索引
-		m.removeFromTagIndex(userID, existing)
-		for _, tag := range existing.Tags {
-			m.tagIndex[userID][tag] = append(m.tagIndex[userID][tag], existing.ID)
-		}
+		existing.UpdatedAt = now
+		existing.LastAccess = now
 
 		if err := m.saveMemory(userID, existing); err != nil {
-			m.mu.Unlock()
 			return nil, false, err
 		}
+
+		// 同步到内存缓存（如果已加载）
+		m.mu.Lock()
+		if m.memories[userID] != nil {
+			m.memories[userID][existing.ID] = existing
+		}
 		m.mu.Unlock()
+
 		return existing, false, nil
 	}
 
-	// 新窗口，创建记忆
-	created, err := m.Create(userID, mem)
-	if err != nil {
+	// 新窗口：用 windowID 作为 memoryID，直接写磁盘
+	mem.ID = mem.WindowID
+	mem.UserID = userID
+	mem.CreatedAt = now
+	mem.UpdatedAt = now
+	mem.LastAccess = now
+	if mem.Source == "" {
+		mem.Source = "extracted"
+	}
+
+	if err := m.saveMemory(userID, mem); err != nil {
 		return nil, false, err
 	}
-	return created, true, nil
+
+	// 同步到内存缓存（如果已加载）
+	m.mu.Lock()
+	if m.memories[userID] != nil {
+		m.memories[userID][mem.ID] = mem
+	}
+	m.mu.Unlock()
+
+	return mem, true, nil
 }
