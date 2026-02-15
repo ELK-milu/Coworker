@@ -2,8 +2,10 @@ package api
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
+	"github.com/QuantumNous/new-api/claudecli/internal/memory"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
@@ -17,6 +19,7 @@ type RESTHandler struct {
 	tasks     *task.Manager
 	workspace *workspace.Manager
 	jobs      *job.Manager
+	memories  *memory.Manager
 }
 
 // NewRESTHandler 创建 REST 处理器
@@ -37,6 +40,11 @@ func (h *RESTHandler) SetWorkspaceManager(wm *workspace.Manager) {
 // SetJobManager 设置 Job 管理器
 func (h *RESTHandler) SetJobManager(jm *job.Manager) {
 	h.jobs = jm
+}
+
+// SetMemoryManager 设置记忆管理器
+func (h *RESTHandler) SetMemoryManager(mm *memory.Manager) {
+	h.memories = mm
 }
 
 // CreateSession 创建会话
@@ -699,4 +707,216 @@ func (h *RESTHandler) ReorderJobs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ========== 记忆管理 API ==========
+
+// ListMemories 获取记忆列表（按 weight 降序）
+func (h *RESTHandler) ListMemories(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.memories == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
+		return
+	}
+
+	// 确保用户记忆已加载
+	h.memories.LoadUserMemories(userID)
+
+	memories := h.memories.List(userID)
+
+	// 按 weight 降序排序
+	sort.Slice(memories, func(i, j int) bool {
+		return memories[i].Weight > memories[j].Weight
+	})
+
+	c.JSON(http.StatusOK, gin.H{"memories": memories})
+}
+
+// GetMemory 获取单条记忆
+func (h *RESTHandler) GetMemory(c *gin.Context) {
+	userID := c.Query("user_id")
+	memoryID := c.Param("id")
+
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.memories == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
+		return
+	}
+
+	mem, err := h.memories.Get(userID, memoryID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"memory": mem})
+}
+
+// CreateMemory 创建记忆
+func (h *RESTHandler) CreateMemory(c *gin.Context) {
+	var req struct {
+		UserID  string   `json:"user_id"`
+		Tags    []string `json:"tags"`
+		Content string   `json:"content"`
+		Summary string   `json:"summary"`
+		Weight  float64  `json:"weight"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.UserID == "" || len(req.Tags) == 0 || req.Content == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id, tags and content are required"})
+		return
+	}
+
+	if h.memories == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
+		return
+	}
+
+	if req.Weight <= 0 || req.Weight > 1 {
+		req.Weight = 0.5
+	}
+	if req.Summary == "" {
+		req.Summary = req.Content
+		if len(req.Summary) > 50 {
+			req.Summary = req.Summary[:50] + "..."
+		}
+	}
+
+	mem := &memory.Memory{
+		Tags:    req.Tags,
+		Content: req.Content,
+		Summary: req.Summary,
+		Source:  "manual",
+		Weight:  req.Weight,
+	}
+
+	created, err := h.memories.Create(req.UserID, mem)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "memory": created})
+}
+
+// UpdateMemory 更新记忆
+func (h *RESTHandler) UpdateMemory(c *gin.Context) {
+	memoryID := c.Param("id")
+	var req struct {
+		UserID  string   `json:"user_id"`
+		Tags    []string `json:"tags,omitempty"`
+		Content string   `json:"content,omitempty"`
+		Summary string   `json:"summary,omitempty"`
+		Weight  float64  `json:"weight,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.memories == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if len(req.Tags) > 0 {
+		updates["tags"] = req.Tags
+	}
+	if req.Content != "" {
+		updates["content"] = req.Content
+	}
+	if req.Summary != "" {
+		updates["summary"] = req.Summary
+	}
+	if req.Weight > 0 && req.Weight <= 1 {
+		updates["weight"] = req.Weight
+	}
+
+	updated, err := h.memories.Update(req.UserID, memoryID, updates)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "memory": updated})
+}
+
+// DeleteMemory 删除记忆
+func (h *RESTHandler) DeleteMemory(c *gin.Context) {
+	memoryID := c.Param("id")
+	userID := c.Query("user_id")
+
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.memories == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
+		return
+	}
+
+	if err := h.memories.Delete(userID, memoryID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// SearchMemories 搜索记忆
+func (h *RESTHandler) SearchMemories(c *gin.Context) {
+	userID := c.Query("user_id")
+	query := c.Query("q")
+
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.memories == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
+		return
+	}
+
+	// 确保用户记忆已加载
+	h.memories.LoadUserMemories(userID)
+
+	if query == "" {
+		// 无查询词时返回全部（按 weight 降序）
+		memories := h.memories.List(userID)
+		sort.Slice(memories, func(i, j int) bool {
+			return memories[i].Weight > memories[j].Weight
+		})
+		c.JSON(http.StatusOK, gin.H{"memories": memories})
+		return
+	}
+
+	memories := h.memories.Retrieve(userID, query, 20)
+
+	// 按 weight 降序排序
+	sort.Slice(memories, func(i, j int) bool {
+		return memories[i].Weight > memories[j].Weight
+	})
+
+	c.JSON(http.StatusOK, gin.H{"memories": memories})
 }

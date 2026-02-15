@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Input, Button, Tag, Empty, Modal, Form, TextArea, Slider, Popconfirm, Toast } from '@douyinfe/semi-ui';
 import { IconPlus, IconSearch, IconDelete, IconEdit, IconRefresh } from '@douyinfe/semi-icons';
+import { listMemories, createMemory, updateMemory, deleteMemory, searchMemories } from '../services/api';
 import './MemoryPanel.css';
 
-const MemoryPanel = ({ ws, userId }) => {
+const MemoryPanel = ({ userId }) => {
   const [memories, setMemories] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -16,34 +17,41 @@ const MemoryPanel = ({ ws, userId }) => {
     weight: 0.5
   });
 
-  // 加载记忆列表
-  const loadMemories = () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  // 加载记忆列表（REST API）
+  const loadMemories = useCallback(async () => {
+    if (!userId) return;
     setLoading(true);
-    ws.send(JSON.stringify({
-      type: 'memory_list',
-      payload: { user_id: userId }
-    }));
-  };
+    try {
+      const data = await listMemories(userId);
+      // 后端已按 weight 降序排序
+      setMemories(data.memories || []);
+    } catch (e) {
+      Toast.error('加载记忆失败: ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
 
-  // 搜索记忆
-  const searchMemories = () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  // 搜索记忆（REST API）
+  const handleSearch = useCallback(async () => {
+    if (!userId) return;
     if (!searchQuery.trim()) {
       loadMemories();
       return;
     }
     setLoading(true);
-    ws.send(JSON.stringify({
-      type: 'memory_search',
-      payload: { user_id: userId, query: searchQuery }
-    }));
-  };
+    try {
+      const data = await searchMemories(userId, searchQuery);
+      setMemories(data.memories || []);
+    } catch (e) {
+      Toast.error('搜索失败: ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId, searchQuery, loadMemories]);
 
-  // 创建/更新记忆
-  const saveMemory = () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
+  // 创建/更新记忆（REST API）
+  const saveMemory = async () => {
     const tags = formData.tags.split(',').map(t => t.trim()).filter(t => t);
     if (tags.length === 0) {
       Toast.error('请至少添加一个标签');
@@ -54,32 +62,41 @@ const MemoryPanel = ({ ws, userId }) => {
       return;
     }
 
-    const payload = {
-      user_id: userId,
-      tags,
-      content: formData.content,
-      summary: formData.summary || formData.content.substring(0, 50),
-      weight: formData.weight
-    };
-
-    if (editingMemory) {
-      payload.memory_id = editingMemory.id;
-      ws.send(JSON.stringify({ type: 'memory_update', payload }));
-    } else {
-      ws.send(JSON.stringify({ type: 'memory_create', payload }));
+    try {
+      if (editingMemory) {
+        await updateMemory(userId, editingMemory.id, {
+          tags,
+          content: formData.content,
+          summary: formData.summary || formData.content.substring(0, 50),
+          weight: formData.weight,
+        });
+        Toast.success('记忆已更新');
+      } else {
+        await createMemory(userId, {
+          tags,
+          content: formData.content,
+          summary: formData.summary || formData.content.substring(0, 50),
+          weight: formData.weight,
+        });
+        Toast.success('记忆已创建');
+      }
+      setEditModalVisible(false);
+      resetForm();
+      loadMemories();
+    } catch (e) {
+      Toast.error('保存失败: ' + e.message);
     }
-
-    setEditModalVisible(false);
-    resetForm();
   };
 
-  // 删除记忆
-  const deleteMemory = (memoryId) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({
-      type: 'memory_delete',
-      payload: { user_id: userId, memory_id: memoryId }
-    }));
+  // 删除记忆（REST API）
+  const handleDelete = async (memoryId) => {
+    try {
+      await deleteMemory(userId, memoryId);
+      Toast.success('记忆已删除');
+      loadMemories();
+    } catch (e) {
+      Toast.error('删除失败: ' + e.message);
+    }
   };
 
   // 重置表单
@@ -104,60 +121,25 @@ const MemoryPanel = ({ ws, userId }) => {
     setEditModalVisible(true);
   };
 
-  // 处理 WebSocket 消息
-  useEffect(() => {
-    if (!ws) return;
-
-    const handleMessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        switch (data.type) {
-          case 'memories_list':
-            setMemories(data.payload.memories || []);
-            setLoading(false);
-            break;
-          case 'memory_created':
-            if (data.payload.success) {
-              Toast.success('记忆已创建');
-              loadMemories();
-            }
-            break;
-          case 'memory_updated':
-            if (data.payload.success) {
-              Toast.success('记忆已更新');
-              loadMemories();
-            }
-            break;
-          case 'memory_deleted':
-            if (data.payload.success) {
-              Toast.success('记忆已删除');
-              loadMemories();
-            }
-            break;
-        }
-      } catch (e) {
-        console.error('Parse message error:', e);
-      }
-    };
-
-    ws.addEventListener('message', handleMessage);
-    return () => ws.removeEventListener('message', handleMessage);
-  }, [ws]);
-
   // 初始加载
   useEffect(() => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      loadMemories();
-    }
-  }, [ws, userId]);
+    loadMemories();
+  }, [loadMemories]);
 
-  // 按标签分组
+  // 按标签分组（组内已按 weight 降序）
   const groupedMemories = memories.reduce((acc, mem) => {
     const primaryTag = mem.tags[0] || 'other';
     if (!acc[primaryTag]) acc[primaryTag] = [];
     acc[primaryTag].push(mem);
     return acc;
   }, {});
+
+  // 组按最高 weight 排序
+  const sortedGroups = Object.entries(groupedMemories).sort((a, b) => {
+    const maxA = Math.max(...a[1].map(m => m.weight || 0));
+    const maxB = Math.max(...b[1].map(m => m.weight || 0));
+    return maxB - maxA;
+  });
 
   return (
     <div className="memory-panel">
@@ -168,7 +150,7 @@ const MemoryPanel = ({ ws, userId }) => {
             placeholder="搜索记忆..."
             value={searchQuery}
             onChange={setSearchQuery}
-            onEnterPress={searchMemories}
+            onEnterPress={handleSearch}
           />
         </div>
         <div className="memory-actions">
@@ -183,7 +165,7 @@ const MemoryPanel = ({ ws, userId }) => {
         {memories.length === 0 ? (
           <Empty description="暂无记忆" />
         ) : (
-          Object.entries(groupedMemories).map(([tag, mems]) => (
+          sortedGroups.map(([tag, mems]) => (
             <div key={tag} className="memory-group">
               <div className="memory-group-header">
                 <Tag color="blue">{tag}</Tag>
@@ -194,7 +176,7 @@ const MemoryPanel = ({ ws, userId }) => {
                   key={mem.id}
                   memory={mem}
                   onEdit={() => openEditModal(mem)}
-                  onDelete={() => deleteMemory(mem.id)}
+                  onDelete={() => handleDelete(mem.id)}
                 />
               ))}
             </div>

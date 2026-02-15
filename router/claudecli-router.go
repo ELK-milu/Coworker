@@ -46,6 +46,14 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 		coworkerGroup.GET("/userinfo", claudeCLICtrl.GetUserInfo)
 		coworkerGroup.PUT("/userinfo", claudeCLICtrl.SaveUserInfo)
 
+		// 记忆管理
+		coworkerGroup.GET("/memories", claudeCLICtrl.ListMemories)
+		coworkerGroup.GET("/memories/search", claudeCLICtrl.SearchMemories)
+		coworkerGroup.POST("/memories", claudeCLICtrl.CreateMemory)
+		coworkerGroup.GET("/memories/:id", claudeCLICtrl.GetMemory)
+		coworkerGroup.PUT("/memories/:id", claudeCLICtrl.UpdateMemory)
+		coworkerGroup.DELETE("/memories/:id", claudeCLICtrl.DeleteMemory)
+
 		// Job 管理
 		coworkerGroup.GET("/jobs", claudeCLICtrl.ListJobs)
 		coworkerGroup.POST("/jobs", claudeCLICtrl.CreateJob)

@@ -168,3 +168,35 @@ func (ctrl *ClaudeCLIController) RunJob(c *gin.Context) {
 func (ctrl *ClaudeCLIController) ReorderJobs(c *gin.Context) {
 	ctrl.module.RESTHandler.ReorderJobs(c)
 }
+
+// ========== 记忆管理 ==========
+
+// ListMemories 获取记忆列表
+func (ctrl *ClaudeCLIController) ListMemories(c *gin.Context) {
+	ctrl.module.RESTHandler.ListMemories(c)
+}
+
+// GetMemory 获取单条记忆
+func (ctrl *ClaudeCLIController) GetMemory(c *gin.Context) {
+	ctrl.module.RESTHandler.GetMemory(c)
+}
+
+// CreateMemory 创建记忆
+func (ctrl *ClaudeCLIController) CreateMemory(c *gin.Context) {
+	ctrl.module.RESTHandler.CreateMemory(c)
+}
+
+// UpdateMemory 更新记忆
+func (ctrl *ClaudeCLIController) UpdateMemory(c *gin.Context) {
+	ctrl.module.RESTHandler.UpdateMemory(c)
+}
+
+// DeleteMemory 删除记忆
+func (ctrl *ClaudeCLIController) DeleteMemory(c *gin.Context) {
+	ctrl.module.RESTHandler.DeleteMemory(c)
+}
+
+// SearchMemories 搜索记忆
+func (ctrl *ClaudeCLIController) SearchMemories(c *gin.Context) {
+	ctrl.module.RESTHandler.SearchMemories(c)
+}

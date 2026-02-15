@@ -61,13 +61,18 @@ func (e *Extractor) extractWithAI(userID, sessionID string, messages []types.Mes
 		return nil
 	}
 
+	// 检测对话语言，指导 AI 用相同语言提取记忆
+	langHint := detectLanguageHint(conversationText)
+
 	prompt := fmt.Sprintf(`%s
+
+%s
 
 <conversation>
 %s
 </conversation>
 
-Respond with ONLY a JSON array. No explanation, no markdown fences.`, GetExtractionPrompt(), conversationText)
+Respond with ONLY a JSON array. No explanation, no markdown fences.`, GetExtractionPrompt(), langHint, conversationText)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

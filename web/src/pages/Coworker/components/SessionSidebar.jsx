@@ -294,7 +294,7 @@ const SessionSidebar = ({
             onReorder={onReorderJobs}
           />
         ) : activeTab === 'memory' ? (
-          <MemoryPanel ws={ws} userId={userId} />
+          <MemoryPanel userId={userId} />
         ) : (
           <FileExplorer
             files={files}

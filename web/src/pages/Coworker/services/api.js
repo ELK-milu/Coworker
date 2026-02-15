@@ -192,6 +192,46 @@ export async function saveUserInfo(userId, userInfo) {
   });
 }
 
+// ========== 记忆管理 API ==========
+
+export async function listMemories(userId) {
+  return request(`/memories?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function getMemory(userId, memoryId) {
+  return request(`/memories/${encodeURIComponent(memoryId)}?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function createMemory(userId, memoryData) {
+  return request('/memories', {
+    method: 'POST',
+    body: JSON.stringify({
+      user_id: userId,
+      ...memoryData,
+    }),
+  });
+}
+
+export async function updateMemory(userId, memoryId, updates) {
+  return request(`/memories/${encodeURIComponent(memoryId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      user_id: userId,
+      ...updates,
+    }),
+  });
+}
+
+export async function deleteMemory(userId, memoryId) {
+  return request(`/memories/${encodeURIComponent(memoryId)}?user_id=${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function searchMemories(userId, query) {
+  return request(`/memories/search?user_id=${encodeURIComponent(userId)}&q=${encodeURIComponent(query)}`);
+}
+
 // ========== Job 管理 API ==========
 
 export async function listJobs(userId) {
