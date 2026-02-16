@@ -79,6 +79,7 @@ const Coworker = () => {
   const sessionIdRef = useRef(sessionId);  // 用于在闭包中获取最新的 sessionId
   const ratioConfigRef = useRef(null);  // 用于在 calculateCost 闭包中获取最新的 ratioConfig
   const turnCostRef = useRef(0);  // 本轮 cost（status 事件中计算，done 事件中直接读取）
+  const turnStartTimeRef = useRef(0);  // 本轮消息发送时间（Unix秒），用于匹配日志
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -129,6 +130,35 @@ const Coworker = () => {
     const totalCost = inputCost + outputCost;
     console.log('[Coworker] calculateCost:', { model, inputTokens, outputTokens, modelRatio, completionRatio, totalCost });
     return totalCost;
+  }, []);
+
+  // 从 /api/log/self/ 获取本轮实际计费数据（done 事件后调用）
+  const fetchTurnBillingFromLogs = useCallback(async (model, startTime) => {
+    try {
+      const { API } = await import('../../helpers/api');
+      const res = await API.get(`/api/log/self/?start_timestamp=${startTime}&model_name=${encodeURIComponent(model)}&p=1&page_size=50`);
+      const items = res.data?.data?.items || res.data?.data || [];
+      if (!Array.isArray(items) || items.length === 0) return null;
+
+      let totalPrompt = 0, totalCompletion = 0, totalQuota = 0;
+      for (const item of items) {
+        totalPrompt += item.prompt_tokens || 0;
+        totalCompletion += item.completion_tokens || 0;
+        totalQuota += item.quota || 0;
+      }
+
+      // quota → USD: quota / quota_per_unit
+      const quotaPerUnit = parseFloat(localStorage.getItem('quota_per_unit')) || 500000;
+      const costUSD = totalQuota / quotaPerUnit;
+
+      console.log('[Coworker] fetchTurnBilling: found', items.length, 'log entries', {
+        totalPrompt, totalCompletion, totalQuota, costUSD,
+      });
+      return { promptTokens: totalPrompt, completionTokens: totalCompletion, costUSD };
+    } catch (e) {
+      console.warn('[Coworker] fetchTurnBilling failed, falling back to local calc:', e);
+      return null;
+    }
   }, []);
 
   // 启动时加载模型定价配置
@@ -451,29 +481,56 @@ const Coworker = () => {
         setMessages(prev => prev.map(msg =>
           msg.streaming ? { ...msg, streaming: false } : msg
         ));
-        // 累加本轮消耗到会话统计
+        // 累加本轮消耗到会话统计（先用本地计算立即显示，再用日志数据修正）
         {
           const turn = turnStatsRef.current;
-          const cost = turnCostRef.current;  // status 事件中已算好，直接读
-          console.log('[Coworker] done event, turn:', turn, 'cost:', cost);
+          const localCost = turnCostRef.current;
+          const startTime = turnStartTimeRef.current;
+          const model = turn?.model || '';
+          console.log('[Coworker] done event, turn:', turn, 'localCost:', localCost);
+
           if (turn && turn.totalTokens > 0) {
+            // 立即用本地数据累加（保证 UI 即时响应）
             setSessionStats(prev => {
               const updated = {
                 totalInputTokens: prev.totalInputTokens + turn.inputTokens,
                 totalOutputTokens: prev.totalOutputTokens + turn.outputTokens,
                 totalTokens: prev.totalTokens + turn.totalTokens,
-                totalCost: prev.totalCost + cost,
+                totalCost: prev.totalCost + localCost,
                 turnCount: prev.turnCount + 1,
               };
               const sid = sessionIdRef.current;
-              console.log('[Coworker] Accumulating session stats:', { prev, turn, cost, updated, sid });
               if (sid) {
                 localStorage.setItem(SESSION_STATS_PREFIX + sid, JSON.stringify(updated));
               }
               return updated;
             });
-          } else {
-            console.warn('[Coworker] Skipping accumulation: turn is null or totalTokens is 0');
+
+            // 异步从日志获取实际计费，修正 cost 和 token 数
+            if (startTime > 0 && model) {
+              fetchTurnBillingFromLogs(model, startTime).then(billing => {
+                if (!billing) return;  // 无日志数据，保持本地计算
+                const costDiff = billing.costUSD - localCost;
+                const promptDiff = billing.promptTokens - turn.inputTokens;
+                const completionDiff = billing.completionTokens - turn.outputTokens;
+                if (Math.abs(costDiff) < 0.000001 && promptDiff === 0 && completionDiff === 0) return;  // 无差异
+                console.log('[Coworker] Correcting stats from logs:', { costDiff, promptDiff, completionDiff });
+                setSessionStats(prev => {
+                  const corrected = {
+                    ...prev,
+                    totalInputTokens: prev.totalInputTokens + promptDiff,
+                    totalOutputTokens: prev.totalOutputTokens + completionDiff,
+                    totalTokens: prev.totalTokens + promptDiff + completionDiff,
+                    totalCost: prev.totalCost + costDiff,
+                  };
+                  const sid = sessionIdRef.current;
+                  if (sid) {
+                    localStorage.setItem(SESSION_STATS_PREFIX + sid, JSON.stringify(corrected));
+                  }
+                  return corrected;
+                });
+              });
+            }
           }
         }
         break;
@@ -642,6 +699,7 @@ const Coworker = () => {
 
     abortedRef.current = false;
     turnCostRef.current = 0;  // 重置本轮 cost
+    turnStartTimeRef.current = Math.floor(Date.now() / 1000);  // 记录发送时间（Unix秒）
     const userMsg = { type: 'user', content: inputValue, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
     const messageToSend = inputValue;
