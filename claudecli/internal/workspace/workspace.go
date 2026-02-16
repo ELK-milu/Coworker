@@ -401,6 +401,8 @@ type UserInfo struct {
 	CoworkerName string `json:"coworker_name"`
 	Phone        string `json:"phone"`
 	Email        string `json:"email"`
+	ApiTokenKey  string `json:"api_token_key,omitempty"`  // NewAPI 令牌 Key (如 "sk-xxx")
+	ApiTokenName string `json:"api_token_name,omitempty"` // 令牌名称 (显示用)
 }
 
 // LoadUserInfo 加载用户信息

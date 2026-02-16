@@ -481,10 +481,12 @@ func (h *RESTHandler) GetUserInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"user_name":     info.UserName,
-		"coworker_name": info.CoworkerName,
-		"phone":         info.Phone,
-		"email":         info.Email,
+		"user_name":      info.UserName,
+		"coworker_name":  info.CoworkerName,
+		"phone":          info.Phone,
+		"email":          info.Email,
+		"api_token_key":  info.ApiTokenKey,
+		"api_token_name": info.ApiTokenName,
 	})
 }
 
@@ -496,6 +498,8 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 		CoworkerName string `json:"coworker_name"`
 		Phone        string `json:"phone"`
 		Email        string `json:"email"`
+		ApiTokenKey  string `json:"api_token_key"`
+		ApiTokenName string `json:"api_token_name"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -512,6 +516,8 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 		CoworkerName: req.CoworkerName,
 		Phone:        req.Phone,
 		Email:        req.Email,
+		ApiTokenKey:  req.ApiTokenKey,
+		ApiTokenName: req.ApiTokenName,
 	}
 
 	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {

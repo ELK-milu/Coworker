@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -482,13 +483,36 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	go h.forwardEvents(conn, sess.ID, chat.UserID, eventCh)
 }
 
+// getClientForUser 根据用户令牌配置决定使用全局客户端还是创建 per-user 客户端
+func (h *WSHandler) getClientForUser(userID string) *client.ClaudeClient {
+	if h.workspace == nil {
+		return h.client
+	}
+	info, err := h.workspace.LoadUserInfo(userID)
+	if err != nil || info == nil || info.ApiTokenKey == "" {
+		return h.client // 无令牌，使用全局客户端
+	}
+	// 构建 Relay URL: http://127.0.0.1:{PORT}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+	relayBaseURL := "http://127.0.0.1:" + port
+	log.Printf("[WS] User %s using NewAPI Relay token: %s", userID, info.ApiTokenName)
+	return client.NewClaudeClient(
+		info.ApiTokenKey, "", relayBaseURL,
+		h.config.Claude.Model, int(h.config.Claude.MaxTokens),
+	)
+}
+
 // runConversation 运行对话
 func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, ag *agent.AgentType, eventCh chan loop.LoopEvent, conn *websocket.Conn, isNewSession bool) {
 	defer close(eventCh)
 	// P0.4: 对话结束时释放 Busy 锁
 	defer h.busySessions.Delete(sess.ID)
 
-	l := loop.NewConversationLoop(h.client, sess, h.tools, systemPrompt, userID, sb, h.fileTime, ag, eventCh)
+	userClient := h.getClientForUser(userID)
+	l := loop.NewConversationLoop(userClient, sess, h.tools, systemPrompt, userID, sb, h.fileTime, ag, eventCh)
 	l.ProcessMessage(ctx, msg)
 
 	// 对话结束后保存会话

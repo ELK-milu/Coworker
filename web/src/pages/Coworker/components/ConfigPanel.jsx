@@ -3,7 +3,7 @@ Copyright (C) 2025 QuantumNous
 */
 
 import React, { useRef, useEffect, useState } from 'react';
-import { Button, Typography, Toast, TextArea, Input, Collapsible } from '@douyinfe/semi-ui';
+import { Button, Typography, Toast, TextArea, Input, Collapsible, Select } from '@douyinfe/semi-ui';
 import { IconUpload, IconDownload, IconSave, IconRefresh, IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
 import * as api from '../services/api';
 import './ConfigPanel.css';
@@ -18,11 +18,18 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     userName: '',
     coworkerName: '',
     phone: '',
-    email: ''
+    email: '',
+    apiTokenKey: '',
+    apiTokenName: '',
   });
   const [userInfoLoading, setUserInfoLoading] = useState(false);
   const [userInfoExpanded, setUserInfoExpanded] = useState(true);
   const [promptExpanded, setPromptExpanded] = useState(true);
+
+  // API 令牌状态
+  const [tokens, setTokens] = useState([]);
+  const [tokenExpanded, setTokenExpanded] = useState(true);
+  const [tokenLoading, setTokenLoading] = useState(false);
 
   // 加载配置文件 (REST API)
   const loadConfig = async () => {
@@ -34,25 +41,6 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
       Toast.error('加载配置失败: ' + error.message);
     } finally {
       onLoadingChange(false);
-    }
-  };
-
-  // 加载用户信息
-  const loadUserInfo = async () => {
-    setUserInfoLoading(true);
-    try {
-      const data = await api.getUserInfo(userId);
-      setUserInfo({
-        userName: data.user_name || '',
-        coworkerName: data.coworker_name || '',
-        phone: data.phone || '',
-        email: data.email || ''
-      });
-    } catch (error) {
-      // 如果没有用户信息，使用默认值
-      console.log('No user info found, using defaults');
-    } finally {
-      setUserInfoLoading(false);
     }
   };
 
@@ -79,6 +67,48 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
       Toast.error('保存失败: ' + error.message);
     } finally {
       setUserInfoLoading(false);
+    }
+  };
+
+  // 加载令牌列表
+  const loadTokens = async () => {
+    setTokenLoading(true);
+    try {
+      const items = await api.listTokens();
+      setTokens(items);
+      return items;
+    } catch (error) {
+      console.log('Failed to load tokens:', error.message);
+      return [];
+    } finally {
+      setTokenLoading(false);
+    }
+  };
+
+  // 处理令牌选择
+  const handleTokenChange = async (value) => {
+    if (value === '') {
+      // 选择"系统默认"
+      const updated = { ...userInfo, apiTokenKey: '', apiTokenName: '' };
+      setUserInfo(updated);
+      try {
+        await api.saveUserInfo(userId, updated);
+        Toast.success('已切换为系统默认');
+      } catch (error) {
+        Toast.error('保存失败: ' + error.message);
+      }
+    } else {
+      const token = tokens.find(t => t.key === value);
+      if (token) {
+        const updated = { ...userInfo, apiTokenKey: token.key, apiTokenName: token.name };
+        setUserInfo(updated);
+        try {
+          await api.saveUserInfo(userId, updated);
+          Toast.success(`已选择令牌: ${token.name}`);
+        } catch (error) {
+          Toast.error('保存失败: ' + error.message);
+        }
+      }
     }
   };
 
@@ -120,7 +150,40 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   useEffect(() => {
     if (userId) {
       loadConfig();
-      loadUserInfo();
+      // 顺序加载：先用户信息，再令牌列表，最后自动选择
+      (async () => {
+        let info = null;
+        try {
+          const data = await api.getUserInfo(userId);
+          info = {
+            userName: data.user_name || '',
+            coworkerName: data.coworker_name || '',
+            phone: data.phone || '',
+            email: data.email || '',
+            apiTokenKey: data.api_token_key || '',
+            apiTokenName: data.api_token_name || '',
+          };
+          setUserInfo(info);
+        } catch (error) {
+          console.log('No user info found, using defaults');
+          info = userInfo;
+        }
+
+        const tokenList = await loadTokens();
+
+        // 自动选择：用户未选令牌且有可用令牌时，自动选第一个
+        if (!info.apiTokenKey && tokenList.length > 0) {
+          const first = tokenList[0];
+          const updated = { ...info, apiTokenKey: first.key, apiTokenName: first.name };
+          setUserInfo(updated);
+          try {
+            await api.saveUserInfo(userId, updated);
+            Toast.success(`已自动选择令牌: ${first.name}`);
+          } catch (error) {
+            console.log('Auto-select token save failed:', error.message);
+          }
+        }
+      })();
     }
   }, [userId]);
 
@@ -185,6 +248,57 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
               style={{ marginTop: 8 }}
             >
               保存用户信息
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* API 令牌配置 */}
+      <div className="config-section">
+        <div
+          className="config-section-header"
+          onClick={() => setTokenExpanded(!tokenExpanded)}
+        >
+          <Title heading={6}>API 令牌</Title>
+          {tokenExpanded ? <IconChevronUp /> : <IconChevronDown />}
+        </div>
+
+        {tokenExpanded && (
+          <div className="config-section-content">
+            <Text type="tertiary" size="small">
+              选择 NewAPI 令牌后，API 调用将通过 Relay 代理，按令牌统计用量和计费
+            </Text>
+            <div style={{ marginTop: 8 }}>
+              <Select
+                value={userInfo.apiTokenKey || ''}
+                onChange={handleTokenChange}
+                loading={tokenLoading}
+                style={{ width: '100%' }}
+                size="small"
+                placeholder="选择令牌..."
+              >
+                <Select.Option value="">不使用令牌（系统默认）</Select.Option>
+                {tokens.map(token => {
+                  const maskedKey = token.key ? `sk-***${token.key.slice(-4)}` : '';
+                  const quota = token.remain_quota != null
+                    ? (token.unlimited_quota ? '无限' : `余额 ${(token.remain_quota / 500000).toFixed(2)}`)
+                    : '';
+                  return (
+                    <Select.Option key={token.key} value={token.key}>
+                      {token.name} ({maskedKey}){quota ? ` - ${quota}` : ''}
+                    </Select.Option>
+                  );
+                })}
+              </Select>
+            </div>
+            <Button
+              icon={<IconRefresh />}
+              onClick={loadTokens}
+              size="small"
+              loading={tokenLoading}
+              style={{ marginTop: 8 }}
+            >
+              刷新令牌列表
             </Button>
           </div>
         )}

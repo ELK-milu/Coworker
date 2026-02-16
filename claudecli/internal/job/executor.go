@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"time"
 
@@ -60,6 +61,28 @@ func NewAIExecutor(deps *JobExecutorDeps) JobExecutor {
 	}
 }
 
+// getClientForJobUser 根据用户令牌配置决定使用全局客户端还是创建 per-user 客户端
+func getClientForJobUser(deps *JobExecutorDeps, userID string) *client.ClaudeClient {
+	if deps.Workspace == nil {
+		return deps.Client
+	}
+	info, err := deps.Workspace.LoadUserInfo(userID)
+	if err != nil || info == nil || info.ApiTokenKey == "" {
+		return deps.Client // 无令牌，使用全局客户端
+	}
+	// 构建 Relay URL: http://127.0.0.1:{PORT}
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+	relayBaseURL := "http://127.0.0.1:" + port
+	log.Printf("[JobExecutor] User %s using NewAPI Relay token: %s", userID, info.ApiTokenName)
+	return client.NewClaudeClient(
+		info.ApiTokenKey, "", relayBaseURL,
+		deps.Config.Claude.Model, int(deps.Config.Claude.MaxTokens),
+	)
+}
+
 // executeJobWithAI 使用 AI 执行 Job
 func executeJobWithAI(deps *JobExecutorDeps, j *Job) error {
 	log.Printf("[JobExecutor] Starting AI execution for job %s (%s), user: %s", j.ID, j.Name, j.UserID)
@@ -94,8 +117,9 @@ func executeJobWithAI(deps *JobExecutorDeps, j *Job) error {
 	go func() {
 		defer close(eventCh)
 
+		userClient := getClientForJobUser(deps, j.UserID)
 		l := loop.NewConversationLoop(
-			deps.Client, sess, deps.Tools, systemPrompt,
+			userClient, sess, deps.Tools, systemPrompt,
 			j.UserID, sb, deps.FileTime, nil, eventCh,
 		)
 		l.ProcessMessage(ctx, userMessage)
