@@ -288,6 +288,72 @@ if err != nil {
 
 ## 已完成功能
 
+### 2026-02-17 (Token 统计修复 + 日志计费集成)
+
+- [x] Token 统计管道修复 (`handler.go`, `conversation.go`, `index.jsx`)
+  - `handler.go` 新增 `message_start` 事件处理，捕获 `input_tokens`（Anthropic API 在此事件返回）
+  - `conversation.go` 新增 `EventUsage` 处理分支 + `turnInputTokens`/`turnOutputTokens` 累计字段
+  - `sendStatusEvent()` 使用 `lastInputTokens` 作为 `ContextUsed`（= 当前上下文窗口大小）
+  - `runLoop` 只重置累计字段，保留 `lastInputTokens`/`lastOutputTokens`（避免 Context left 闪烁为 100%）
+  - 前端 `turnStatsRef`/`ratioConfigRef`/`sessionIdRef` 同步写 ref，解决 React 闭包时序问题
+  - `turnCostRef` 在 `status` 事件中同步计算，`done` 事件直接读取（绕开闭包）
+- [x] 日志计费集成 (`index.jsx`)
+  - `done` 事件后从 `/api/log/self/` 获取实际扣费数据
+  - `fetchTurnBillingFromLogs()`: 按 `start_timestamp` + `model_name` 查询日志，累加 `quota` 转 USD
+  - cost 只从日志获取，不再用本地公式（日志含缓存倍率/分组倍率，更准确）
+  - token 立即从 API 流式响应累加，cost 异步从日志更新
+  - `turnStartTimeRef` 记录消息发送时间（Unix 秒），用于匹配日志时间范围
+- [x] Context left 持久化 (`index.jsx`)
+  - `status` 事件中将 `contextPercent`/`contextUsed`/`contextMax` 存入 `localStorage`
+  - 切换会话 / WebSocket 重连时恢复 Context left 状态
+- [x] 会话统计持久化 (`index.jsx`)
+  - `sessionStats`（totalTokens/totalCost/turnCount）存入 `localStorage`
+  - key 格式: `coworker_session_stats_{sessionId}`
+  - 切换会话时恢复，删除会话时清理
+
+### 2026-02-16 (NewAPI 令牌集成 + 对话统计增强)
+
+- [x] NewAPI 令牌集成 — 用户可选令牌通过 Relay 代理计费
+  - `workspace.go` UserInfo 新增 `ApiTokenKey`/`ApiTokenName` 字段
+  - `websocket.go` 新增 `getClientForUser()`: 有令牌 → `NewClaudeClient(tokenKey, relayURL)` 走 Relay；无令牌 → 全局客户端直连
+  - `executor.go` 新增 `getClientForJobUser()`: Job 执行也使用用户令牌
+  - `handler.go` GetUserInfo/SaveUserInfo 支持新字段
+  - `ConfigPanel.jsx` 新增"API 令牌"折叠区域，Semi-UI Select 下拉选择令牌
+  - `api.js` 新增 `listTokens()` 调用 `/api/token/?p=0&size=100`
+- [x] 对话统计增强 (`index.jsx`, `styles.css`)
+  - 动态状态栏: `Model | Cost:$X.XX | Tokens:N | Time:Xs`（回复时实时更新）
+  - 常驻状态栏: `Context left:N% | Session:N tokens | Total:$X.XX`
+  - `/coworker/ratio_config` 接口获取模型定价配置（`controller/claudecli.go` + `router/claudecli-router.go`）
+
+### 2026-02-16 (定时事项AI执行器 + 记忆系统修复)
+
+- [x] 定时事项 AI 执行器 (`job/executor.go`)
+  - `executeJobWithAI()`: 使用 `ConversationLoop` 执行定时事项
+  - 构建独立系统提示词 + 会话 + 工具注册表
+  - 执行结果写入 Job 的 `LastResult` 字段
+  - `init.go` 注册 JobExecutor 到调度器
+- [x] 定时事项 CRUD 修复 (`job/job.go`, `handler.go`, `JobList.jsx`)
+  - 删除按钮修复（前端 onClick 绑定）
+  - 调度字段更新（Schedule/Timezone 持久化）
+  - 任务 ID 显示 + 前端时间格式修复
+- [x] 记忆系统磁盘直读直写 (`memory/memory.go`, `memory_save.go`)
+  - 消除内存缓存不一致问题
+  - 每次 CRUD 操作直接读写磁盘 JSON 文件
+  - `MemorySave` 工具增强：支持更新已有记忆
+
+### 2026-02-15 (记忆系统 REST API 化 + 窗口级记忆架构)
+
+- [x] 记忆系统 REST API 化 (`handler.go`, `api.js`, `MemoryPanel.jsx`)
+  - 脱离 WebSocket 依赖，改用 REST API
+  - 新增端点: `GET/POST/PUT/DELETE /coworker/memories/*`
+  - 多语言提取（检测对话语言，中文占比 >15% 用中文）
+  - 重要性排序（importance 字段）
+  - `MemoryPanel.jsx` 重构为 REST API 调用
+- [x] 窗口级记忆架构 (`memory.go`, `extractor.go`, `handlers.go`, `persist.go`)
+  - `WindowID` 去重机制：每次 compaction 生成唯一 ID，避免重复提取
+  - 记忆排序优化：按 importance → updated_at 排序
+  - 会话持久化增强：序列化 `WindowID` + `LastExtractedAt` 字段
+
 ### 2026-02-16 (权限系统增强 + Milvus 构建修复)
 
 - [x] 权限检查器增强 (`permissions/checker.go`)
@@ -589,6 +655,71 @@ if err != nil {
 
 ---
 
+## NewAPI 计费与统计相关接口
+
+### Quota 体系
+
+**核心常量（`common/constants.go`）：**
+- `QuotaPerUnit = 500 * 1000.0` → 500,000 quota = $1 USD
+- 换算：`美元 = quota / 500000`
+
+**定价倍率（`setting/ratio_setting/`）：**
+- `model_ratio` — 模型基础倍率（如 claude-sonnet-4: 1.5）
+- `completion_ratio` — 输出倍率（如 claude-sonnet-4: 5）
+- `cache_ratio` — 缓存倍率
+- `model_price` — 自定义价格覆盖
+- 基准：1 ratio = $0.002/1K tokens
+
+### 统计数据接口
+
+**用户配额数据：**
+```
+GET /api/data/self?start_timestamp={ts}&end_timestamp={ts}&default_time={hour|day|week}
+认证：UserAuth()
+返回：QuotaData[] — { model_name, token_used, count, quota, created_at }
+来源：quota_data 表（按 model_name + created_at 聚合）
+```
+
+**用户信息（含余额）：**
+```
+GET /api/user/self
+认证：UserAuth()
+返回：User — { quota, used_quota, ... }
+```
+
+**定价配置：**
+```
+GET /coworker/ratio_config  (内部接口，不受 ExposeRatioEnabled 限制)
+GET /api/ratio_config       (公开接口，需 ExposeRatioEnabled=true)
+返回：{ model_ratio, completion_ratio, cache_ratio, model_price }
+```
+
+### 前端 Quota 渲染（`web/src/helpers/render.jsx`）
+
+```js
+// quota → USD
+renderQuota(quota, digits)  // quota / quotaPerUnit → $X.XX
+getQuotaWithUnit(quota, digits)  // 同上，返回数字字符串
+getQuotaPerUnit()  // 从 localStorage 读取 quota_per_unit
+getCurrencyConfig()  // 获取货币符号和汇率 (USD/CNY/CUSTOM)
+```
+
+### 关键文件
+
+| 功能 | 文件 |
+|------|------|
+| 配额数据控制器 | `controller/usedata.go` |
+| 配额数据模型 | `model/usedata.go` |
+| 定价倍率 | `setting/ratio_setting/model_ratio.go` |
+| 定价缓存 | `setting/ratio_setting/exposed_cache.go` |
+| 公开开关 | `setting/ratio_setting/expose_ratio.go` |
+| 前端渲染 | `web/src/helpers/render.jsx` |
+| Dashboard Hook | `web/src/hooks/dashboard/useDashboardData.js` |
+| 统计卡片 | `web/src/hooks/dashboard/useDashboardStats.jsx` |
+| 图表数据 | `web/src/hooks/dashboard/useDashboardCharts.jsx` |
+
+---
+
 ## 待办事项
 
 ### 高优先级
@@ -613,4 +744,4 @@ if err != nil {
 
 ---
 
-*Last updated: 2026-02-16 (权限系统增强 + Milvus构建修复 + 前端权限UI清理)*
+*Last updated: 2026-02-17 (Token统计修复 + 日志计费集成 + NewAPI令牌集成 + 定时事项AI执行器 + 窗口级记忆架构)*
