@@ -21,17 +21,6 @@ const formatElapsed = (ms) => {
   return `${(ms / 1000).toFixed(1)}s`;
 };
 
-// 获取模式标签
-const getModeLabel = (mode) => {
-  const labels = {
-    normal: 'normal',
-    acceptEdits: 'accept edits on',
-    planMode: 'plan mode on',
-    bypassPermissions: 'bypass permissions on',
-  };
-  return labels[mode] || mode;
-};
-
 // 会话存储 key
 const SESSION_STORAGE_KEY = 'coworker_session_id';
 
@@ -42,7 +31,7 @@ const Coworker = () => {
   const [connected, setConnected] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [status, setStatus] = useState(null);
-  const [mode, setMode] = useState('normal');
+  const [mode, setMode] = useState('default');
   const [sessionId, setSessionId] = useState(() => {
     // 从 localStorage 恢复 session_id
     return localStorage.getItem(SESSION_STORAGE_KEY) || '';
@@ -863,18 +852,6 @@ const Coworker = () => {
 
           {/* 常驻状态栏 */}
           <div className="status-bar persistent">
-            <div className="mode-buttons">
-              {['normal', 'acceptEdits', 'planMode', 'bypassPermissions'].map((m) => (
-                <button
-                  type="button"
-                  key={m}
-                  className={`mode-btn ${mode === m ? 'active' : ''}`}
-                  onClick={() => setMode(m)}
-                >
-                  {getModeLabel(m)}
-                </button>
-              ))}
-            </div>
             <div className="context-info">
               <span className="context-label">Context left:</span>
               <span className="context-value">
@@ -915,6 +892,7 @@ const Coworker = () => {
         </div>
         </div>
       </div>
+
     </div>
   );
 };

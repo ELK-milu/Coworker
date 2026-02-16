@@ -32,6 +32,23 @@ func NewChecker() *Checker {
 	return c
 }
 
+// internalTools 内部工具白名单 — AI 自用工具，始终允许，不弹权限确认
+var internalTools = map[string]bool{
+	"MemorySave":       true,
+	"MemorySearch":     true,
+	"MemoryList":       true,
+	"TaskCreate":       true,
+	"TaskUpdate":       true,
+	"TaskList":         true,
+	"TaskGet":          true,
+	"StructuredOutput": true,
+}
+
+// IsInternalTool 检查是否为内部工具
+func IsInternalTool(toolName string) bool {
+	return internalTools[toolName]
+}
+
 // registerDefaultCapabilities 注册默认工具能力
 func (c *Checker) registerDefaultCapabilities() {
 	c.toolCapability["Read"] = []ToolCapability{CapabilityRead}
@@ -40,8 +57,17 @@ func (c *Checker) registerDefaultCapabilities() {
 	c.toolCapability["Write"] = []ToolCapability{CapabilityWrite}
 	c.toolCapability["Edit"] = []ToolCapability{CapabilityWrite}
 	c.toolCapability["Bash"] = []ToolCapability{CapabilityExecute}
-	c.toolCapability["WebFetch"] = []ToolCapability{CapabilityNetwork}
-	c.toolCapability["WebSearch"] = []ToolCapability{CapabilityNetwork}
+	c.toolCapability["WebFetch"] = []ToolCapability{CapabilityRead}
+	c.toolCapability["WebSearch"] = []ToolCapability{CapabilityRead}
+	// 内部工具
+	c.toolCapability["MemorySave"] = []ToolCapability{CapabilityWrite}
+	c.toolCapability["MemorySearch"] = []ToolCapability{CapabilityRead}
+	c.toolCapability["MemoryList"] = []ToolCapability{CapabilityRead}
+	c.toolCapability["TaskCreate"] = []ToolCapability{CapabilityWrite}
+	c.toolCapability["TaskUpdate"] = []ToolCapability{CapabilityWrite}
+	c.toolCapability["TaskList"] = []ToolCapability{CapabilityRead}
+	c.toolCapability["TaskGet"] = []ToolCapability{CapabilityRead}
+	c.toolCapability["StructuredOutput"] = []ToolCapability{CapabilityRead}
 }
 
 // RegisterToolCapability 注册工具能力
@@ -121,8 +147,20 @@ func (c *Checker) CheckWithRuleset(permission, pattern string, agentRuleset Rule
 // CheckTool 综合检查：先用 Mode 模式，再用 Ruleset 引擎
 // 如果 agentRuleset 非空，优先使用 Ruleset 引擎
 func (c *Checker) CheckTool(toolName string, pattern string, agentRuleset Ruleset) *CheckResult {
+	// 内部工具始终允许，不弹权限确认
+	if IsInternalTool(toolName) {
+		return &CheckResult{Behavior: BehaviorAllow}
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	// 先检查运行时批准规则（"always allow"）
+	for _, rule := range c.approved {
+		if rule.Permission == toolName && WildcardMatch(pattern, rule.Pattern) {
+			return &CheckResult{Behavior: BehaviorAllow, Message: "approved: " + rule.Pattern}
+		}
+	}
 
 	// 如果有 Agent 规则集，使用 Ruleset 引擎
 	if len(agentRuleset) > 0 {

@@ -1,16 +1,40 @@
 import React from 'react';
-import { Modal, Button, Typography } from '@douyinfe/semi-ui';
+import { Modal, Button, Typography, Tag } from '@douyinfe/semi-ui';
 import { IconAlertTriangle } from '@douyinfe/semi-icons';
 
 const { Text, Title } = Typography;
 
-const PermissionDialog = ({ request, onApprove, onDeny }) => {
+// 工具能力分类映射
+const toolCategoryMap = {
+  Write: { label: '写入', color: 'orange' },
+  Edit: { label: '写入', color: 'orange' },
+  Bash: { label: '执行', color: 'red' },
+  WebFetch: { label: '网络', color: 'blue' },
+  WebSearch: { label: '网络', color: 'blue' },
+  Read: { label: '读取', color: 'green' },
+  Glob: { label: '读取', color: 'green' },
+  Grep: { label: '读取', color: 'green' },
+};
+
+const PermissionDialog = ({ request, onResponse }) => {
   if (!request) return null;
+
+  const category = toolCategoryMap[request.tool] || { label: '其他', color: 'grey' };
+
+  // 格式化输入内容显示
+  let inputDisplay = request.input;
+  if (typeof inputDisplay === 'string') {
+    try {
+      inputDisplay = JSON.parse(inputDisplay);
+    } catch {
+      // keep as string
+    }
+  }
 
   return (
     <Modal
       visible={!!request}
-      onCancel={onDeny}
+      onCancel={() => onResponse('deny')}
       footer={null}
       closable={false}
       width={480}
@@ -26,6 +50,7 @@ const PermissionDialog = ({ request, onApprove, onDeny }) => {
           <div className="permission-item">
             <Text strong>工具：</Text>
             <Text code>{request.tool}</Text>
+            <Tag color={category.color} size="small" style={{ marginLeft: 8 }}>{category.label}</Tag>
           </div>
 
           {request.message && (
@@ -35,19 +60,20 @@ const PermissionDialog = ({ request, onApprove, onDeny }) => {
             </div>
           )}
 
-          {request.input && (
+          {inputDisplay && (
             <div className="permission-item">
               <Text strong>输入：</Text>
               <pre className="permission-input">
-                {JSON.stringify(request.input, null, 2)}
+                {typeof inputDisplay === 'object' ? JSON.stringify(inputDisplay, null, 2) : String(inputDisplay)}
               </pre>
             </div>
           )}
         </div>
 
         <div className="permission-actions">
-          <Button onClick={onDeny}>拒绝</Button>
-          <Button type="primary" onClick={onApprove}>允许</Button>
+          <Button onClick={() => onResponse('deny')}>拒绝</Button>
+          <Button type="secondary" onClick={() => onResponse('allow_always')}>始终允许</Button>
+          <Button type="primary" onClick={() => onResponse('allow_once')}>允许本次</Button>
         </div>
       </div>
 
@@ -67,13 +93,15 @@ const PermissionDialog = ({ request, onApprove, onDeny }) => {
           margin-bottom: 12px;
         }
         .permission-input {
-          background: #f5f5f5;
+          background: var(--semi-color-fill-0, #f5f5f5);
           padding: 8px;
           border-radius: 4px;
           font-size: 12px;
           max-height: 200px;
           overflow: auto;
           margin-top: 4px;
+          white-space: pre-wrap;
+          word-break: break-all;
         }
         .permission-actions {
           display: flex;

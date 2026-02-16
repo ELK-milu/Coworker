@@ -24,7 +24,6 @@ const (
 	DoomLoopThreshold     = 3   // Doom Loop 检测阈值：连续相同调用次数
 	DoomLoopHistorySize   = 5   // Doom Loop 历史记录大小
 )
-
 // toolCallRecord 工具调用记录（用于 Doom Loop 检测）
 type toolCallRecord struct {
 	Name      string
@@ -115,8 +114,8 @@ const (
 	EventTypeError          = "error"
 	EventTypeStatus         = "status"
 	EventTypeTaskChanged    = "task_changed"
-	EventTypeSessionCreated = "session_created"
-	EventTypeTitleUpdated   = "title_updated"
+	EventTypeSessionCreated    = "session_created"
+	EventTypeTitleUpdated      = "title_updated"
 )
 
 // NewConversationLoop 创建对话循环
@@ -143,19 +142,19 @@ func NewConversationLoop(
 	}
 
 	return &ConversationLoop{
-		client:      c,
-		session:     sess,
-		tools:       registry,
-		system:      systemPrompt,
-		eventCh:     eventCh,
-		mode:        "normal",
-		userID:      userID,
-		sandbox:     sb,
-		fileTime:    ft,
-		agent:       ag,
-		recentCalls: make([]toolCallRecord, 0, DoomLoopHistorySize),
-		maxSteps:    maxSteps,
-		currentStep: 0,
+		client:         c,
+		session:        sess,
+		tools:          registry,
+		system:         systemPrompt,
+		eventCh:        eventCh,
+		mode:           "normal",
+		userID:         userID,
+		sandbox:        sb,
+		fileTime:       ft,
+		agent:          ag,
+		recentCalls:    make([]toolCallRecord, 0, DoomLoopHistorySize),
+		maxSteps:       maxSteps,
+		currentStep:    0,
 	}
 }
 

@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/memory"
-	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
 	"github.com/QuantumNous/new-api/claudecli/internal/profile"
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
@@ -157,9 +156,6 @@ func Init() *Module {
 	// 注册所有工具
 	registerTools(toolRegistry, cfg, taskManager, memoryManager, sandboxPool)
 
-	// 创建权限检查器
-	permChecker := permissions.NewChecker()
-
 	// 创建技能注册表
 	skillRegistry := skills.NewRegistry()
 
@@ -174,7 +170,7 @@ func Init() *Module {
 	restHandler.SetMemoryManager(memoryManager)
 
 	// 创建 WebSocket 处理器（不再传递静态系统提示词，改为动态构建）
-	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, permChecker, skillRegistry, mcpManager, cfg)
+	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, skillRegistry, mcpManager, cfg)
 	wsHandler.SetJobManager(jobManager)
 	wsHandler.SetVariableManager(variableManager)
 	wsHandler.SetMemoryManager(memoryManager)

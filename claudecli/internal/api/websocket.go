@@ -17,7 +17,6 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/loop"
 	"github.com/QuantumNous/new-api/claudecli/internal/mcp"
 	"github.com/QuantumNous/new-api/claudecli/internal/memory"
-	"github.com/QuantumNous/new-api/claudecli/internal/permissions"
 	"github.com/QuantumNous/new-api/claudecli/internal/profile"
 	"github.com/QuantumNous/new-api/claudecli/internal/prompt"
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
@@ -48,7 +47,6 @@ type WSHandler struct {
 	variables   *variable.Manager
 	memories    *memory.Manager
 	profiles    *profile.Manager
-	permissions *permissions.Checker
 	skills      *skills.Registry
 	skillExec   *skills.Executor
 	mcp         *mcp.Manager
@@ -76,7 +74,6 @@ func NewWSHandler(
 	tr *tools.Registry,
 	wm *workspace.Manager,
 	tm *task.Manager,
-	perm *permissions.Checker,
 	sk *skills.Registry,
 	mcpMgr *mcp.Manager,
 	cfg *config.Config,
@@ -87,7 +84,6 @@ func NewWSHandler(
 		tools:       tr,
 		workspace:   wm,
 		tasks:       tm,
-		permissions: perm,
 		skills:      sk,
 		skillExec:   skills.NewExecutor(sk),
 		mcp:         mcpMgr,
@@ -269,13 +265,6 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "context_stats":
 			log.Printf("[WS] Processing context_stats message")
 			h.handleContextStats(conn, wsMsg.Payload)
-		// Permission 相关消息
-		case "set_permission_mode":
-			log.Printf("[WS] Processing set_permission_mode message")
-			h.handleSetPermissionMode(conn, wsMsg.Payload)
-		case "get_permission_mode":
-			log.Printf("[WS] Processing get_permission_mode message")
-			h.handleGetPermissionMode(conn)
 		// Skill 相关消息
 		case "skill_call":
 			log.Printf("[WS] Processing skill_call message")
@@ -861,7 +850,7 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, userID st
 			// 任务变更事件
 			payload["action"] = event.TaskAction
 			payload["task"] = event.TaskData
-		}
+			}
 
 		h.sendJSON(conn, map[string]interface{}{
 			"type":    event.Type,
@@ -1474,51 +1463,6 @@ func (h *WSHandler) handleContextStats(conn *websocket.Conn, payload json.RawMes
 	})
 }
 
-// ========== Permission 相关处理 ==========
-
-// SetPermissionModePayload 设置权限模式载荷
-type SetPermissionModePayload struct {
-	Mode string `json:"mode"`
-}
-
-// handleSetPermissionMode 处理设置权限模式请求
-func (h *WSHandler) handleSetPermissionMode(conn *websocket.Conn, payload json.RawMessage) {
-	var req SetPermissionModePayload
-	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid set_permission_mode payload")
-		return
-	}
-
-	if req.Mode == "" {
-		h.sendError(conn, "mode is required")
-		return
-	}
-
-	mode := permissions.PermissionMode(req.Mode)
-	h.permissions.SetMode(mode)
-
-	log.Printf("[WS] Permission mode set to: %s", req.Mode)
-
-	h.sendJSON(conn, map[string]interface{}{
-		"type": "permission_mode_changed",
-		"payload": map[string]interface{}{
-			"mode":    req.Mode,
-			"success": true,
-		},
-	})
-}
-
-// handleGetPermissionMode 处理获取权限模式请求
-func (h *WSHandler) handleGetPermissionMode(conn *websocket.Conn) {
-	mode := h.permissions.GetMode()
-
-	h.sendJSON(conn, map[string]interface{}{
-		"type": "permission_mode",
-		"payload": map[string]interface{}{
-			"mode": string(mode),
-		},
-	})
-}
 
 // ========== Skill 相关处理 ==========
 
@@ -1910,7 +1854,7 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 	promptCtx := &prompt.PromptContext{
 		WorkingDir:       virtualWorkDir, // 使用虚拟路径
 		Model:            h.config.Claude.Model,
-		PermissionMode:   "normal",
+		PermissionMode:   "default",
 		Platform:         platform,
 		TasksRender:      tasksRender,
 		RelevantMemories: relevantMemories,

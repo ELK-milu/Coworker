@@ -183,7 +183,7 @@ func (b *SystemPromptBuilder) getPermissionMode(mode string) string {
 	switch mode {
 	case "acceptEdits":
 		return PermissionModeAcceptEdits
-	case "planMode":
+	case "plan", "planMode":
 		return PermissionModePlan
 	case "bypassPermissions":
 		return PermissionModeBypass

@@ -288,6 +288,30 @@ if err != nil {
 
 ## 已完成功能
 
+### 2026-02-16 (权限系统增强 + Milvus 构建修复)
+
+- [x] 权限检查器增强 (`permissions/checker.go`)
+  - 新增内部工具白名单 (`internalTools`) — Memory/Task/StructuredOutput 工具始终允许，不弹权限确认
+  - `IsInternalTool()` 公开函数供外部检查
+  - `CheckTool()` 新增运行时批准规则优先检查（"always allow"）
+  - `registerDefaultCapabilities()` 补全 Memory/Task 工具能力注册
+  - WebFetch/WebSearch 能力从 `CapabilityNetwork` 改为 `CapabilityRead`
+- [x] 提示词构建器修复 (`prompt/builder.go`)
+  - `getPermissionMode()` 支持 `"plan"` 和 `"planMode"` 两种模式名
+- [x] Milvus 构建标签修复 (`memory/milvus_stub.go`, `milvus_amd64.go`, `milvus_amd64_ops.go`)
+  - stub 构建标签从 `!amd64 && !arm64` 改为 `!linux || (!amd64 && !arm64)`
+  - 修复 Windows 开发环境下 Milvus SDK v2.5.7 编译错误（`memInfo.RSS undefined`）
+  - amd64/arm64 实现限定为 Linux 平台
+- [x] 前端权限 UI 清理 (`index.jsx`)
+  - 移除 PermissionDialog 导入和渲染
+  - 移除权限模式切换按钮（mode buttons）
+  - 移除 `set_permission_mode`/`permission_response` WebSocket 消息发送
+  - 移除 `getModeLabel`、`modeRef`、`permissionRequest` 等死代码
+- [x] PermissionDialog 组件增强 (`PermissionDialog.jsx`)
+  - 新增"始终允许"按钮（allow_always）
+  - 显示工具名称和输入内容
+  - 改进样式（保留组件供未来使用）
+
 ### 2026-02-15 (EventBus + 上下文窗口记忆 + Compact 集成)
 
 - [x] EventBus 事件总线 (`eventbus/eventbus.go`)
@@ -589,4 +613,4 @@ if err != nil {
 
 ---
 
-*Last updated: 2026-02-15 (EventBus + 上下文窗口记忆 + Compact集成)*
+*Last updated: 2026-02-16 (权限系统增强 + Milvus构建修复 + 前端权限UI清理)*
