@@ -455,3 +455,28 @@
   font-family: 'Consolas', monospace;
   font-weight: 500;
 }
+
+/* 会话累计统计 */
+.session-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.stats-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.stats-label {
+  color: var(--semi-color-text-2);
+}
+
+.stats-value {
+  color: var(--semi-color-text-0);
+  font-family: 'Consolas', monospace;
+  font-weight: 500;
+}

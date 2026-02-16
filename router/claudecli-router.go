@@ -54,6 +54,9 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 		coworkerGroup.PUT("/memories/:id", claudeCLICtrl.UpdateMemory)
 		coworkerGroup.DELETE("/memories/:id", claudeCLICtrl.DeleteMemory)
 
+		// 定价配置
+		coworkerGroup.GET("/ratio_config", claudeCLICtrl.GetRatioConfig)
+
 		// Job 管理
 		coworkerGroup.GET("/jobs", claudeCLICtrl.ListJobs)
 		coworkerGroup.POST("/jobs", claudeCLICtrl.CreateJob)

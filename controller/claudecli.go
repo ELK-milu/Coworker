@@ -1,7 +1,10 @@
 package controller
 
 import (
+	"net/http"
+
 	"github.com/QuantumNous/new-api/claudecli"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -199,4 +202,14 @@ func (ctrl *ClaudeCLIController) DeleteMemory(c *gin.Context) {
 // SearchMemories 搜索记忆
 func (ctrl *ClaudeCLIController) SearchMemories(c *gin.Context) {
 	ctrl.module.RESTHandler.SearchMemories(c)
+}
+
+// ========== 定价配置 ==========
+
+// GetRatioConfig 获取模型定价配置（内部接口，不受 ExposeRatioEnabled 开关限制）
+func (ctrl *ClaudeCLIController) GetRatioConfig(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    ratio_setting.GetExposedData(),
+	})
 }

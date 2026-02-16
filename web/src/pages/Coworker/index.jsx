@@ -21,6 +21,9 @@ const formatElapsed = (ms) => {
   return `${(ms / 1000).toFixed(1)}s`;
 };
 
+// 会话统计 localStorage key 前缀
+const SESSION_STATS_PREFIX = 'coworker_session_stats_';
+
 // 会话存储 key
 const SESSION_STORAGE_KEY = 'coworker_session_id';
 
@@ -51,6 +54,12 @@ const Coworker = () => {
   // 事项相关状态
   const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(false);
+  // Token 统计相关状态
+  const [turnStats, setTurnStats] = useState(null);  // 本轮统计
+  const [sessionStats, setSessionStats] = useState({
+    totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0, totalCost: 0, turnCount: 0,
+  });
+  const [ratioConfig, setRatioConfig] = useState(null);  // 模型定价配置
   const [userId] = useState(() => {
     // 从 localStorage 获取或生成用户ID
     let uid = localStorage.getItem('coworker_user_id');
@@ -66,6 +75,8 @@ const Coworker = () => {
   const currentPathRef = useRef(currentPath);  // 用于在闭包中获取最新的 currentPath
   const pendingMessageRef = useRef(null);  // 待发送的消息（用于 WS 重连后发送）
   const tasksRef = useRef(tasks);  // 用于在 WebSocket 闭包中获取最新的 tasks
+  const turnStatsRef = useRef(null);  // 用于在 done 闭包中获取最新的 turnStats
+  const sessionIdRef = useRef(sessionId);  // 用于在闭包中获取最新的 sessionId
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -85,6 +96,40 @@ const Coworker = () => {
   useEffect(() => {
     tasksRef.current = tasks;
   }, [tasks]);
+
+  // 同步 turnStats 到 ref，解决 done 闭包问题
+  useEffect(() => {
+    turnStatsRef.current = turnStats;
+  }, [turnStats]);
+
+  // 同步 sessionId 到 ref
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  // 根据 model + input/output tokens 计算美元金额
+  const calculateCost = useCallback((model, inputTokens, outputTokens) => {
+    if (!ratioConfig || !model) return 0;
+    const modelRatio = ratioConfig.model_ratio?.[model] || 1;
+    const completionRatio = ratioConfig.completion_ratio?.[model] || 1;
+    // 1 ratio = $0.002 / 1K tokens
+    const inputCost = (inputTokens / 1000) * 0.002 * modelRatio;
+    const outputCost = (outputTokens / 1000) * 0.002 * modelRatio * completionRatio;
+    return inputCost + outputCost;
+  }, [ratioConfig]);
+
+  // 启动时加载模型定价配置
+  useEffect(() => {
+    (async () => {
+      try {
+        const { API } = await import('../../helpers/api');
+        const res = await API.get('/coworker/ratio_config');
+        if (res.data?.data) setRatioConfig(res.data.data);
+      } catch (e) {
+        console.log('[Coworker] Failed to load ratio config');
+      }
+    })();
+  }, []);
 
   // 加载会话列表 (REST API)
   const loadSessionsList = useCallback(async () => {
@@ -154,8 +199,12 @@ const Coworker = () => {
         setSessionId('');
         setMessages([]);
         setStatus(null);
+        setTurnStats(null);
+        setSessionStats({ totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0, totalCost: 0, turnCount: 0 });
         localStorage.removeItem(SESSION_STORAGE_KEY);
       }
+      // 清理该会话的统计数据
+      localStorage.removeItem(SESSION_STATS_PREFIX + sessId);
       console.log('[Coworker] Session deleted:', sessId);
     } catch (error) {
       console.error('[Coworker] Failed to delete session:', error);
@@ -192,6 +241,11 @@ const Coworker = () => {
               console.log('[Coworker] Loaded history on connect:', data.messages.length, 'messages');
             }
           }).catch(err => console.error('[Coworker] Failed to load history:', err));
+          // 恢复会话统计
+          const savedStats = localStorage.getItem(SESSION_STATS_PREFIX + currentSessionId);
+          if (savedStats) {
+            try { setSessionStats(JSON.parse(savedStats)); } catch (e) { /* ignore */ }
+          }
         }
         // 如果有待发送的消息，发送它
         if (pendingMessageRef.current) {
@@ -362,6 +416,27 @@ const Coworker = () => {
         setMessages(prev => prev.map(msg =>
           msg.streaming ? { ...msg, streaming: false } : msg
         ));
+        // 累加本轮消耗到会话统计
+        {
+          const turn = turnStatsRef.current;
+          if (turn && turn.totalTokens > 0) {
+            setSessionStats(prev => {
+              const cost = calculateCost(turn.model, turn.inputTokens, turn.outputTokens);
+              const updated = {
+                totalInputTokens: prev.totalInputTokens + turn.inputTokens,
+                totalOutputTokens: prev.totalOutputTokens + turn.outputTokens,
+                totalTokens: prev.totalTokens + turn.totalTokens,
+                totalCost: prev.totalCost + cost,
+                turnCount: prev.turnCount + 1,
+              };
+              const sid = sessionIdRef.current;
+              if (sid) {
+                localStorage.setItem(SESSION_STATS_PREFIX + sid, JSON.stringify(updated));
+              }
+              return updated;
+            });
+          }
+        }
         break;
 
       case 'error':
@@ -381,6 +456,14 @@ const Coworker = () => {
           contextPercent: payload.context_percent,
           elapsedMs: payload.elapsed_ms,
           mode: payload.mode,
+        });
+        // 记录本轮统计（用于 done 时累加）
+        setTurnStats({
+          model: payload.model,
+          inputTokens: payload.input_tokens || 0,
+          outputTokens: payload.output_tokens || 0,
+          totalTokens: payload.total_tokens || 0,
+          elapsedMs: payload.elapsed_ms || 0,
         });
         break;
 
@@ -542,6 +625,8 @@ const Coworker = () => {
     setSessionId('');
     setMessages([]);
     setStatus(null);
+    setTurnStats(null);
+    setSessionStats({ totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0, totalCost: 0, turnCount: 0 });
     localStorage.removeItem(SESSION_STORAGE_KEY);
   };
 
@@ -551,7 +636,15 @@ const Coworker = () => {
     setSessionId(sessId);
     setMessages([]);
     setStatus(null);
+    setTurnStats(null);
     localStorage.setItem(SESSION_STORAGE_KEY, sessId);
+
+    // 恢复会话统计
+    const savedStats = localStorage.getItem(SESSION_STATS_PREFIX + sessId);
+    setSessionStats(savedStats
+      ? JSON.parse(savedStats)
+      : { totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0, totalCost: 0, turnCount: 0 }
+    );
 
     // 使用 REST API 加载历史消息
     try {
@@ -832,12 +925,18 @@ const Coworker = () => {
 
           {/* 输入区域 */}
           <div className="input-container">
-          {/* 动态状态栏 - 仅在回复时显示 */}
-          {loading && status && (
+          {/* 动态状态栏 - 回复时实时更新，结束后保留最后一轮 */}
+          {(loading || turnStats) && status && (
             <div className="status-bar dynamic">
               <span className="status-item">
                 <span className="status-label">Model:</span>
                 <span className="status-value">{status.model || 'claude-sonnet'}</span>
+              </span>
+              <span className="status-item">
+                <span className="status-label">Cost:</span>
+                <span className="status-value">
+                  ${calculateCost(status.model, status.inputTokens || 0, status.outputTokens || 0).toFixed(4)}
+                </span>
               </span>
               <span className="status-item">
                 <span className="status-label">Tokens:</span>
@@ -858,6 +957,18 @@ const Coworker = () => {
                 {status ? `${Math.max(0, 100 - (status.contextPercent || 0)).toFixed(0)}%` : '100%'}
               </span>
             </div>
+            {sessionStats.turnCount > 0 && (
+              <div className="session-stats">
+                <span className="stats-item">
+                  <span className="stats-label">Session:</span>
+                  <span className="stats-value">{sessionStats.totalTokens.toLocaleString()} tokens</span>
+                </span>
+                <span className="stats-item">
+                  <span className="stats-label">Total:</span>
+                  <span className="stats-value">${sessionStats.totalCost.toFixed(4)}</span>
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="input-wrapper">
