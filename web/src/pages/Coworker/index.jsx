@@ -481,22 +481,20 @@ const Coworker = () => {
         setMessages(prev => prev.map(msg =>
           msg.streaming ? { ...msg, streaming: false } : msg
         ));
-        // 累加本轮消耗到会话统计（先用本地计算立即显示，再用日志数据修正）
+        // 累加本轮消耗到会话统计
         {
           const turn = turnStatsRef.current;
-          const localCost = turnCostRef.current;
           const startTime = turnStartTimeRef.current;
           const model = turn?.model || '';
-          console.log('[Coworker] done event, turn:', turn, 'localCost:', localCost);
 
           if (turn && turn.totalTokens > 0) {
-            // 立即用本地数据累加（保证 UI 即时响应）
+            // token 立即累加（API 返回的数据准确）
             setSessionStats(prev => {
               const updated = {
                 totalInputTokens: prev.totalInputTokens + turn.inputTokens,
                 totalOutputTokens: prev.totalOutputTokens + turn.outputTokens,
                 totalTokens: prev.totalTokens + turn.totalTokens,
-                totalCost: prev.totalCost + localCost,
+                totalCost: prev.totalCost,  // cost 等日志数据，先不加
                 turnCount: prev.turnCount + 1,
               };
               const sid = sessionIdRef.current;
@@ -506,28 +504,21 @@ const Coworker = () => {
               return updated;
             });
 
-            // 异步从日志获取实际计费，修正 cost 和 token 数
+            // cost 只从日志获取（实际扣费，含缓存/分组倍率）
             if (startTime > 0 && model) {
               fetchTurnBillingFromLogs(model, startTime).then(billing => {
-                if (!billing) return;  // 无日志数据，保持本地计算
-                const costDiff = billing.costUSD - localCost;
-                const promptDiff = billing.promptTokens - turn.inputTokens;
-                const completionDiff = billing.completionTokens - turn.outputTokens;
-                if (Math.abs(costDiff) < 0.000001 && promptDiff === 0 && completionDiff === 0) return;  // 无差异
-                console.log('[Coworker] Correcting stats from logs:', { costDiff, promptDiff, completionDiff });
+                if (!billing || billing.costUSD <= 0) return;
+                console.log('[Coworker] Log billing:', billing.costUSD.toFixed(6));
                 setSessionStats(prev => {
-                  const corrected = {
+                  const updated = {
                     ...prev,
-                    totalInputTokens: prev.totalInputTokens + promptDiff,
-                    totalOutputTokens: prev.totalOutputTokens + completionDiff,
-                    totalTokens: prev.totalTokens + promptDiff + completionDiff,
-                    totalCost: prev.totalCost + costDiff,
+                    totalCost: prev.totalCost + billing.costUSD,
                   };
                   const sid = sessionIdRef.current;
                   if (sid) {
-                    localStorage.setItem(SESSION_STATS_PREFIX + sid, JSON.stringify(corrected));
+                    localStorage.setItem(SESSION_STATS_PREFIX + sid, JSON.stringify(updated));
                   }
-                  return corrected;
+                  return updated;
                 });
               });
             }
