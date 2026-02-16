@@ -77,6 +77,8 @@ const Coworker = () => {
   const tasksRef = useRef(tasks);  // 用于在 WebSocket 闭包中获取最新的 tasks
   const turnStatsRef = useRef(null);  // 用于在 done 闭包中获取最新的 turnStats
   const sessionIdRef = useRef(sessionId);  // 用于在闭包中获取最新的 sessionId
+  const ratioConfigRef = useRef(null);  // 用于在 calculateCost 闭包中获取最新的 ratioConfig
+  const turnCostRef = useRef(0);  // 本轮 cost（status 事件中计算，done 事件中直接读取）
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -107,16 +109,27 @@ const Coworker = () => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
+  // 同步 ratioConfig 到 ref，解决 calculateCost 闭包问题
+  useEffect(() => {
+    ratioConfigRef.current = ratioConfig;
+  }, [ratioConfig]);
+
   // 根据 model + input/output tokens 计算美元金额
   const calculateCost = useCallback((model, inputTokens, outputTokens) => {
-    if (!ratioConfig || !model) return 0;
-    const modelRatio = ratioConfig.model_ratio?.[model] || 1;
-    const completionRatio = ratioConfig.completion_ratio?.[model] || 1;
+    const config = ratioConfigRef.current;  // 从 ref 读取最新值
+    if (!config || !model) {
+      console.warn('[Coworker] calculateCost: ratioConfig or model missing', { ratioConfig: !!config, model });
+      return 0;
+    }
+    const modelRatio = config.model_ratio?.[model] || 1;
+    const completionRatio = config.completion_ratio?.[model] || 1;
     // 1 ratio = $0.002 / 1K tokens
     const inputCost = (inputTokens / 1000) * 0.002 * modelRatio;
     const outputCost = (outputTokens / 1000) * 0.002 * modelRatio * completionRatio;
-    return inputCost + outputCost;
-  }, [ratioConfig]);
+    const totalCost = inputCost + outputCost;
+    console.log('[Coworker] calculateCost:', { model, inputTokens, outputTokens, modelRatio, completionRatio, totalCost });
+    return totalCost;
+  }, []);
 
   // 启动时加载模型定价配置
   useEffect(() => {
@@ -124,9 +137,14 @@ const Coworker = () => {
       try {
         const { API } = await import('../../helpers/api');
         const res = await API.get('/coworker/ratio_config');
-        if (res.data?.data) setRatioConfig(res.data.data);
+        if (res.data?.data) {
+          setRatioConfig(res.data.data);
+          console.log('[Coworker] Ratio config loaded:', res.data.data);
+        } else {
+          console.error('[Coworker] Ratio config response invalid:', res.data);
+        }
       } catch (e) {
-        console.log('[Coworker] Failed to load ratio config');
+        console.error('[Coworker] Failed to load ratio config:', e);
       }
     })();
   }, []);
@@ -244,7 +262,23 @@ const Coworker = () => {
           // 恢复会话统计
           const savedStats = localStorage.getItem(SESSION_STATS_PREFIX + currentSessionId);
           if (savedStats) {
-            try { setSessionStats(JSON.parse(savedStats)); } catch (e) { /* ignore */ }
+            try {
+              setSessionStats(JSON.parse(savedStats));
+              console.log('[Coworker] Restored session stats on connect');
+            } catch (e) {
+              console.error('[Coworker] Failed to restore session stats:', e);
+            }
+          }
+          // 恢复 Context left 状态
+          const savedContext = localStorage.getItem(`coworker_context_${currentSessionId}`);
+          if (savedContext) {
+            try {
+              const contextData = JSON.parse(savedContext);
+              setStatus(contextData);
+              console.log('[Coworker] Restored context state on connect:', contextData);
+            } catch (e) {
+              console.error('[Coworker] Failed to restore context state:', e);
+            }
           }
         }
         // 如果有待发送的消息，发送它
@@ -300,9 +334,10 @@ const Coworker = () => {
 
     const { type, payload } = data;
 
-    // 保存 session_id
-    if (payload?.session_id && payload.session_id !== sessionId) {
+    // 保存 session_id（同步写 ref，确保 done 闭包能立即读到）
+    if (payload?.session_id && payload.session_id !== sessionIdRef.current) {
       setSessionId(payload.session_id);
+      sessionIdRef.current = payload.session_id;
       localStorage.setItem(SESSION_STORAGE_KEY, payload.session_id);
     }
 
@@ -419,9 +454,10 @@ const Coworker = () => {
         // 累加本轮消耗到会话统计
         {
           const turn = turnStatsRef.current;
+          const cost = turnCostRef.current;  // status 事件中已算好，直接读
+          console.log('[Coworker] done event, turn:', turn, 'cost:', cost);
           if (turn && turn.totalTokens > 0) {
             setSessionStats(prev => {
-              const cost = calculateCost(turn.model, turn.inputTokens, turn.outputTokens);
               const updated = {
                 totalInputTokens: prev.totalInputTokens + turn.inputTokens,
                 totalOutputTokens: prev.totalOutputTokens + turn.outputTokens,
@@ -430,11 +466,14 @@ const Coworker = () => {
                 turnCount: prev.turnCount + 1,
               };
               const sid = sessionIdRef.current;
+              console.log('[Coworker] Accumulating session stats:', { prev, turn, cost, updated, sid });
               if (sid) {
                 localStorage.setItem(SESSION_STATS_PREFIX + sid, JSON.stringify(updated));
               }
               return updated;
             });
+          } else {
+            console.warn('[Coworker] Skipping accumulation: turn is null or totalTokens is 0');
           }
         }
         break;
@@ -446,25 +485,52 @@ const Coworker = () => {
         break;
 
       case 'status':
-        setStatus({
-          model: payload.model,
-          inputTokens: payload.input_tokens,
-          outputTokens: payload.output_tokens,
-          totalTokens: payload.total_tokens,
-          contextUsed: payload.context_used,
-          contextMax: payload.context_max,
-          contextPercent: payload.context_percent,
-          elapsedMs: payload.elapsed_ms,
-          mode: payload.mode,
-        });
+        {
+          const statusData = {
+            model: payload.model,
+            inputTokens: payload.input_tokens,
+            outputTokens: payload.output_tokens,
+            totalTokens: payload.total_tokens,
+            contextUsed: payload.context_used,
+            contextMax: payload.context_max,
+            contextPercent: payload.context_percent,
+            elapsedMs: payload.elapsed_ms,
+            mode: payload.mode,
+          };
+          setStatus(statusData);
+
+          // 持久化 contextPercent（Context left 显示需要）
+          const sid = sessionIdRef.current;
+          if (sid && statusData.contextPercent !== undefined) {
+            localStorage.setItem(`coworker_context_${sid}`, JSON.stringify({
+              contextPercent: statusData.contextPercent,
+              contextUsed: statusData.contextUsed,
+              contextMax: statusData.contextMax,
+            }));
+          }
+        }
         // 记录本轮统计（用于 done 时累加）
-        setTurnStats({
-          model: payload.model,
-          inputTokens: payload.input_tokens || 0,
-          outputTokens: payload.output_tokens || 0,
-          totalTokens: payload.total_tokens || 0,
-          elapsedMs: payload.elapsed_ms || 0,
-        });
+        // 必须同步写 ref，因为 done 事件紧随 status 到达，useEffect 来不及同步
+        {
+          const turnData = {
+            model: payload.model,
+            inputTokens: payload.input_tokens || 0,
+            outputTokens: payload.output_tokens || 0,
+            totalTokens: payload.total_tokens || 0,
+            elapsedMs: payload.elapsed_ms || 0,
+          };
+          setTurnStats(turnData);
+          turnStatsRef.current = turnData;
+          // 同步计算本轮 cost 并存入 ref，done 事件直接读取，不再重新算
+          const config = ratioConfigRef.current;
+          if (config && payload.model) {
+            const modelRatio = config.model_ratio?.[payload.model] || 1;
+            const completionRatio = config.completion_ratio?.[payload.model] || 1;
+            const inputCost = ((payload.input_tokens || 0) / 1000) * 0.002 * modelRatio;
+            const outputCost = ((payload.output_tokens || 0) / 1000) * 0.002 * modelRatio * completionRatio;
+            turnCostRef.current = inputCost + outputCost;
+          }
+        }
         break;
 
       // AI 工具触发的任务变更事件 — 仅更新侧边栏状态
@@ -505,8 +571,9 @@ const Coworker = () => {
       // 新会话创建事件
       case 'session_created':
         if (payload.session_id) {
-          // 更新 sessionId
+          // 更新 sessionId（同步写 ref）
           setSessionId(payload.session_id);
+          sessionIdRef.current = payload.session_id;
           localStorage.setItem(SESSION_STORAGE_KEY, payload.session_id);
           // 添加新会话到列表顶部
           setSessions(prev => [{
@@ -574,6 +641,7 @@ const Coworker = () => {
     if (!inputValue.trim() || loading) return;
 
     abortedRef.current = false;
+    turnCostRef.current = 0;  // 重置本轮 cost
     const userMsg = { type: 'user', content: inputValue, timestamp: Date.now() };
     setMessages(prev => [...prev, userMsg]);
     const messageToSend = inputValue;
@@ -645,6 +713,18 @@ const Coworker = () => {
       ? JSON.parse(savedStats)
       : { totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0, totalCost: 0, turnCount: 0 }
     );
+
+    // 恢复 Context left 状态
+    const savedContext = localStorage.getItem(`coworker_context_${sessId}`);
+    if (savedContext) {
+      try {
+        const contextData = JSON.parse(savedContext);
+        setStatus(prev => prev ? { ...prev, ...contextData } : contextData);
+        console.log('[Coworker] Restored context state:', contextData);
+      } catch (e) {
+        console.error('[Coworker] Failed to restore context state:', e);
+      }
+    }
 
     // 使用 REST API 加载历史消息
     try {

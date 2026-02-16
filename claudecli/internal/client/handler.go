@@ -9,6 +9,16 @@ import (
 // handleBetaStreamEvent 处理 Beta 流事件
 func (c *ClaudeClient) handleBetaStreamEvent(event anthropic.BetaRawMessageStreamEventUnion, eventCh chan<- StreamEvent) {
 	switch event.Type {
+	case "message_start":
+		// 捕获 input_tokens（Anthropic API 在 message_start 中返回）
+		if event.Message.Usage.InputTokens > 0 {
+			eventCh <- StreamEvent{
+				Type: EventUsage,
+				Usage: &UsageInfo{
+					InputTokens: int(event.Message.Usage.InputTokens),
+				},
+			}
+		}
 	case "content_block_start":
 		log.Printf("[API] content_block_start: type=%s", event.ContentBlock.Type)
 		if event.ContentBlock.Type == "tool_use" {

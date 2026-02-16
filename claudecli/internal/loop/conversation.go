@@ -52,6 +52,13 @@ type ConversationLoop struct {
 	// P0.3: 循环步数限制
 	maxSteps    int  // 最大步数（0 = 使用默认值）
 	currentStep int  // 当前步数
+
+	// Token 用量追踪（从 API 流式响应直接捕获）
+	lastInputTokens  int // 最近一次 API 调用的 input_tokens（= 当前上下文窗口大小）
+	lastOutputTokens int // 最近一次 API 调用的 output_tokens
+	// 本轮累计（一次用户消息可能触发多次 API 调用，每次都要计费）
+	turnInputTokens  int // 本轮所有 API 调用的 input_tokens 累计
+	turnOutputTokens int // 本轮所有 API 调用的 output_tokens 累计
 }
 
 // LoopEvent 循环事件
@@ -189,6 +196,9 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 	l.startTime = time.Now().UnixMilli()
 	l.currentStep = 0
 	l.recentCalls = l.recentCalls[:0]
+	// 只重置累计字段，保留 lastInputTokens/lastOutputTokens（避免 Context left 闪烁为 100%）
+	l.turnInputTokens = 0
+	l.turnOutputTokens = 0
 
 	for {
 		// 检查上下文是否被取消
@@ -374,6 +384,18 @@ func (l *ConversationLoop) processStream(ctx context.Context, streamCh <-chan cl
 
 			case client.EventError:
 				return nil, "", &loopError{msg: event.Error}
+
+			case client.EventUsage:
+				if event.Usage != nil {
+					if event.Usage.InputTokens > 0 {
+						l.lastInputTokens = event.Usage.InputTokens
+						l.turnInputTokens += event.Usage.InputTokens
+					}
+					if event.Usage.OutputTokens > 0 {
+						l.lastOutputTokens = event.Usage.OutputTokens
+						l.turnOutputTokens += event.Usage.OutputTokens
+					}
+				}
 			}
 		}
 	}
@@ -641,20 +663,28 @@ func (l *ConversationLoop) sendStatusEvent() {
 	stats := l.session.GetContextStats()
 	elapsed := time.Now().UnixMilli() - l.startTime
 
+	// 累计 token：本轮所有 API 调用的总和（用于计费和 Total 显示）
+	inputTokens := l.turnInputTokens
+	outputTokens := l.turnOutputTokens
+	totalTokens := inputTokens + outputTokens
+
+	// ContextUsed = 最近一次 API 调用的 input_tokens（= 当前上下文窗口大小）
+	contextUsed := l.lastInputTokens
+	contextMax := stats.ContextMax
 	contextPercent := 0.0
-	if stats.ContextMax > 0 {
-		contextPercent = float64(stats.ContextUsed) / float64(stats.ContextMax) * 100
+	if contextMax > 0 {
+		contextPercent = float64(contextUsed) / float64(contextMax) * 100
 	}
 
 	l.eventCh <- LoopEvent{
 		Type: EventTypeStatus,
 		Status: &StatusInfo{
 			Model:          l.client.GetModel(),
-			InputTokens:    stats.InputTokens,
-			OutputTokens:   stats.OutputTokens,
-			TotalTokens:    stats.TotalTokens,
-			ContextUsed:    stats.ContextUsed,
-			ContextMax:     stats.ContextMax,
+			InputTokens:    inputTokens,
+			OutputTokens:   outputTokens,
+			TotalTokens:    totalTokens,
+			ContextUsed:    contextUsed,
+			ContextMax:     contextMax,
 			ContextPercent: contextPercent,
 			ElapsedMs:      elapsed,
 			Mode:           l.mode,
