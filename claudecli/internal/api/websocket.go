@@ -483,14 +483,24 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	go h.forwardEvents(conn, sess.ID, chat.UserID, eventCh)
 }
 
-// getClientForUser 根据用户令牌配置决定使用全局客户端还是创建 per-user 客户端
+// getClientForUser 根据用户配置创建 per-user 客户端（固定令牌 playground-default）
 func (h *WSHandler) getClientForUser(userID string) *client.ClaudeClient {
 	if h.workspace == nil {
 		return h.client
 	}
 	info, err := h.workspace.LoadUserInfo(userID)
-	if err != nil || info == nil || info.ApiTokenKey == "" {
-		return h.client // 无令牌，使用全局客户端
+	if err != nil || info == nil {
+		return h.client
+	}
+	// 使用用户选择的模型，未选则用全局默认
+	model := h.config.Claude.Model
+	if info.SelectedModel != "" {
+		model = info.SelectedModel
+	}
+	// 令牌：优先用户配置的 key，否则用固定 "playground-default"
+	tokenKey := info.ApiTokenKey
+	if tokenKey == "" {
+		tokenKey = "playground-default"
 	}
 	// 构建 Relay URL: http://127.0.0.1:{PORT}
 	port := os.Getenv("PORT")
@@ -498,11 +508,13 @@ func (h *WSHandler) getClientForUser(userID string) *client.ClaudeClient {
 		port = "3000"
 	}
 	relayBaseURL := "http://127.0.0.1:" + port
-	log.Printf("[WS] User %s using NewAPI Relay token: %s", userID, info.ApiTokenName)
-	return client.NewClaudeClient(
-		info.ApiTokenKey, "", relayBaseURL,
-		h.config.Claude.Model, int(h.config.Claude.MaxTokens),
+	log.Printf("[WS] User %s using Relay, token: %s, model: %s", userID, tokenKey, model)
+	c := client.NewClaudeClient(
+		tokenKey, "", relayBaseURL,
+		model, int(h.config.Claude.MaxTokens),
 	)
+	c.SetSamplingParams(info.Temperature, info.TopP)
+	return c
 }
 
 // runConversation 运行对话

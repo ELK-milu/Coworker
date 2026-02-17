@@ -2,8 +2,8 @@
 Copyright (C) 2025 QuantumNous
 */
 
-import React, { useRef, useEffect, useState } from 'react';
-import { Button, Typography, Toast, TextArea, Input, Collapsible, Select } from '@douyinfe/semi-ui';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { Button, Typography, Toast, TextArea, Input, Select, Slider, Tag } from '@douyinfe/semi-ui';
 import { IconUpload, IconDownload, IconSave, IconRefresh, IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
 import * as api from '../services/api';
 import './ConfigPanel.css';
@@ -21,15 +21,29 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     email: '',
     apiTokenKey: '',
     apiTokenName: '',
+    selectedModel: '',
+    group: '',
+    temperature: null,
+    topP: null,
+    frequencyPenalty: null,
+    presencePenalty: null,
   });
   const [userInfoLoading, setUserInfoLoading] = useState(false);
   const [userInfoExpanded, setUserInfoExpanded] = useState(true);
   const [promptExpanded, setPromptExpanded] = useState(true);
 
-  // API 令牌状态
-  const [tokens, setTokens] = useState([]);
-  const [tokenExpanded, setTokenExpanded] = useState(true);
-  const [tokenLoading, setTokenLoading] = useState(false);
+  // 模型配置状态
+  const [models, setModels] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [modelExpanded, setModelExpanded] = useState(true);
+  const [modelLoading, setModelLoading] = useState(false);
+  // 参数启用开关
+  const [paramEnabled, setParamEnabled] = useState({
+    temperature: false,
+    topP: false,
+    frequencyPenalty: false,
+    presencePenalty: false,
+  });
 
   // 加载配置文件 (REST API)
   const loadConfig = async () => {
@@ -70,45 +84,83 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     }
   };
 
-  // 加载令牌列表
-  const loadTokens = async () => {
-    setTokenLoading(true);
+  // 加载模型列表
+  const loadModels = useCallback(async () => {
+    setModelLoading(true);
     try {
-      const items = await api.listTokens();
-      setTokens(items);
-      return items;
-    } catch (error) {
-      console.log('Failed to load tokens:', error.message);
-      return [];
+      const { API } = await import('../../../helpers/api');
+      const res = await API.get('/api/user/models');
+      if (res.data?.success) {
+        const opts = (res.data.data || []).map(m => ({ label: m, value: m }));
+        setModels(opts);
+      }
+    } catch (e) {
+      console.log('Failed to load models:', e.message);
     } finally {
-      setTokenLoading(false);
+      setModelLoading(false);
     }
-  };
+  }, []);
 
-  // 处理令牌选择
-  const handleTokenChange = async (value) => {
-    if (value === '') {
-      // 选择"系统默认"
-      const updated = { ...userInfo, apiTokenKey: '', apiTokenName: '' };
-      setUserInfo(updated);
+  // 加载分组列表
+  const loadGroups = useCallback(async () => {
+    try {
+      const { API } = await import('../../../helpers/api');
+      const res = await API.get('/api/user/self/groups');
+      if (res.data?.success) {
+        const opts = Object.entries(res.data.data || {}).map(([group, info]) => ({
+          label: info.desc || group,
+          value: group,
+        }));
+        setGroups(opts);
+      }
+    } catch (e) {
+      console.log('Failed to load groups:', e.message);
+    }
+  }, []);
+
+  // 防抖保存（Slider 拖动时避免频繁请求）
+  const saveTimerRef = useRef(null);
+  const autoSave = useCallback((updated) => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
       try {
         await api.saveUserInfo(userId, updated);
-        Toast.success('已切换为系统默认');
-      } catch (error) {
-        Toast.error('保存失败: ' + error.message);
+      } catch (e) {
+        Toast.error('保存失败: ' + e.message);
       }
+    }, 500);
+  }, [userId]);
+
+  // 处理模型选择
+  const handleModelChange = (value) => {
+    const updated = { ...userInfo, selectedModel: value };
+    setUserInfo(updated);
+    autoSave(updated);
+  };
+
+  // 处理分组选择
+  const handleGroupChange = (value) => {
+    const updated = { ...userInfo, group: value };
+    setUserInfo(updated);
+    autoSave(updated);
+  };
+
+  // 处理参数变更
+  const handleParamChange = (key, value) => {
+    const updated = { ...userInfo, [key]: value };
+    setUserInfo(updated);
+    autoSave(updated);
+  };
+
+  // 切换参数启用
+  const toggleParam = (key) => {
+    const enabled = !paramEnabled[key];
+    setParamEnabled(prev => ({ ...prev, [key]: enabled }));
+    if (!enabled) {
+      handleParamChange(key, null);
     } else {
-      const token = tokens.find(t => t.key === value);
-      if (token) {
-        const updated = { ...userInfo, apiTokenKey: token.key, apiTokenName: token.name };
-        setUserInfo(updated);
-        try {
-          await api.saveUserInfo(userId, updated);
-          Toast.success(`已选择令牌: ${token.name}`);
-        } catch (error) {
-          Toast.error('保存失败: ' + error.message);
-        }
-      }
+      const defaults = { temperature: 0.7, topP: 1, frequencyPenalty: 0, presencePenalty: 0 };
+      handleParamChange(key, defaults[key]);
     }
   };
 
@@ -150,38 +202,34 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   useEffect(() => {
     if (userId) {
       loadConfig();
-      // 顺序加载：先用户信息，再令牌列表，最后自动选择
+      loadModels();
+      loadGroups();
       (async () => {
-        let info = null;
         try {
           const data = await api.getUserInfo(userId);
-          info = {
+          const info = {
             userName: data.user_name || '',
             coworkerName: data.coworker_name || '',
             phone: data.phone || '',
             email: data.email || '',
             apiTokenKey: data.api_token_key || '',
             apiTokenName: data.api_token_name || '',
+            selectedModel: data.selected_model || '',
+            group: data.group || '',
+            temperature: data.temperature ?? null,
+            topP: data.top_p ?? null,
+            frequencyPenalty: data.frequency_penalty ?? null,
+            presencePenalty: data.presence_penalty ?? null,
           };
           setUserInfo(info);
+          setParamEnabled({
+            temperature: info.temperature != null,
+            topP: info.topP != null,
+            frequencyPenalty: info.frequencyPenalty != null,
+            presencePenalty: info.presencePenalty != null,
+          });
         } catch (error) {
           console.log('No user info found, using defaults');
-          info = userInfo;
-        }
-
-        const tokenList = await loadTokens();
-
-        // 自动选择：用户未选令牌且有可用令牌时，自动选第一个
-        if (!info.apiTokenKey && tokenList.length > 0) {
-          const first = tokenList[0];
-          const updated = { ...info, apiTokenKey: first.key, apiTokenName: first.name };
-          setUserInfo(updated);
-          try {
-            await api.saveUserInfo(userId, updated);
-            Toast.success(`已自动选择令牌: ${first.name}`);
-          } catch (error) {
-            console.log('Auto-select token save failed:', error.message);
-          }
         }
       })();
     }
@@ -253,52 +301,153 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
         )}
       </div>
 
-      {/* API 令牌配置 */}
+      {/* 模型配置 */}
       <div className="config-section">
         <div
           className="config-section-header"
-          onClick={() => setTokenExpanded(!tokenExpanded)}
+          onClick={() => setModelExpanded(!modelExpanded)}
         >
-          <Title heading={6}>API 令牌</Title>
-          {tokenExpanded ? <IconChevronUp /> : <IconChevronDown />}
+          <Title heading={6}>模型配置</Title>
+          {modelExpanded ? <IconChevronUp /> : <IconChevronDown />}
         </div>
 
-        {tokenExpanded && (
+        {modelExpanded && (
           <div className="config-section-content">
-            <Text type="tertiary" size="small">
-              选择 NewAPI 令牌后，API 调用将通过 Relay 代理，按令牌统计用量和计费
-            </Text>
-            <div style={{ marginTop: 8 }}>
+            {/* 分组选择 */}
+            <div className="config-form-item">
+              <Text size="small" type="secondary">分组</Text>
               <Select
-                value={userInfo.apiTokenKey || ''}
-                onChange={handleTokenChange}
-                loading={tokenLoading}
+                value={userInfo.group || undefined}
+                onChange={handleGroupChange}
                 style={{ width: '100%' }}
                 size="small"
-                placeholder="选择令牌..."
+                placeholder="请选择分组..."
+                filter
               >
-                <Select.Option value="">不使用令牌（系统默认）</Select.Option>
-                {tokens.map(token => {
-                  const maskedKey = token.key ? `sk-***${token.key.slice(-4)}` : '';
-                  const quota = token.remain_quota != null
-                    ? (token.unlimited_quota ? '无限' : `余额 ${(token.remain_quota / 500000).toFixed(2)}`)
-                    : '';
-                  return (
-                    <Select.Option key={token.key} value={token.key}>
-                      {token.name} ({maskedKey}){quota ? ` - ${quota}` : ''}
-                    </Select.Option>
-                  );
-                })}
+                {groups.map(g => (
+                  <Select.Option key={g.value} value={g.value}>{g.label}</Select.Option>
+                ))}
               </Select>
             </div>
+
+            {/* 模型选择 */}
+            <div className="config-form-item">
+              <Text size="small" type="secondary">模型</Text>
+              <Select
+                value={userInfo.selectedModel || undefined}
+                onChange={handleModelChange}
+                loading={modelLoading}
+                style={{ width: '100%' }}
+                size="small"
+                placeholder="请选择模型..."
+                filter
+              >
+                {models.map(m => (
+                  <Select.Option key={m.value} value={m.value}>{m.label}</Select.Option>
+                ))}
+              </Select>
+            </div>
+
+            {/* Temperature */}
+            <div className="config-param-item" style={{ opacity: paramEnabled.temperature ? 1 : 0.5 }}>
+              <div className="config-param-header">
+                <Text size="small" type="secondary">Temperature</Text>
+                {paramEnabled.temperature && <Tag size="small">{userInfo.temperature ?? 0.7}</Tag>}
+                <Button
+                  size="small"
+                  theme={paramEnabled.temperature ? 'solid' : 'borderless'}
+                  type={paramEnabled.temperature ? 'primary' : 'tertiary'}
+                  onClick={() => toggleParam('temperature')}
+                  style={{ marginLeft: 'auto', width: 20, height: 20, padding: 0, minWidth: 0, borderRadius: '50%' }}
+                >
+                  {paramEnabled.temperature ? '✓' : '✕'}
+                </Button>
+              </div>
+              <Slider
+                step={0.1} min={0} max={1}
+                value={userInfo.temperature ?? 0.7}
+                onChange={(v) => handleParamChange('temperature', v)}
+                disabled={!paramEnabled.temperature}
+              />
+            </div>
+
+            {/* Top P */}
+            <div className="config-param-item" style={{ opacity: paramEnabled.topP ? 1 : 0.5 }}>
+              <div className="config-param-header">
+                <Text size="small" type="secondary">Top P</Text>
+                {paramEnabled.topP && <Tag size="small">{userInfo.topP ?? 1}</Tag>}
+                <Button
+                  size="small"
+                  theme={paramEnabled.topP ? 'solid' : 'borderless'}
+                  type={paramEnabled.topP ? 'primary' : 'tertiary'}
+                  onClick={() => toggleParam('topP')}
+                  style={{ marginLeft: 'auto', width: 20, height: 20, padding: 0, minWidth: 0, borderRadius: '50%' }}
+                >
+                  {paramEnabled.topP ? '✓' : '✕'}
+                </Button>
+              </div>
+              <Slider
+                step={0.1} min={0} max={1}
+                value={userInfo.topP ?? 1}
+                onChange={(v) => handleParamChange('topP', v)}
+                disabled={!paramEnabled.topP}
+              />
+            </div>
+
+            {/* Frequency Penalty */}
+            <div className="config-param-item" style={{ opacity: paramEnabled.frequencyPenalty ? 1 : 0.5 }}>
+              <div className="config-param-header">
+                <Text size="small" type="secondary">Frequency Penalty</Text>
+                {paramEnabled.frequencyPenalty && <Tag size="small">{userInfo.frequencyPenalty ?? 0}</Tag>}
+                <Button
+                  size="small"
+                  theme={paramEnabled.frequencyPenalty ? 'solid' : 'borderless'}
+                  type={paramEnabled.frequencyPenalty ? 'primary' : 'tertiary'}
+                  onClick={() => toggleParam('frequencyPenalty')}
+                  style={{ marginLeft: 'auto', width: 20, height: 20, padding: 0, minWidth: 0, borderRadius: '50%' }}
+                >
+                  {paramEnabled.frequencyPenalty ? '✓' : '✕'}
+                </Button>
+              </div>
+              <Slider
+                step={0.1} min={-2} max={2}
+                value={userInfo.frequencyPenalty ?? 0}
+                onChange={(v) => handleParamChange('frequencyPenalty', v)}
+                disabled={!paramEnabled.frequencyPenalty}
+              />
+            </div>
+
+            {/* Presence Penalty */}
+            <div className="config-param-item" style={{ opacity: paramEnabled.presencePenalty ? 1 : 0.5 }}>
+              <div className="config-param-header">
+                <Text size="small" type="secondary">Presence Penalty</Text>
+                {paramEnabled.presencePenalty && <Tag size="small">{userInfo.presencePenalty ?? 0}</Tag>}
+                <Button
+                  size="small"
+                  theme={paramEnabled.presencePenalty ? 'solid' : 'borderless'}
+                  type={paramEnabled.presencePenalty ? 'primary' : 'tertiary'}
+                  onClick={() => toggleParam('presencePenalty')}
+                  style={{ marginLeft: 'auto', width: 20, height: 20, padding: 0, minWidth: 0, borderRadius: '50%' }}
+                >
+                  {paramEnabled.presencePenalty ? '✓' : '✕'}
+                </Button>
+              </div>
+              <Slider
+                step={0.1} min={-2} max={2}
+                value={userInfo.presencePenalty ?? 0}
+                onChange={(v) => handleParamChange('presencePenalty', v)}
+                disabled={!paramEnabled.presencePenalty}
+              />
+            </div>
+
             <Button
               icon={<IconRefresh />}
-              onClick={loadTokens}
+              onClick={() => { loadModels(); loadGroups(); }}
               size="small"
-              loading={tokenLoading}
+              loading={modelLoading}
               style={{ marginTop: 8 }}
             >
-              刷新令牌列表
+              刷新模型列表
             </Button>
           </div>
         )}

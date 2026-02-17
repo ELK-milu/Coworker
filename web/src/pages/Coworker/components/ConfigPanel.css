@@ -69,6 +69,20 @@
   height: 100%;
 }
 
+/* 参数控件 */
+.config-param-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: opacity 0.2s;
+}
+
+.config-param-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .config-editor textarea {
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 12px;

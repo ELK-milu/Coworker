@@ -481,25 +481,37 @@ func (h *RESTHandler) GetUserInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"user_name":      info.UserName,
-		"coworker_name":  info.CoworkerName,
-		"phone":          info.Phone,
-		"email":          info.Email,
-		"api_token_key":  info.ApiTokenKey,
-		"api_token_name": info.ApiTokenName,
+		"user_name":         info.UserName,
+		"coworker_name":     info.CoworkerName,
+		"phone":             info.Phone,
+		"email":             info.Email,
+		"api_token_key":     info.ApiTokenKey,
+		"api_token_name":    info.ApiTokenName,
+		"selected_model":    info.SelectedModel,
+		"group":             info.Group,
+		"temperature":       info.Temperature,
+		"top_p":             info.TopP,
+		"frequency_penalty": info.FrequencyPenalty,
+		"presence_penalty":  info.PresencePenalty,
 	})
 }
 
 // SaveUserInfo 保存用户信息
 func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 	var req struct {
-		UserID       string `json:"user_id"`
-		UserName     string `json:"user_name"`
-		CoworkerName string `json:"coworker_name"`
-		Phone        string `json:"phone"`
-		Email        string `json:"email"`
-		ApiTokenKey  string `json:"api_token_key"`
-		ApiTokenName string `json:"api_token_name"`
+		UserID           string   `json:"user_id"`
+		UserName         string   `json:"user_name"`
+		CoworkerName     string   `json:"coworker_name"`
+		Phone            string   `json:"phone"`
+		Email            string   `json:"email"`
+		ApiTokenKey      string   `json:"api_token_key"`
+		ApiTokenName     string   `json:"api_token_name"`
+		SelectedModel    string   `json:"selected_model"`
+		Group            string   `json:"group"`
+		Temperature      *float64 `json:"temperature"`
+		TopP             *float64 `json:"top_p"`
+		FrequencyPenalty *float64 `json:"frequency_penalty"`
+		PresencePenalty  *float64 `json:"presence_penalty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -512,12 +524,18 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 	}
 
 	info := &workspace.UserInfo{
-		UserName:     req.UserName,
-		CoworkerName: req.CoworkerName,
-		Phone:        req.Phone,
-		Email:        req.Email,
-		ApiTokenKey:  req.ApiTokenKey,
-		ApiTokenName: req.ApiTokenName,
+		UserName:         req.UserName,
+		CoworkerName:     req.CoworkerName,
+		Phone:            req.Phone,
+		Email:            req.Email,
+		ApiTokenKey:      req.ApiTokenKey,
+		ApiTokenName:     req.ApiTokenName,
+		SelectedModel:    req.SelectedModel,
+		Group:            req.Group,
+		Temperature:      req.Temperature,
+		TopP:             req.TopP,
+		FrequencyPenalty: req.FrequencyPenalty,
+		PresencePenalty:  req.PresencePenalty,
 	}
 
 	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {

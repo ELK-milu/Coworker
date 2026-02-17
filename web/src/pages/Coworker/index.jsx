@@ -457,16 +457,16 @@ const Coworker = () => {
         setMessages(prev => prev.map(msg =>
           msg.toolId === payload.tool_id
             ? {
-                ...msg,
-                status: 'completed',
-                input: payload.input || msg.input,
-                result: payload.result,
-                isError: payload.is_error,
-                elapsedMs: payload.elapsed_ms,
-                timeoutMs: payload.timeout_ms,
-                timedOut: payload.timed_out,
-                execEnv: payload.exec_env,
-              }
+              ...msg,
+              status: 'completed',
+              input: payload.input || msg.input,
+              result: payload.result,
+              isError: payload.is_error,
+              elapsedMs: payload.elapsed_ms,
+              timeoutMs: payload.timeout_ms,
+              timedOut: payload.timed_out,
+              execEnv: payload.exec_env,
+            }
             : msg
         ));
         // 如果是 Task 相关工具，刷新任务列表 (REST API)
@@ -670,12 +670,12 @@ const Coworker = () => {
           setJobs(prev => prev.map(j =>
             j.id === payload.job_id
               ? {
-                  ...j,
-                  status: payload.status || j.status,
-                  last_run: payload.last_run || j.last_run,
-                  next_run: payload.next_run || j.next_run,
-                  last_error: payload.last_error || j.last_error,
-                }
+                ...j,
+                status: payload.status || j.status,
+                last_run: payload.last_run || j.last_run,
+                next_run: payload.next_run || j.next_run,
+                last_error: payload.last_error || j.last_error,
+              }
               : j
           ));
           console.log('[Coworker] Job status updated:', payload.job_id, payload.status);
@@ -1016,120 +1016,99 @@ const Coworker = () => {
             <div className="connection-status">
               <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
               <Text size="small">{connected ? '已连接' : '未连接'}</Text>
-              {connected ? (
-                <Button
-                  size="small"
-                  type="tertiary"
-                  theme="borderless"
-                  onClick={disconnectWebSocket}
-                  style={{ marginLeft: 8 }}
-                >
-                  断开WS
-                </Button>
-              ) : (
-                <Button
-                  size="small"
-                  type="primary"
-                  theme="solid"
-                  onClick={connectWebSocket}
-                  style={{ marginLeft: 8 }}
-                >
-                  重连WS
-                </Button>
-              )}
             </div>
           </div>
 
           {/* 消息列表 */}
           <div className="messages-container">
-          {messages.map(renderMessage)}
-          {thinking && (
-            <div className="thinking-indicator">
-              <Spin size="small" />
-              <Text type="tertiary">Claude 正在思考...</Text>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
+            {messages.map(renderMessage)}
+            {thinking && (
+              <div className="thinking-indicator">
+                <Spin size="small" />
+                <Text type="tertiary">Claude 正在思考...</Text>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
 
           {/* 输入区域 */}
           <div className="input-container">
-          {/* 动态状态栏 - 回复时实时更新，结束后保留最后一轮 */}
-          {(loading || turnStats) && status && (
-            <div className="status-bar dynamic">
-              <span className="status-item">
-                <span className="status-label">Model:</span>
-                <span className="status-value">{status.model || 'claude-sonnet'}</span>
-              </span>
-              <span className="status-item">
-                <span className="status-label">Cost:</span>
-                <span className="status-value">
-                  ${calculateCost(status.model, status.inputTokens || 0, status.outputTokens || 0).toFixed(4)}
+            {/* 动态状态栏 - 回复时实时更新，结束后保留最后一轮 */}
+            {(loading || turnStats) && status && (
+              <div className="status-bar dynamic">
+                <span className="status-item">
+                  <span className="status-label">Model:</span>
+                  <span className="status-value">{status.model || 'claude-sonnet'}</span>
                 </span>
-              </span>
-              <span className="status-item">
-                <span className="status-label">Tokens:</span>
-                <span className="status-value">{status.totalTokens || 0}</span>
-              </span>
-              <span className="status-item">
-                <span className="status-label">Time:</span>
-                <span className="status-value">{formatElapsed(status.elapsedMs)}</span>
-              </span>
-            </div>
-          )}
-
-          {/* 常驻状态栏 */}
-          <div className="status-bar persistent">
-            <div className="context-info">
-              <span className="context-label">Context left:</span>
-              <span className="context-value">
-                {status ? `${Math.max(0, 100 - (status.contextPercent || 0)).toFixed(0)}%` : '100%'}
-              </span>
-            </div>
-            {sessionStats.turnCount > 0 && (
-              <div className="session-stats">
-                <span className="stats-item">
-                  <span className="stats-label">Session:</span>
-                  <span className="stats-value">{sessionStats.totalTokens.toLocaleString()} tokens</span>
+                <span className="status-item">
+                  <span className="status-label">Cost:</span>
+                  <span className="status-value">
+                    ${calculateCost(status.model, status.inputTokens || 0, status.outputTokens || 0).toFixed(4)}
+                  </span>
                 </span>
-                <span className="stats-item">
-                  <span className="stats-label">Total:</span>
-                  <span className="stats-value">${sessionStats.totalCost.toFixed(4)}</span>
+                <span className="status-item">
+                  <span className="status-label">Tokens:</span>
+                  <span className="status-value">{status.totalTokens || 0}</span>
+                </span>
+                <span className="status-item">
+                  <span className="status-label">Time:</span>
+                  <span className="status-value">{formatElapsed(status.elapsedMs)}</span>
                 </span>
               </div>
             )}
-          </div>
 
-          <div className="input-wrapper">
-            <TextArea
-              value={inputValue}
-              onChange={setInputValue}
-              placeholder={loading ? "Claude 正在回复..." : "输入消息，按 Enter 发送..."}
-              autosize={{ minRows: 1, maxRows: 5 }}
-              onEnterPress={(e) => {
-                if (!e.shiftKey && !loading) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-            />
-            {loading ? (
-              <Button
-                icon={<IconStop />}
-                theme="solid"
-                type="danger"
-                onClick={abortMessage}
+            {/* 常驻状态栏 */}
+            <div className="status-bar persistent">
+              <div className="context-info">
+                <span className="context-label">Context left:</span>
+                <span className="context-value">
+                  {status ? `${Math.max(0, 100 - (status.contextPercent || 0)).toFixed(0)}%` : '100%'}
+                </span>
+              </div>
+              {sessionStats.turnCount > 0 && (
+                <div className="session-stats">
+                  <span className="stats-item">
+                    <span className="stats-label">Session:</span>
+                    <span className="stats-value">{sessionStats.totalTokens.toLocaleString()} tokens</span>
+                  </span>
+                  <span className="stats-item">
+                    <span className="stats-label">Total:</span>
+                    <span className="stats-value">${sessionStats.totalCost.toFixed(4)}</span>
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="input-wrapper">
+              <TextArea
+                value={inputValue}
+                onChange={setInputValue}
+                placeholder={loading ? "Claude 正在回复..." : "输入消息，按 Enter 发送..."}
+                autosize={{ minRows: 1, maxRows: 5 }}
+                onEnterPress={(e) => {
+                  if (!e.shiftKey && !loading) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
               />
-            ) : (
-              <Button
-                icon={<IconSend />}
-                theme="solid"
-                onClick={sendMessage}
-                disabled={!inputValue.trim()}
-              />
-            )}
+              {loading ? (
+                <Button
+                  icon={<IconStop />}
+                  theme="solid"
+                  type="danger"
+                  onClick={abortMessage}
+                />
+              ) : (
+                <Button
+                  icon={<IconSend />}
+                  theme="solid"
+                  onClick={sendMessage}
+                  disabled={!inputValue.trim()}
+                />
+              )}
+            </div>
           </div>
-        </div>
         </div>
       </div>
 

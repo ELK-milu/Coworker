@@ -54,6 +54,12 @@ func (c *ClaudeClient) streamMessages(
 		Tools:     buildBetaTools(tools),
 		Betas:     betas,
 	}
+	if c.temperature != nil {
+		params.Temperature = anthropic.Float(*c.temperature)
+	}
+	if c.topP != nil {
+		params.TopP = anthropic.Float(*c.topP)
+	}
 
 	// 流式调用（仅在连接建立失败时重试，流开始后不重试）
 	var streamErr error

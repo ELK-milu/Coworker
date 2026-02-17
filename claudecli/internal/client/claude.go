@@ -23,6 +23,9 @@ type ClaudeClient struct {
 	model     string
 	maxTokens int64
 	isOAuth   bool
+	// 用户可配置的采样参数
+	temperature *float64
+	topP        *float64
 }
 
 // NewClaudeClient 创建客户端
@@ -76,6 +79,18 @@ func NewClaudeClient(apiKey, authToken, baseURL, model string, maxTokens int) *C
 func (c *ClaudeClient) GetModel() string {
 	return c.model
 }
+
+// SetSamplingParams 设置采样参数
+func (c *ClaudeClient) SetSamplingParams(temperature, topP *float64) {
+	c.temperature = temperature
+	c.topP = topP
+}
+
+// GetTemperature 获取温度参数
+func (c *ClaudeClient) GetTemperature() *float64 { return c.temperature }
+
+// GetTopP 获取 TopP 参数
+func (c *ClaudeClient) GetTopP() *float64 { return c.topP }
 
 // buildBetas 构建 beta 头
 func buildBetas(model string, isOAuth bool) []anthropic.AnthropicBeta {

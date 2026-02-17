@@ -63,7 +63,6 @@ services:
       - BATCH_UPDATE_ENABLED=true
       - DEBUG=true
       # Agent 配置
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
       - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
       - WORKSPACE_BASE_PATH=/app/userdata

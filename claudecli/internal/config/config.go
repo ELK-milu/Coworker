@@ -71,7 +71,7 @@ func Load() *Config {
 				Port: 8080,
 			},
 			Claude: ClaudeConfig{
-				APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
+				APIKey:    "", // 不再从环境变量读取，用户必须在配置面板选择自己的令牌
 				AuthToken: os.Getenv("ANTHROPIC_AUTH_TOKEN"),
 				BaseURL:   getEnv("ANTHROPIC_BASE_URL", getEnv("ANTHROPIC_API_BASE_URL", "")),
 				Model:     getEnv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),

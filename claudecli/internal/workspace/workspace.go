@@ -397,12 +397,19 @@ func (m *Manager) SaveConfig(userID string, content string) error {
 
 // UserInfo 用户信息
 type UserInfo struct {
-	UserName     string `json:"user_name"`
-	CoworkerName string `json:"coworker_name"`
-	Phone        string `json:"phone"`
-	Email        string `json:"email"`
-	ApiTokenKey  string `json:"api_token_key,omitempty"`  // NewAPI 令牌 Key (如 "sk-xxx")
-	ApiTokenName string `json:"api_token_name,omitempty"` // 令牌名称 (显示用)
+	UserName      string `json:"user_name"`
+	CoworkerName  string `json:"coworker_name"`
+	Phone         string `json:"phone"`
+	Email         string `json:"email"`
+	ApiTokenKey   string `json:"api_token_key,omitempty"`
+	ApiTokenName  string `json:"api_token_name,omitempty"`
+	SelectedModel string `json:"selected_model,omitempty"`
+	Group         string `json:"group,omitempty"`
+	// 采样参数（nil 表示使用默认值）
+	Temperature      *float64 `json:"temperature,omitempty"`
+	TopP             *float64 `json:"top_p,omitempty"`
+	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
 }
 
 // LoadUserInfo 加载用户信息

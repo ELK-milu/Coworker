@@ -190,21 +190,14 @@ export async function saveUserInfo(userId, userInfo) {
       email: userInfo.email,
       api_token_key: userInfo.apiTokenKey || '',
       api_token_name: userInfo.apiTokenName || '',
+      selected_model: userInfo.selectedModel || '',
+      group: userInfo.group || '',
+      temperature: userInfo.temperature,
+      top_p: userInfo.topP,
+      frequency_penalty: userInfo.frequencyPenalty,
+      presence_penalty: userInfo.presencePenalty,
     }),
   });
-}
-
-// ========== 令牌管理 API ==========
-
-export async function listTokens() {
-  // 复用项目统一的 API 实例（自动携带 session cookie）
-  const { API } = await import('../../../helpers/api');
-  const res = await API.get('/api/token/?p=1&size=100');
-  const { success, data } = res.data;
-  if (!success) throw new Error('Failed to fetch tokens');
-  const items = Array.isArray(data) ? data : data.items || [];
-  // 只返回启用状态的令牌
-  return items.filter(token => token.status === 1);
 }
 
 // ========== 记忆管理 API ==========

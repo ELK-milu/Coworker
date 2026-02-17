@@ -212,6 +212,14 @@ const SessionSidebar = ({
             </button>
             <button
               type="button"
+              className={`tab-btn ${activeTab === 'config' ? 'active' : ''}`}
+              onClick={() => setActiveTab('config')}
+            >
+              <IconSetting size="small" />
+              <span>配置</span>
+            </button>
+            <button
+              type="button"
               className={`tab-btn ${activeTab === 'tasks' ? 'active' : ''}`}
               onClick={() => setActiveTab('tasks')}
             >
@@ -225,14 +233,6 @@ const SessionSidebar = ({
             >
               <IconFolder size="small" />
               <span>文件</span>
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${activeTab === 'config' ? 'active' : ''}`}
-              onClick={() => setActiveTab('config')}
-            >
-              <IconSetting size="small" />
-              <span>配置</span>
             </button>
             <button
               type="button"
