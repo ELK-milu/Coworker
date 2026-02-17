@@ -4,7 +4,7 @@ Copyright (C) 2025 QuantumNous
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Typography, Spin, TextArea, Toast } from '@douyinfe/semi-ui';
-import { IconSend, IconStop } from '@douyinfe/semi-icons';
+import { IconSend, IconStop, IconInfoCircle, IconClose } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
 import InlineTaskCard from './components/InlineTaskCard';
@@ -54,6 +54,7 @@ const Coworker = () => {
   // 事项相关状态
   const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(false);
+  const [showRightPanel, setShowRightPanel] = useState(false);
   // Token 统计相关状态
   const [turnStats, setTurnStats] = useState(null);  // 本轮统计
   const [sessionStats, setSessionStats] = useState({
@@ -968,7 +969,7 @@ const Coworker = () => {
   };
 
   return (
-    <div className='mt-[60px] px-2'>
+    <div className='h-full'>
       <div className="coworker-container">
         {/* 会话侧边栏 */}
         <SessionSidebar
@@ -1013,9 +1014,19 @@ const Coworker = () => {
               <Title heading={4} style={{ margin: 0 }}>Coworker</Title>
               <Text type="tertiary">AI 编程助手</Text>
             </div>
-            <div className="connection-status">
-              <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
-              <Text size="small">{connected ? '已连接' : '未连接'}</Text>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <Button
+                icon={<IconInfoCircle />}
+                theme={showRightPanel ? 'solid' : 'borderless'}
+                size="small"
+                onClick={() => setShowRightPanel(!showRightPanel)}
+              >
+                {showRightPanel ? '隐藏详情' : '显示详情'}
+              </Button>
+              <div className="connection-status">
+                <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
+                <Text size="small">{connected ? '已连接' : '未连接'}</Text>
+              </div>
             </div>
           </div>
 
@@ -1110,9 +1121,64 @@ const Coworker = () => {
             </div>
           </div>
         </div>
-      </div>
 
-    </div>
+        {/* 右侧详情面板 */}
+        {showRightPanel && (
+          <div className="coworker-right-panel">
+            <div className="right-panel-header">
+              <Title heading={5} style={{ margin: 0 }}>详情</Title>
+              <Button
+                icon={<IconClose />}
+                theme="borderless"
+                size="small"
+                onClick={() => setShowRightPanel(false)}
+              />
+            </div>
+            <div className="right-panel-content">
+              {/* 模型信息 */}
+              <div style={{ marginBottom: '16px' }}>
+                <Text strong size="small">模型</Text>
+                <div style={{ marginTop: '4px', fontFamily: 'Consolas, monospace', fontSize: '13px' }}>
+                  {status?.model || '未连接'}
+                </div>
+              </div>
+
+              {/* Context */}
+              <div style={{ marginBottom: '16px' }}>
+                <Text strong size="small">Context left</Text>
+                <div style={{ marginTop: '4px', fontFamily: 'Consolas, monospace', fontSize: '13px' }}>
+                  {status ? `${Math.max(0, 100 - (status.contextPercent || 0)).toFixed(0)}%` : '100%'}
+                </div>
+              </div>
+
+              {/* 本轮统计 */}
+              {turnStats && (
+                <div style={{ marginBottom: '16px' }}>
+                  <Text strong size="small">本轮统计</Text>
+                  <div style={{ marginTop: '4px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div>Input: {turnStats.inputTokens?.toLocaleString()} tokens</div>
+                    <div>Output: {turnStats.outputTokens?.toLocaleString()} tokens</div>
+                    <div>Total: {turnStats.totalTokens?.toLocaleString()} tokens</div>
+                    <div>Time: {formatElapsed(turnStats.elapsedMs)}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* 会话累计 */}
+              {sessionStats.turnCount > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <Text strong size="small">会话累计</Text>
+                  <div style={{ marginTop: '4px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div>Turns: {sessionStats.turnCount}</div>
+                    <div>Tokens: {sessionStats.totalTokens?.toLocaleString()}</div>
+                    <div>Cost: ${sessionStats.totalCost?.toFixed(4)}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
   );
 };
 
