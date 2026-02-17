@@ -969,7 +969,7 @@ const Coworker = () => {
   };
 
   return (
-    <div className='h-full'>
+    <div className='h-screen pt-[64px]'>
       <div className="coworker-container">
         {/* 会话侧边栏 */}
         <SessionSidebar
@@ -1179,6 +1179,7 @@ const Coworker = () => {
           </div>
         )}
       </div>
+    </div>
   );
 };
 

@@ -1,8 +1,7 @@
 /* Coworker 聊天界面样式 */
 
 .coworker-container {
-  height: calc(100vh - 66px);
-  margin-top: 60px;
+  height: 100%;
   display: flex;
   flex-direction: row;
   background: var(--semi-color-bg-0);
