@@ -55,6 +55,11 @@ func (ctrl *ClaudeCLIController) DownloadFile(c *gin.Context) {
 	ctrl.module.FileHandler.Download(c)
 }
 
+// PreviewFile 预览文件
+func (ctrl *ClaudeCLIController) PreviewFile(c *gin.Context) {
+	ctrl.module.FileHandler.Preview(c)
+}
+
 // ========== 会话管理 ==========
 
 // ListSessions 获取会话列表

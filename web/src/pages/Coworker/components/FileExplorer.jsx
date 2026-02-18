@@ -167,6 +167,7 @@ const FileExplorer = ({
   userId,
   onNavigate,
   onRefresh,
+  onPreviewFile,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -198,6 +199,7 @@ const FileExplorer = ({
       onNavigate(file.path);
     } else {
       setSelectedFile(file);
+      if (onPreviewFile) onPreviewFile(file);
     }
   };
 

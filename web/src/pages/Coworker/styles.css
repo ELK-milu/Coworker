@@ -501,3 +501,44 @@
   font-family: 'Consolas', monospace;
   font-weight: 500;
 }
+
+/* Excel 网格样式 */
+.xlsx-grid {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  min-width: 100%;
+}
+.xlsx-grid th, .xlsx-grid td {
+  border: 1px solid #d0d0d0;
+  padding: 2px 6px;
+  white-space: nowrap;
+  text-align: left;
+  height: 22px;
+}
+.xlsx-col-hdr {
+  background: #f0f0f0;
+  color: #333;
+  font-weight: 500;
+  text-align: center !important;
+  min-width: 64px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.xlsx-row-num {
+  background: #f0f0f0;
+  color: #666;
+  text-align: center !important;
+  min-width: 36px;
+  font-weight: 400;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+.xlsx-cell {
+  background: #fff;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

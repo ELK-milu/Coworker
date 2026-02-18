@@ -58,6 +58,7 @@ const SessionSidebar = ({
   filesLoading = false,
   onNavigateFile,
   onRefreshFiles,
+  onPreviewFile,
   // 任务相关
   tasks = [],
   tasksLoading = false,
@@ -303,6 +304,7 @@ const SessionSidebar = ({
             userId={userId}
             onNavigate={onNavigateFile}
             onRefresh={onRefreshFiles}
+            onPreviewFile={onPreviewFile}
           />
         )}
       </div>
