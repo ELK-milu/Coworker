@@ -30,7 +30,7 @@ import (
 	_ "net/http/pprof"
 )
 
-//go:embed web/dist
+//go:embed all:web/dist
 var buildFS embed.FS
 
 //go:embed web/dist/index.html

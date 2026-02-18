@@ -157,6 +157,18 @@ export function getDownloadUrl(userId, path) {
   return `${API_BASE}/files/download?user_id=${encodeURIComponent(userId)}&path=${encodeURIComponent(path)}`;
 }
 
+// 文件预览 URL（inline + 正确 MIME type）
+export function getPreviewUrl(userId, path) {
+  return `${API_BASE}/files/preview?user_id=${encodeURIComponent(userId)}&path=${encodeURIComponent(path)}`;
+}
+
+// 保存编辑后的文件（覆盖原文件）
+export async function saveFileContent(userId, filePath, blob, fileName) {
+  const dir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '';
+  const file = new File([blob], fileName, { type: blob.type });
+  return uploadFile(userId, dir, file);
+}
+
 // ========== 配置管理 API ==========
 
 export async function getConfig(userId) {

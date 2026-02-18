@@ -10,6 +10,7 @@ import ToolCallCard from './components/ToolCallCard';
 import InlineTaskCard from './components/InlineTaskCard';
 import SessionSidebar from './components/SessionSidebar';
 import * as api from './services/api';
+import FilePreview from './components/FilePreview';
 import './styles.css';
 
 const { Title, Text } = Typography;
@@ -55,6 +56,7 @@ const Coworker = () => {
   const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [showRightPanel, setShowRightPanel] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
   // Token 统计相关状态
   const [turnStats, setTurnStats] = useState(null);  // 本轮统计
   const [sessionStats, setSessionStats] = useState({
@@ -984,6 +986,10 @@ const Coworker = () => {
           filesLoading={filesLoading}
           onNavigateFile={navigateFile}
           onRefreshFiles={refreshFiles}
+          onPreviewFile={(file) => {
+            setPreviewFile(file);
+            setShowRightPanel(true);
+          }}
           tasks={tasks}
           tasksLoading={tasksLoading}
           onCreateTask={createTask}
@@ -1126,54 +1132,26 @@ const Coworker = () => {
         {showRightPanel && (
           <div className="coworker-right-panel">
             <div className="right-panel-header">
-              <Title heading={5} style={{ margin: 0 }}>详情</Title>
+              <Title heading={5} style={{ margin: 0 }}>
+                {previewFile ? previewFile.name : '详情'}
+              </Title>
               <Button
                 icon={<IconClose />}
                 theme="borderless"
                 size="small"
-                onClick={() => setShowRightPanel(false)}
+                onClick={() => { setShowRightPanel(false); setPreviewFile(null); }}
               />
             </div>
             <div className="right-panel-content">
-              {/* 模型信息 */}
-              <div style={{ marginBottom: '16px' }}>
-                <Text strong size="small">模型</Text>
-                <div style={{ marginTop: '4px', fontFamily: 'Consolas, monospace', fontSize: '13px' }}>
-                  {status?.model || '未连接'}
-                </div>
-              </div>
-
-              {/* Context */}
-              <div style={{ marginBottom: '16px' }}>
-                <Text strong size="small">Context left</Text>
-                <div style={{ marginTop: '4px', fontFamily: 'Consolas, monospace', fontSize: '13px' }}>
-                  {status ? `${Math.max(0, 100 - (status.contextPercent || 0)).toFixed(0)}%` : '100%'}
-                </div>
-              </div>
-
-              {/* 本轮统计 */}
-              {turnStats && (
-                <div style={{ marginBottom: '16px' }}>
-                  <Text strong size="small">本轮统计</Text>
-                  <div style={{ marginTop: '4px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div>Input: {turnStats.inputTokens?.toLocaleString()} tokens</div>
-                    <div>Output: {turnStats.outputTokens?.toLocaleString()} tokens</div>
-                    <div>Total: {turnStats.totalTokens?.toLocaleString()} tokens</div>
-                    <div>Time: {formatElapsed(turnStats.elapsedMs)}</div>
-                  </div>
-                </div>
-              )}
-
-              {/* 会话累计 */}
-              {sessionStats.turnCount > 0 && (
-                <div style={{ marginBottom: '16px' }}>
-                  <Text strong size="small">会话累计</Text>
-                  <div style={{ marginTop: '4px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div>Turns: {sessionStats.turnCount}</div>
-                    <div>Tokens: {sessionStats.totalTokens?.toLocaleString()}</div>
-                    <div>Cost: ${sessionStats.totalCost?.toFixed(4)}</div>
-                  </div>
-                </div>
+              {previewFile ? (
+                <FilePreview
+                  previewUrl={api.getPreviewUrl(userId, previewFile.path)}
+                  fileName={previewFile.name}
+                  userId={userId}
+                  filePath={previewFile.path}
+                />
+              ) : (
+                <Text type="tertiary">点击左侧文件列表中的文件进行预览</Text>
               )}
             </div>
           </div>
