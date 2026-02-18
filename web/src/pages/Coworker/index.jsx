@@ -12,6 +12,13 @@ import SessionSidebar from './components/SessionSidebar';
 import * as api from './services/api';
 import FilePreview from './components/FilePreview';
 import { getUserIdFromLocalStorage } from '../../helpers/utils';
+
+function getLocalUser() {
+  try {
+    const u = JSON.parse(localStorage.getItem('user') || '{}');
+    return { name: u.display_name || u.username || '你', initial: (u.display_name || u.username || 'U')[0].toUpperCase() };
+  } catch { return { name: '你', initial: 'U' }; }
+}
 import './styles.css';
 
 const { Title, Text } = Typography;
@@ -32,6 +39,7 @@ const SESSION_STORAGE_KEY = 'coworker_session_id';
 const Coworker = () => {
   const [messages, setMessages] = useState([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const localUser = getLocalUser();
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -963,6 +971,8 @@ const Coworker = () => {
         content={msg.content}
         timestamp={msg.timestamp}
         aborted={msg.aborted}
+        userName={localUser.name}
+        userInitial={localUser.initial}
       />
     );
   };
