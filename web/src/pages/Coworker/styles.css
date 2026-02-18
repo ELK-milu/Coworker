@@ -18,7 +18,7 @@
 
 /* 右侧面板 */
 .coworker-right-panel {
-  width: 384px;
+  width: 560px;
   flex-shrink: 0;
   height: 100%;
   border-left: 1px solid var(--semi-color-border);

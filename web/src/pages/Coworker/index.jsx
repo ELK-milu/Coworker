@@ -986,6 +986,7 @@ const Coworker = () => {
           onPreviewFile={(file) => {
             setPreviewFile(file);
             setShowRightPanel(true);
+            setSidebarCollapsed(true);
           }}
           tasks={tasks}
           tasksLoading={tasksLoading}
@@ -1030,7 +1031,12 @@ const Coworker = () => {
                 icon={<IconInfoCircle />}
                 theme={showRightPanel ? 'solid' : 'borderless'}
                 size="small"
-                onClick={() => setShowRightPanel(!showRightPanel)}
+                onClick={() => {
+                  const opening = !showRightPanel;
+                  setShowRightPanel(opening);
+                  if (opening) setSidebarCollapsed(true);
+                  else setSidebarCollapsed(false);
+                }}
               >
                 {showRightPanel ? '隐藏详情' : '显示详情'}
               </Button>
@@ -1144,7 +1150,7 @@ const Coworker = () => {
                 icon={<IconClose />}
                 theme="borderless"
                 size="small"
-                onClick={() => { setShowRightPanel(false); setPreviewFile(null); }}
+                onClick={() => { setShowRightPanel(false); setPreviewFile(null); setSidebarCollapsed(false); }}
               />
             </div>
             <div className="right-panel-content">
