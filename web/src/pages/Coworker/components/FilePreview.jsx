@@ -461,7 +461,7 @@ const FilePreview = ({ previewUrl, fileName, userId, filePath }) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
         // 文本类
-        if (TEXT_EXTS.has(ext)) {
+        if (TEXT_EXTS.has(ext) || CODE_EXTS.has(ext)) {
           setContent({ type: 'text', data: await res.text() });
           setLoading(false);
           return;
