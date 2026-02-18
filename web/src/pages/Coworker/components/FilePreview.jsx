@@ -517,10 +517,7 @@ const FilePreview = ({ previewUrl, fileName, userId, filePath }) => {
   if (content?.type === 'pdf') return <iframe src={content.url} title={fileName} style={{ width: '100%', height: '100%', border: 'none' }} />;
   if (content?.type === 'video') return <video src={content.url} controls style={{ maxWidth: '100%', maxHeight: '100%' }} />;
   if (content?.type === 'audio') return <audio src={content.url} controls style={{ width: '100%', marginTop: 20 }} />;
-  if (content?.type === 'text') {
-    if (CODE_EXTS.has(ext)) return <CodeEditor data={content.data} userId={userId} filePath={filePath} fileName={fileName} ext={ext} />;
-    return <TextEditor data={content.data} userId={userId} filePath={filePath} fileName={fileName} />;
-  }
+  if (content?.type === 'text') return <CodeEditor data={content.data} userId={userId} filePath={filePath} fileName={fileName} ext={ext} />;
   if (content?.type === 'docx') return <DocxEditor blob={content.blob} userId={userId} filePath={filePath} fileName={fileName} />;
   if (content?.type === 'xlsx') return <XlsxEditor blob={content.blob} userId={userId} filePath={filePath} fileName={fileName} />;
   if (content?.type === 'pptx') return <PptxRenderer blob={content.blob} />;
