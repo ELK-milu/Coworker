@@ -11,6 +11,7 @@ import InlineTaskCard from './components/InlineTaskCard';
 import SessionSidebar from './components/SessionSidebar';
 import * as api from './services/api';
 import FilePreview from './components/FilePreview';
+import { getUserIdFromLocalStorage } from '../../helpers/utils';
 import './styles.css';
 
 const { Title, Text } = Typography;
@@ -64,13 +65,8 @@ const Coworker = () => {
   });
   const [ratioConfig, setRatioConfig] = useState(null);  // 模型定价配置
   const [userId] = useState(() => {
-    // 从 localStorage 获取或生成用户ID
-    let uid = localStorage.getItem('coworker_user_id');
-    if (!uid) {
-      uid = 'user_' + Date.now();
-      localStorage.setItem('coworker_user_id', uid);
-    }
-    return uid;
+    const systemId = getUserIdFromLocalStorage();
+    return systemId && systemId !== -1 ? String(systemId) : 'user_' + Date.now();
   });
   const wsRef = useRef(null);
   const messagesEndRef = useRef(null);
