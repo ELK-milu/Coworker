@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { Spin, Typography, Button, Toast } from '@douyinfe/semi-ui';
 import { IconSave } from '@douyinfe/semi-icons';
 import { saveFileContent } from '../services/api';
@@ -6,10 +6,12 @@ import { saveFileContent } from '../services/api';
 const { Text } = Typography;
 
 const TEXT_EXTS = new Set([
-  'txt','md','csv','json','xml','html','htm','css','js','jsx','ts','tsx',
-  'py','go','java','c','cpp','h','rs','rb','php','sh','bash','yaml','yml',
-  'toml','ini','env','log','conf','cfg','sql','vue','svelte','swift','kt',
-  'r','lua','pl','makefile','dockerfile','gitignore','editorconfig',
+  'txt','log','conf','cfg','ini','env','gitignore','editorconfig','makefile','dockerfile',
+]);
+const CODE_EXTS = new Set([
+  'js','jsx','ts','tsx','py','go','java','c','cpp','h','rs','rb','php',
+  'sh','bash','css','scss','sass','less','html','htm','json','xml','yaml','yml',
+  'toml','sql','vue','svelte','swift','kt','r','lua','pl','md','csv',
 ]);
 const IMG_EXTS = new Set(['png','jpg','jpeg','gif','bmp','svg','webp','ico']);
 const VIDEO_EXTS = new Set(['mp4','webm','mov','avi','mkv']);
@@ -347,6 +349,62 @@ function PptxRenderer({ blob }) {
   );
 }
 
+// 代码编辑器（懒加载）
+const CodeMirrorEditor = React.lazy(() => import('@uiw/react-codemirror'));
+
+async function getLanguage(ext) {
+  switch (ext) {
+    case 'js': case 'jsx': case 'ts': case 'tsx': case 'vue': case 'svelte': {
+      const { javascript } = await import('@codemirror/lang-javascript');
+      return javascript({ jsx: ['jsx','tsx','vue','svelte'].includes(ext), typescript: ['ts','tsx'].includes(ext) });
+    }
+    case 'py': { const { python } = await import('@codemirror/lang-python'); return python(); }
+    case 'java': case 'kt': { const { java } = await import('@codemirror/lang-java'); return java(); }
+    case 'c': case 'cpp': case 'h': { const { cpp } = await import('@codemirror/lang-cpp'); return cpp(); }
+    case 'rs': { const { rust } = await import('@codemirror/lang-rust'); return rust(); }
+    case 'css': case 'scss': case 'sass': case 'less': { const { css } = await import('@codemirror/lang-css'); return css(); }
+    case 'html': case 'htm': { const { html } = await import('@codemirror/lang-html'); return html(); }
+    case 'json': { const { json } = await import('@codemirror/lang-json'); return json(); }
+    case 'md': { const { markdown } = await import('@codemirror/lang-markdown'); return markdown(); }
+    case 'sql': { const { sql } = await import('@codemirror/lang-sql'); return sql(); }
+    case 'xml': case 'yaml': case 'yml': case 'toml': { const { xml } = await import('@codemirror/lang-xml'); return xml(); }
+    default: return null;
+  }
+}
+
+function CodeEditor({ data, userId, filePath, fileName, ext }) {
+  const [code, setCode] = useState(data);
+  const [lang, setLang] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { getLanguage(ext).then(l => l && setLang([l])); }, [ext]);
+
+  const handleSave = useCallback(async () => {
+    if (!userId) return;
+    setSaving(true);
+    try {
+      await doSave(userId, filePath, fileName, new Blob([code], { type: 'text/plain' }));
+    } catch (e) { Toast.error('保存失败: ' + e.message); }
+    finally { setSaving(false); }
+  }, [code, userId, filePath, fileName]);
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {userId && <Toolbar onSave={handleSave} saving={saving} />}
+      <Suspense fallback={<div style={{ padding: 16 }}>加载编辑器...</div>}>
+        <CodeMirrorEditor
+          value={code}
+          extensions={lang}
+          onChange={setCode}
+          height="100%"
+          style={{ flex: 1, overflow: 'auto', fontSize: 13 }}
+          basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true }}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
 // 文本编辑器
 function TextEditor({ data, userId, filePath, fileName }) {
   const [text, setText] = useState(data);
@@ -459,7 +517,10 @@ const FilePreview = ({ previewUrl, fileName, userId, filePath }) => {
   if (content?.type === 'pdf') return <iframe src={content.url} title={fileName} style={{ width: '100%', height: '100%', border: 'none' }} />;
   if (content?.type === 'video') return <video src={content.url} controls style={{ maxWidth: '100%', maxHeight: '100%' }} />;
   if (content?.type === 'audio') return <audio src={content.url} controls style={{ width: '100%', marginTop: 20 }} />;
-  if (content?.type === 'text') return <TextEditor data={content.data} userId={userId} filePath={filePath} fileName={fileName} />;
+  if (content?.type === 'text') {
+    if (CODE_EXTS.has(ext)) return <CodeEditor data={content.data} userId={userId} filePath={filePath} fileName={fileName} ext={ext} />;
+    return <TextEditor data={content.data} userId={userId} filePath={filePath} fileName={fileName} />;
+  }
   if (content?.type === 'docx') return <DocxEditor blob={content.blob} userId={userId} filePath={filePath} fileName={fileName} />;
   if (content?.type === 'xlsx') return <XlsxEditor blob={content.blob} userId={userId} filePath={filePath} fileName={fileName} />;
   if (content?.type === 'pptx') return <PptxRenderer blob={content.blob} />;
