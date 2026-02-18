@@ -36,6 +36,16 @@ const getFileExtension = (filename) => {
   return parts.length > 1 ? parts.pop().toLowerCase() : '';
 };
 
+// 生成带颜色标签的文件类型图标
+const makeBadgeIcon = (label, bg) => {
+  const BadgeIcon = ({ className }) => (
+    <span className={className} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 3, background: bg, color: '#fff', fontSize: 7, fontWeight: 800, letterSpacing: -0.5, flexShrink: 0 }}>
+      {label}
+    </span>
+  );
+  return BadgeIcon;
+};
+
 // 根据文件类型获取图标和颜色
 const getFileIcon = (filename) => {
   const ext = getFileExtension(filename);
@@ -64,6 +74,13 @@ const getFileIcon = (filename) => {
   if (['json', 'yaml', 'yml', 'toml', 'xml', 'ini', 'env', 'conf', 'config'].includes(ext)) {
     return { icon: IconSetting, color: '#6b7280' };
   }
+
+  // 文档文件 - 带颜色标签
+  if (ext === 'pdf') return { icon: makeBadgeIcon('PDF', '#ef4444'), color: '' };
+  if (['doc', 'docx'].includes(ext)) return { icon: makeBadgeIcon('DOC', '#2563eb'), color: '' };
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return { icon: makeBadgeIcon('XLS', '#16a34a'), color: '' };
+  if (['ppt', 'pptx'].includes(ext)) return { icon: makeBadgeIcon('PPT', '#ea580c'), color: '' };
+  if (ext === 'md') return { icon: makeBadgeIcon('MD', '#7c3aed'), color: '' };
 
   // 文档文件
   if (['md', 'txt', 'doc', 'docx', 'pdf', 'rtf', 'odt'].includes(ext)) {
