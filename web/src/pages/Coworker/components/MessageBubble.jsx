@@ -7,7 +7,7 @@ import InlineTaskCard from './InlineTaskCard';
 
 const { Text } = Typography;
 
-const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask, userName = '你', userInitial = 'U' }) => {
+const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask, userName = '你', userInitial = 'U', userColor }) => {
   const [copied, setCopied] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const isUser = role === 'user';
@@ -73,7 +73,7 @@ const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask,
         <Avatar
           size="small"
           style={{
-            backgroundColor: isUser ? 'var(--semi-color-primary)' : '#6B4EE6'
+            backgroundColor: isUser ? (userColor || 'var(--semi-color-primary)') : '#6B4EE6'
           }}
         >
           {isUser ? userInitial : 'C'}

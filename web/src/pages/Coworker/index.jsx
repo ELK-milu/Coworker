@@ -2,7 +2,7 @@
 Copyright (C) 2025 QuantumNous
 */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useContext } from 'react';
 import { Button, Typography, Spin, TextArea, Toast } from '@douyinfe/semi-ui';
 import { IconSend, IconStop, IconInfoCircle, IconClose, IconMenu } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
@@ -12,13 +12,8 @@ import SessionSidebar from './components/SessionSidebar';
 import * as api from './services/api';
 import FilePreview from './components/FilePreview';
 import { getUserIdFromLocalStorage } from '../../helpers/utils';
-
-function getLocalUser() {
-  try {
-    const u = JSON.parse(localStorage.getItem('user') || '{}');
-    return { name: u.display_name || u.username || '你', initial: (u.display_name || u.username || 'U')[0].toUpperCase() };
-  } catch { return { name: '你', initial: 'U' }; }
-}
+import { UserContext } from '../../context/User';
+import { stringToColor } from '../../helpers';
 import './styles.css';
 
 const { Title, Text } = Typography;
@@ -37,9 +32,12 @@ const SESSION_STATS_PREFIX = 'coworker_session_stats_';
 const SESSION_STORAGE_KEY = 'coworker_session_id';
 
 const Coworker = () => {
+  const [userState] = useContext(UserContext);
   const [messages, setMessages] = useState([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const localUser = getLocalUser();
+  const username = userState?.user?.username || '你';
+  const userColor = userState?.user ? stringToColor(username) : 'var(--semi-color-primary)';
+
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -971,8 +969,9 @@ const Coworker = () => {
         content={msg.content}
         timestamp={msg.timestamp}
         aborted={msg.aborted}
-        userName={localUser.name}
-        userInitial={localUser.initial}
+        userName={username}
+        userInitial={username[0].toUpperCase()}
+        userColor={userColor}
       />
     );
   };
