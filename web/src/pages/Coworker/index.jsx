@@ -4,7 +4,7 @@ Copyright (C) 2025 QuantumNous
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Typography, Spin, TextArea, Toast } from '@douyinfe/semi-ui';
-import { IconSend, IconStop, IconInfoCircle, IconClose } from '@douyinfe/semi-icons';
+import { IconSend, IconStop, IconInfoCircle, IconClose, IconMenu } from '@douyinfe/semi-icons';
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
 import InlineTaskCard from './components/InlineTaskCard';
@@ -31,6 +31,7 @@ const SESSION_STORAGE_KEY = 'coworker_session_id';
 
 const Coworker = () => {
   const [messages, setMessages] = useState([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -1006,6 +1007,7 @@ const Coworker = () => {
           onReorderJobs={reorderJobs}
           userId={userId}
           ws={wsRef.current}
+          collapsed={sidebarCollapsed}
         />
 
         {/* 主内容区 */}
@@ -1013,6 +1015,13 @@ const Coworker = () => {
           {/* 头部 */}
           <div className="coworker-header">
             <div className="coworker-title">
+              <Button
+                icon={<IconMenu />}
+                type="tertiary"
+                theme="borderless"
+                size="small"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              />
               <Title heading={4} style={{ margin: 0 }}>Coworker</Title>
               <Text type="tertiary">AI 编程助手</Text>
             </div>

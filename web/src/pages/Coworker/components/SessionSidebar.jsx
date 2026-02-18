@@ -84,8 +84,9 @@ const SessionSidebar = ({
   userId,
   // WebSocket 连接
   ws,
+  // 折叠状态（由父组件控制）
+  collapsed = false,
 }) => {
-  const [collapsed, setCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('history');
 
   // 按时间分组会话
@@ -253,13 +254,6 @@ const SessionSidebar = ({
             </button>
           </div>
         )}
-        <Button
-          icon={collapsed ? <IconChevronRight /> : <IconChevronLeft />}
-          type="tertiary"
-          theme="borderless"
-          onClick={() => setCollapsed(!collapsed)}
-          className="collapse-btn"
-        />
       </div>
 
       {/* 内容区域 */}
