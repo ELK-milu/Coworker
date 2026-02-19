@@ -489,6 +489,7 @@ func (h *RESTHandler) GetUserInfo(c *gin.Context) {
 		"api_token_name":    info.ApiTokenName,
 		"selected_model":    info.SelectedModel,
 		"group":             info.Group,
+		"assistant_avatar":  info.AssistantAvatar,
 		"temperature":       info.Temperature,
 		"top_p":             info.TopP,
 		"frequency_penalty": info.FrequencyPenalty,
@@ -506,6 +507,7 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 		Email            string   `json:"email"`
 		ApiTokenKey      string   `json:"api_token_key"`
 		ApiTokenName     string   `json:"api_token_name"`
+		AssistantAvatar  string   `json:"assistant_avatar"`
 		SelectedModel    string   `json:"selected_model"`
 		Group            string   `json:"group"`
 		Temperature      *float64 `json:"temperature"`
@@ -530,6 +532,7 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 		Email:            req.Email,
 		ApiTokenKey:      req.ApiTokenKey,
 		ApiTokenName:     req.ApiTokenName,
+		AssistantAvatar:  req.AssistantAvatar,
 		SelectedModel:    req.SelectedModel,
 		Group:            req.Group,
 		Temperature:      req.Temperature,

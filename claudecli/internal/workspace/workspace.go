@@ -405,6 +405,7 @@ type UserInfo struct {
 	ApiTokenName  string `json:"api_token_name,omitempty"`
 	SelectedModel string `json:"selected_model,omitempty"`
 	Group         string `json:"group,omitempty"`
+	AssistantAvatar  string   `json:"assistant_avatar,omitempty"`
 	// 采样参数（nil 表示使用默认值）
 	Temperature      *float64 `json:"temperature,omitempty"`
 	TopP             *float64 `json:"top_p,omitempty"`

@@ -14,9 +14,11 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const fileInputRef = useRef(null);
 
   // 用户信息状态
+  const avatarInputRef = useRef(null);
   const [userInfo, setUserInfo] = useState({
     userName: '',
     coworkerName: '',
+    assistantAvatar: '',
     phone: '',
     email: '',
     apiTokenKey: '',
@@ -164,6 +166,22 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     }
   };
 
+  // 处理头像上传
+  const handleAvatarUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      Toast.error('请上传图片文件');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setUserInfo(prev => ({ ...prev, assistantAvatar: event.target.result }));
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   // 处理文件上传
   const handleUpload = (e) => {
     const file = e.target.files?.[0];
@@ -210,6 +228,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
           const info = {
             userName: data.user_name || '',
             coworkerName: data.coworker_name || '',
+            assistantAvatar: data.assistant_avatar || '',
             phone: data.phone || '',
             email: data.email || '',
             apiTokenKey: data.api_token_key || '',
@@ -267,6 +286,27 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                   placeholder="您希望如何称呼 AI 助手"
                   size="small"
                 />
+              </div>
+              <div className="config-form-item">
+                <Text size="small" type="secondary">助理头像</Text>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {userInfo.assistantAvatar ? (
+                    <img
+                      src={userInfo.assistantAvatar}
+                      alt="avatar"
+                      style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#6B4EE6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14 }}>
+                      {(userInfo.coworkerName || 'C')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <Button size="small" onClick={() => avatarInputRef.current?.click()}>上传头像</Button>
+                  {userInfo.assistantAvatar && (
+                    <Button size="small" type="danger" onClick={() => setUserInfo(prev => ({ ...prev, assistantAvatar: '' }))}>移除</Button>
+                  )}
+                  <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarUpload} />
+                </div>
               </div>
               <div className="config-form-item">
                 <Text size="small" type="secondary">手机号</Text>

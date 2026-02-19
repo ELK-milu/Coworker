@@ -7,7 +7,7 @@ import InlineTaskCard from './InlineTaskCard';
 
 const { Text } = Typography;
 
-const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask, userName = '你', userInitial = 'U', userColor }) => {
+const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask, userName = '你', userInitial = 'U', userColor, assistantName, assistantAvatar }) => {
   const [copied, setCopied] = useState(false);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const isUser = role === 'user';
@@ -70,21 +70,20 @@ const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask,
     <div className={`message-bubble ${isUser ? 'user' : 'assistant'}`}>
       {/* 头像 */}
       <div className="message-avatar">
-        <Avatar
-          size="small"
-          style={{
-            backgroundColor: isUser ? (userColor || 'var(--semi-color-primary)') : '#6B4EE6'
-          }}
-        >
-          {isUser ? userInitial : 'C'}
-        </Avatar>
+        {!isUser && assistantAvatar ? (
+          <img src={assistantAvatar} alt="avatar" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+        ) : (
+          <Avatar size="small" style={{ backgroundColor: isUser ? (userColor || 'var(--semi-color-primary)') : '#6B4EE6' }}>
+            {isUser ? userInitial : (assistantName || 'C')[0].toUpperCase()}
+          </Avatar>
+        )}
       </div>
       {/* 消息主体 */}
       <div className="message-body">
         {/* 消息头部：用户名和时间 */}
         <div className="message-header">
           <Text strong size="small" className="message-sender">
-            {isUser ? userName : 'Claude'}
+            {isUser ? userName : (assistantName || 'Coworker')}
           </Text>
           <Text type="tertiary" size="small">
             {formatTime(timestamp)}

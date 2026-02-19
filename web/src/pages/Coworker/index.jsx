@@ -37,6 +37,8 @@ const Coworker = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const username = userState?.user?.username || '你';
   const userColor = userState?.user ? stringToColor(username) : 'var(--semi-color-primary)';
+  const [assistantName, setAssistantName] = useState('');
+  const [assistantAvatar, setAssistantAvatar] = useState('');
 
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
@@ -351,6 +353,15 @@ const Coworker = () => {
       }
     };
   }, [connectWebSocket]);
+
+  // 加载助理名称和头像
+  useEffect(() => {
+    if (!userId) return;
+    api.getUserInfo(userId).then(data => {
+      setAssistantName(data.coworker_name || '');
+      setAssistantAvatar(data.assistant_avatar || '');
+    }).catch(() => {});
+  }, [userId]);
 
   // 断开 WebSocket 连接（用于测试 REST API）
   const disconnectWebSocket = useCallback(() => {
@@ -972,6 +983,8 @@ const Coworker = () => {
         userName={username}
         userInitial={username[0].toUpperCase()}
         userColor={userColor}
+        assistantName={assistantName}
+        assistantAvatar={assistantAvatar}
       />
     );
   };
@@ -1033,7 +1046,7 @@ const Coworker = () => {
                 onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
               />
               <Title heading={4} style={{ margin: 0 }}>Coworker</Title>
-              <Text type="tertiary">AI 编程助手</Text>
+              <Text type="tertiary">AI助理</Text>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <Button

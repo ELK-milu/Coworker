@@ -198,6 +198,7 @@ export async function saveUserInfo(userId, userInfo) {
       user_id: userId,
       user_name: userInfo.userName,
       coworker_name: userInfo.coworkerName,
+      assistant_avatar: userInfo.assistantAvatar || '',
       phone: userInfo.phone,
       email: userInfo.email,
       api_token_key: userInfo.apiTokenKey || '',
