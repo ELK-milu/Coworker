@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
 	"github.com/QuantumNous/new-api/claudecli/internal/skills"
+	"github.com/QuantumNous/new-api/claudecli/internal/store"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/variable"
@@ -90,6 +91,9 @@ func Init() *Module {
 
 	// 创建记忆管理器
 	memoryManager := memory.NewManager(cfg.Security.WorkingDir)
+
+	// 创建技能商店管理器
+	storeManager := store.NewManager(cfg.Security.WorkingDir)
 
 	// 创建 Embedding 客户端
 	embeddingCfg := embedding.LoadConfigFromEnv()
@@ -168,6 +172,7 @@ func Init() *Module {
 	restHandler.SetWorkspaceManager(workspaceManager)
 	restHandler.SetJobManager(jobManager)
 	restHandler.SetMemoryManager(memoryManager)
+	restHandler.SetStoreManager(storeManager)
 
 	// 创建 WebSocket 处理器（不再传递静态系统提示词，改为动态构建）
 	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, skillRegistry, mcpManager, cfg)

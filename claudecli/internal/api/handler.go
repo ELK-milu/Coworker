@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/memory"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
+	"github.com/QuantumNous/new-api/claudecli/internal/store"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
@@ -21,6 +22,12 @@ type RESTHandler struct {
 	workspace *workspace.Manager
 	jobs      *job.Manager
 	memories  *memory.Manager
+	store     *store.Manager
+}
+
+// SetStoreManager 设置商店管理器
+func (h *RESTHandler) SetStoreManager(sm *store.Manager) {
+	h.store = sm
 }
 
 // NewRESTHandler 创建 REST 处理器
@@ -1018,4 +1025,135 @@ func (h *RESTHandler) SearchMemories(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, gin.H{"memories": memories})
+}
+
+// ========== 技能商店 API ==========
+
+// ListStoreItems 列出所有商店条目
+func (h *RESTHandler) ListStoreItems(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusOK, gin.H{"items": []interface{}{}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": h.store.List()})
+}
+
+// CreateStoreItem 创建商店条目（仅管理员）
+func (h *RESTHandler) CreateStoreItem(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+	var item store.StoreItem
+	if err := c.ShouldBindJSON(&item); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	created, err := h.store.Create(item)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "item": created})
+}
+
+// UpdateStoreItem 更新商店条目（仅管理员）
+func (h *RESTHandler) UpdateStoreItem(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+	id := c.Param("id")
+	var item store.StoreItem
+	if err := c.ShouldBindJSON(&item); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	updated, err := h.store.Update(id, item)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "item": updated})
+}
+
+// DeleteStoreItem 删除商店条目（仅管理员）
+func (h *RESTHandler) DeleteStoreItem(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+	id := c.Param("id")
+	if err := h.store.Delete(id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ImportStoreItems 从 GitHub 导入商店条目（仅管理员）
+func (h *RESTHandler) ImportStoreItems(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+	var req struct {
+		RepoURL string `json:"repo_url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.RepoURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "repo_url is required"})
+		return
+	}
+	items, err := h.store.Import(req.RepoURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "items": items, "count": len(items)})
+}
+
+// GetUserStore 获取用户已安装的商店条目
+func (h *RESTHandler) GetUserStore(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+	info, err := h.workspace.LoadUserInfo(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	items := info.InstalledItems
+	if items == nil {
+		items = []workspace.UserStoreItem{}
+	}
+	c.JSON(http.StatusOK, gin.H{"installed": items})
+}
+
+// SaveUserStore 保存用户已安装的商店条目
+func (h *RESTHandler) SaveUserStore(c *gin.Context) {
+	var req struct {
+		UserID string                    `json:"user_id"`
+		Items  []workspace.UserStoreItem `json:"items"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+	info, err := h.workspace.LoadUserInfo(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	info.InstalledItems = req.Items
+	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

@@ -45,6 +45,7 @@ import ModelPage from './pages/Model';
 import ModelDeploymentPage from './pages/ModelDeployment';
 import Playground from './pages/Playground';
 import Coworker from './pages/Coworker';
+import Skills from './pages/Skills';
 import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Setup from './pages/Setup';
@@ -139,6 +140,14 @@ function App() {
           element={
             <PrivateRoute>
               <Coworker />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/skills'
+          element={
+            <PrivateRoute>
+              <Skills />
             </PrivateRoute>
           }
         />

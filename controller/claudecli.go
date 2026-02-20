@@ -218,3 +218,27 @@ func (ctrl *ClaudeCLIController) GetRatioConfig(c *gin.Context) {
 		"data":    ratio_setting.GetExposedData(),
 	})
 }
+
+// ========== 技能商店 ==========
+
+func (ctrl *ClaudeCLIController) ListStoreItems(c *gin.Context) {
+	ctrl.module.RESTHandler.ListStoreItems(c)
+}
+func (ctrl *ClaudeCLIController) CreateStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.CreateStoreItem(c)
+}
+func (ctrl *ClaudeCLIController) UpdateStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.UpdateStoreItem(c)
+}
+func (ctrl *ClaudeCLIController) DeleteStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.DeleteStoreItem(c)
+}
+func (ctrl *ClaudeCLIController) ImportStoreItems(c *gin.Context) {
+	ctrl.module.RESTHandler.ImportStoreItems(c)
+}
+func (ctrl *ClaudeCLIController) GetUserStore(c *gin.Context) {
+	ctrl.module.RESTHandler.GetUserStore(c)
+}
+func (ctrl *ClaudeCLIController) SaveUserStore(c *gin.Context) {
+	ctrl.module.RESTHandler.SaveUserStore(c)
+}

@@ -395,6 +395,13 @@ func (m *Manager) SaveConfig(userID string, content string) error {
 	return os.WriteFile(configPath, []byte(content), 0644)
 }
 
+// UserStoreItem 用户已安装的商店条目
+type UserStoreItem struct {
+	ItemID  string            `json:"item_id"`
+	Enabled bool              `json:"enabled"`
+	Config  map[string]string `json:"config,omitempty"`
+}
+
 // UserInfo 用户信息
 type UserInfo struct {
 	UserName      string `json:"user_name"`
@@ -405,7 +412,8 @@ type UserInfo struct {
 	ApiTokenName  string `json:"api_token_name,omitempty"`
 	SelectedModel string `json:"selected_model,omitempty"`
 	Group         string `json:"group,omitempty"`
-	AssistantAvatar  string   `json:"assistant_avatar,omitempty"`
+	AssistantAvatar  string          `json:"assistant_avatar,omitempty"`
+	InstalledItems   []UserStoreItem `json:"installed_items,omitempty"`
 	// 采样参数（nil 表示使用默认值）
 	Temperature      *float64 `json:"temperature,omitempty"`
 	TopP             *float64 `json:"top_p,omitempty"`
