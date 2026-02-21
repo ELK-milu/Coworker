@@ -18,7 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/profile"
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
-	"github.com/QuantumNous/new-api/claudecli/internal/skills"
 	"github.com/QuantumNous/new-api/claudecli/internal/store"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
@@ -158,10 +157,7 @@ func Init() *Module {
 	}
 
 	// 注册所有工具
-	registerTools(toolRegistry, cfg, taskManager, memoryManager, sandboxPool)
-
-	// 创建技能注册表
-	skillRegistry := skills.NewRegistry()
+	registerTools(toolRegistry, cfg, taskManager, memoryManager, sandboxPool, storeManager)
 
 	// 创建 MCP 管理器
 	mcpManager := mcp.NewManager()
@@ -175,13 +171,14 @@ func Init() *Module {
 	restHandler.SetStoreManager(storeManager)
 
 	// 创建 WebSocket 处理器（不再传递静态系统提示词，改为动态构建）
-	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, skillRegistry, mcpManager, cfg)
+	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, mcpManager, cfg)
 	wsHandler.SetJobManager(jobManager)
 	wsHandler.SetVariableManager(variableManager)
 	wsHandler.SetMemoryManager(memoryManager)
 	wsHandler.SetProfileManager(profileManager)
 	wsHandler.SetEmbeddingClient(embeddingClient)
 	wsHandler.SetMilvusClient(milvusClient)
+	wsHandler.SetStoreManager(storeManager)
 
 	// P2.5: 创建文件修改时间追踪器
 	fileTime := tools.NewFileTime()
@@ -241,7 +238,7 @@ func Init() *Module {
 }
 
 // registerTools 注册所有工具（使用工厂模式）
-func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, memoryManager *memory.Manager, sandboxPool *sandbox.SandboxPool) {
+func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *task.Manager, memoryManager *memory.Manager, sandboxPool *sandbox.SandboxPool, storeManager *store.Manager) {
 	workingDir := cfg.Security.WorkingDir
 	blockedCommands := cfg.Security.BlockedCommands
 
@@ -281,7 +278,10 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 	tools.RegisterWithFactory(registry, factory, tools.NewMemorySaveTool(memoryManager))
 	tools.RegisterWithFactory(registry, factory, tools.NewMemoryListTool(memoryManager))
 
-	log.Printf("[ClaudeCLI] Registered %d tools with factory pattern (sandbox pool: %v)", 16, sandboxPool != nil)
+	// 注册技能工具（仅 store 源，渐进式披露）
+	tools.RegisterWithFactory(registry, factory, tools.NewSkillsTool(storeManager))
+
+	log.Printf("[ClaudeCLI] Registered %d tools with factory pattern (sandbox pool: %v)", 17, sandboxPool != nil)
 }
 
 // Shutdown 优雅关闭模块

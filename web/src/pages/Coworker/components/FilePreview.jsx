@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react
 import { Spin, Typography, Button, Toast } from '@douyinfe/semi-ui';
 import { IconSave } from '@douyinfe/semi-icons';
 import { saveFileContent } from '../services/api';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const { Text } = Typography;
 
@@ -372,10 +374,14 @@ async function getLanguage(ext) {
   }
 }
 
+const RENDERABLE_EXTS = new Set(['html', 'htm', 'md']);
+
 function CodeEditor({ data, userId, filePath, fileName, ext }) {
   const [code, setCode] = useState(data);
   const [lang, setLang] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [renderMode, setRenderMode] = useState(false);
+  const isRenderable = RENDERABLE_EXTS.has(ext);
 
   useEffect(() => { getLanguage(ext).then(l => l && setLang([l])); }, [ext]);
 
@@ -388,20 +394,73 @@ function CodeEditor({ data, userId, filePath, fileName, ext }) {
     finally { setSaving(false); }
   }, [code, userId, filePath, fileName]);
 
+  const renderToggle = isRenderable ? (
+    <Button
+      size="small"
+      theme={renderMode ? 'solid' : 'light'}
+      onClick={() => setRenderMode(!renderMode)}
+      style={{ marginLeft: 4 }}
+    >
+      {renderMode ? '源码' : '渲染'}
+    </Button>
+  ) : null;
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {userId && <Toolbar onSave={handleSave} saving={saving} />}
-      <Suspense fallback={<div style={{ padding: 16 }}>加载编辑器...</div>}>
-        <CodeMirrorEditor
-          value={code}
-          extensions={lang}
-          onChange={setCode}
-          height="100%"
-          style={{ flex: 1, overflow: 'auto', fontSize: 13 }}
-          basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true }}
-        />
-      </Suspense>
+      {userId && <Toolbar onSave={handleSave} saving={saving} extra={renderToggle} />}
+      {!userId && isRenderable && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: '1px solid var(--semi-color-border)', flexShrink: 0 }}>
+          {renderToggle}
+        </div>
+      )}
+      {renderMode ? (
+        <RenderedView code={code} ext={ext} />
+      ) : (
+        <Suspense fallback={<div style={{ padding: 16 }}>加载编辑器...</div>}>
+          <CodeMirrorEditor
+            value={code}
+            extensions={lang}
+            onChange={setCode}
+            height="100%"
+            style={{ flex: 1, overflow: 'auto', fontSize: 13 }}
+            basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true }}
+          />
+        </Suspense>
+      )}
     </div>
+  );
+}
+
+// 渲染视图组件
+function RenderedView({ code, ext }) {
+  if (ext === 'md') {
+    return (
+      <div
+        className="message-text"
+        style={{
+          flex: 1, overflow: 'auto', padding: '20px 24px',
+          fontFamily: '"Segoe UI", "Microsoft YaHei", sans-serif',
+          fontSize: 14, lineHeight: 1.8,
+          background: 'var(--semi-color-bg-0)', color: 'var(--semi-color-text-0)',
+          minHeight: 0,
+        }}
+      >
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{code}</ReactMarkdown>
+      </div>
+    );
+  }
+
+  // HTML 渲染使用 iframe srcdoc 进行沙箱隔离
+  return (
+    <iframe
+      srcDoc={code}
+      title="HTML Preview"
+      sandbox="allow-same-origin allow-scripts"
+      style={{
+        flex: 1, width: '100%', border: 'none',
+        background: '#fff', minHeight: 0,
+      }}
+    />
   );
 }
 

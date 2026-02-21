@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -23,7 +24,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/sandbox"
 	"github.com/QuantumNous/new-api/claudecli/internal/sanitize"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
-	"github.com/QuantumNous/new-api/claudecli/internal/skills"
+	"github.com/QuantumNous/new-api/claudecli/internal/store"
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/variable"
@@ -48,9 +49,8 @@ type WSHandler struct {
 	variables   *variable.Manager
 	memories    *memory.Manager
 	profiles    *profile.Manager
-	skills      *skills.Registry
-	skillExec   *skills.Executor
 	mcp         *mcp.Manager
+	store       *store.Manager
 	embedding   *embedding.Client      // Embedding 客户端
 	milvus      *memory.MilvusClient   // Milvus 向量数据库客户端
 	config      *config.Config         // 配置（用于动态构建系统提示词）
@@ -75,20 +75,17 @@ func NewWSHandler(
 	tr *tools.Registry,
 	wm *workspace.Manager,
 	tm *task.Manager,
-	sk *skills.Registry,
 	mcpMgr *mcp.Manager,
 	cfg *config.Config,
 ) *WSHandler {
 	return &WSHandler{
-		client:      c,
-		sessions:    sm,
-		tools:       tr,
-		workspace:   wm,
-		tasks:       tm,
-		skills:      sk,
-		skillExec:   skills.NewExecutor(sk),
-		mcp:         mcpMgr,
-		config:      cfg,
+		client:    c,
+		sessions:  sm,
+		tools:     tr,
+		workspace: wm,
+		tasks:     tm,
+		mcp:       mcpMgr,
+		config:    cfg,
 	}
 }
 
@@ -130,6 +127,11 @@ func (h *WSHandler) SetMilvusClient(mc *memory.MilvusClient) {
 // SetEventBus 设置事件总线
 func (h *WSHandler) SetEventBus(bus *eventbus.Bus) {
 	h.bus = bus
+}
+
+// SetStoreManager 设置商店管理器
+func (h *WSHandler) SetStoreManager(sm *store.Manager) {
+	h.store = sm
 }
 
 // IsBusySession 检查会话是否正在被 WebSocket 使用
@@ -437,6 +439,13 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		}
 	} else {
 		sess.SetWorkingDir(userWorkDir)
+	}
+
+	// 渐进式披露：刷新 SkillsTool 的可用技能列表（动态 description）
+	if skillTool, ok := h.tools.Get("Skills"); ok {
+		if inner, ok := tools.UnwrapAs[*tools.SkillsTool](skillTool); ok {
+			inner.RefreshForUser(chat.UserID)
+		}
 	}
 
 	// 动态构建系统提示词（使用虚拟路径，传入用户消息用于记忆检索）
@@ -1508,7 +1517,7 @@ type SkillCallPayload struct {
 	Args []string `json:"args"`
 }
 
-// handleSkillCall 处理技能调用请求
+// handleSkillCall 处理技能调用请求（从 store 加载）
 func (h *WSHandler) handleSkillCall(conn *websocket.Conn, payload json.RawMessage) {
 	var req SkillCallPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
@@ -1516,17 +1525,27 @@ func (h *WSHandler) handleSkillCall(conn *websocket.Conn, payload json.RawMessag
 		return
 	}
 
-	// 移除前导斜杠
 	name := strings.TrimPrefix(req.Name, "/")
 
-	content, err := h.skillExec.Execute(name, req.Args)
-	if err != nil {
-		h.sendError(conn, err.Error())
+	if h.store == nil {
+		h.sendError(conn, "store not available")
+		return
+	}
+
+	// 从 store 查找技能内容
+	var content string
+	for _, item := range h.store.List() {
+		if item.Type == store.TypeSkill && item.Name == name && item.Content != "" {
+			content = item.Content
+			break
+		}
+	}
+	if content == "" {
+		h.sendError(conn, fmt.Sprintf("skill not found: %s", name))
 		return
 	}
 
 	log.Printf("[WS] Skill expanded: %s", name)
-
 	h.sendJSON(conn, map[string]interface{}{
 		"type": "skill_expanded",
 		"payload": map[string]interface{}{
@@ -1536,15 +1555,22 @@ func (h *WSHandler) handleSkillCall(conn *websocket.Conn, payload json.RawMessag
 	})
 }
 
-// handleListSkills 处理列出技能请求
+// handleListSkills 处理列出技能请求（从 store 加载）
 func (h *WSHandler) handleListSkills(conn *websocket.Conn) {
-	skillList := h.skills.GetAll()
-
+	var skillList []map[string]string
+	if h.store != nil {
+		for _, item := range h.store.List() {
+			if item.Type == store.TypeSkill {
+				skillList = append(skillList, map[string]string{
+					"name":        item.Name,
+					"description": item.Description,
+				})
+			}
+		}
+	}
 	h.sendJSON(conn, map[string]interface{}{
-		"type": "skills_list",
-		"payload": map[string]interface{}{
-			"skills": skillList,
-		},
+		"type":    "skills_list",
+		"payload": map[string]interface{}{"skills": skillList},
 	})
 }
 
@@ -1886,6 +1912,12 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 		log.Printf("[WS] WARNING: workspace manager is nil, cannot load COWORKER.md")
 	}
 
+	// 加载用户已安装的 Agent 指令（Skill 已通过工具描述渐进式披露）
+	installedAgents := ""
+	if h.store != nil {
+		installedAgents = h.buildInstalledAgentsPrompt(userID)
+	}
+
 	// 构建提示词上下文
 	promptCtx := &prompt.PromptContext{
 		WorkingDir:       virtualWorkDir, // 使用虚拟路径
@@ -1895,6 +1927,7 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 		TasksRender:      tasksRender,
 		RelevantMemories: relevantMemories,
 		CustomRules:      customRules,
+		InstalledAgents:  installedAgents,
 		// 用户信息
 		UserName:     userName,
 		CoworkerName: coworkerName,
@@ -1938,6 +1971,29 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 		userID, len(systemPrompt), promptCtx.IsGitRepo, customRules != "")
 
 	return systemPrompt
+}
+
+// buildInstalledAgentsPrompt 注入用户已安装的 Agent 指令到系统提示词
+// 注意：Skill 已通过 SkillsTool 的动态 Description 实现渐进式披露，不再注入系统提示词
+func (h *WSHandler) buildInstalledAgentsPrompt(userID string) string {
+	ids := h.store.LoadUserInstalled(userID)
+	if len(ids) == 0 {
+		return ""
+	}
+
+	var agentPrompts []string
+	for _, id := range ids {
+		item := h.store.GetByID(id)
+		if item != nil && item.Type == store.TypeAgent && item.Content != "" {
+			agentPrompts = append(agentPrompts, fmt.Sprintf("## Agent: %s\n%s", item.Name, item.Content))
+		}
+	}
+
+	if len(agentPrompts) == 0 {
+		return ""
+	}
+
+	return "# Installed Agent Instructions\n\n" + strings.Join(agentPrompts, "\n\n")
 }
 
 // generateSessionTitle 异步生成会话标题

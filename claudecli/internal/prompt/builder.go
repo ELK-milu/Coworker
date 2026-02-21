@@ -28,6 +28,8 @@ type PromptContext struct {
 	CoworkerName string // Coworker 称呼
 	UserPhone    string // 用户手机号
 	UserEmail    string // 用户邮箱
+	// 技能商店
+	InstalledAgents string // 已安装的 Agent 指令（注入系统提示词）
 }
 
 // GitStatusInfo Git 状态信息
@@ -157,6 +159,11 @@ func (b *SystemPromptBuilder) Build(ctx *PromptContext, opts BuildOptions) strin
 	// 会话记忆
 	if ctx.SessionMemory != "" {
 		parts = append(parts, ctx.SessionMemory)
+	}
+
+	// 已安装的 Agent 指令
+	if ctx.InstalledAgents != "" {
+		parts = append(parts, ctx.InstalledAgents)
 	}
 
 	// 自定义规则 (COWORKER.md)
