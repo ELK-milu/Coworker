@@ -532,21 +532,24 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 		return
 	}
 
-	info := &workspace.UserInfo{
-		UserName:         req.UserName,
-		CoworkerName:     req.CoworkerName,
-		Phone:            req.Phone,
-		Email:            req.Email,
-		ApiTokenKey:      req.ApiTokenKey,
-		ApiTokenName:     req.ApiTokenName,
-		AssistantAvatar:  req.AssistantAvatar,
-		SelectedModel:    req.SelectedModel,
-		Group:            req.Group,
-		Temperature:      req.Temperature,
-		TopP:             req.TopP,
-		FrequencyPenalty: req.FrequencyPenalty,
-		PresencePenalty:  req.PresencePenalty,
+	// 先加载已有数据，保留 InstalledItems 等非本接口管理的字段
+	info, err := h.workspace.LoadUserInfo(req.UserID)
+	if err != nil {
+		info = &workspace.UserInfo{}
 	}
+	info.UserName = req.UserName
+	info.CoworkerName = req.CoworkerName
+	info.Phone = req.Phone
+	info.Email = req.Email
+	info.ApiTokenKey = req.ApiTokenKey
+	info.ApiTokenName = req.ApiTokenName
+	info.AssistantAvatar = req.AssistantAvatar
+	info.SelectedModel = req.SelectedModel
+	info.Group = req.Group
+	info.Temperature = req.Temperature
+	info.TopP = req.TopP
+	info.FrequencyPenalty = req.FrequencyPenalty
+	info.PresencePenalty = req.PresencePenalty
 
 	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1119,23 +1122,18 @@ func (h *RESTHandler) GetUserStore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
 		return
 	}
-	info, err := h.workspace.LoadUserInfo(userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if h.store == nil {
+		c.JSON(http.StatusOK, gin.H{"installed": []string{}})
 		return
 	}
-	items := info.InstalledItems
-	if items == nil {
-		items = []workspace.UserStoreItem{}
-	}
-	c.JSON(http.StatusOK, gin.H{"installed": items})
+	c.JSON(http.StatusOK, gin.H{"installed": h.store.LoadUserInstalled(userID)})
 }
 
-// SaveUserStore 保存用户已安装的商店条目
+// SaveUserStore 保存用户已安装的商店条目（只存 item_id 列表）
 func (h *RESTHandler) SaveUserStore(c *gin.Context) {
 	var req struct {
-		UserID string                    `json:"user_id"`
-		Items  []workspace.UserStoreItem `json:"items"`
+		UserID  string   `json:"user_id"`
+		ItemIDs []string `json:"item_ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1145,13 +1143,11 @@ func (h *RESTHandler) SaveUserStore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
 		return
 	}
-	info, err := h.workspace.LoadUserInfo(req.UserID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
 		return
 	}
-	info.InstalledItems = req.Items
-	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {
+	if err := h.store.SaveUserInstalled(req.UserID, req.ItemIDs); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

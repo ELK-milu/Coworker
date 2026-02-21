@@ -144,6 +144,52 @@ func (m *Manager) Import(repoURL string) ([]StoreItem, error) {
 	return added, nil
 }
 
+// UserInstalled 用户已安装的技能 ID 列表
+type UserInstalled struct {
+	ItemIDs []string `json:"item_ids"`
+}
+
+func (m *Manager) userInstalledPath(userID string) string {
+	return filepath.Join(m.dataDir, "installed", userID+".json")
+}
+
+// LoadUserInstalled 加载用户已安装的技能 ID 列表
+func (m *Manager) LoadUserInstalled(userID string) []string {
+	data, err := os.ReadFile(m.userInstalledPath(userID))
+	if err != nil {
+		return []string{}
+	}
+	var u UserInstalled
+	if err := json.Unmarshal(data, &u); err != nil {
+		return []string{}
+	}
+	return u.ItemIDs
+}
+
+// SaveUserInstalled 保存用户已安装的技能 ID 列表
+func (m *Manager) SaveUserInstalled(userID string, itemIDs []string) error {
+	p := m.userInstalledPath(userID)
+	os.MkdirAll(filepath.Dir(p), 0755)
+	data, err := json.MarshalIndent(UserInstalled{ItemIDs: itemIDs}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0644)
+}
+
+// GetByID 根据 ID 获取条目
+func (m *Manager) GetByID(id string) *StoreItem {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, item := range m.items {
+		if item.ID == id {
+			cp := item
+			return &cp
+		}
+	}
+	return nil
+}
+
 // fetchGithubContent 从 GitHub URL 获取内容
 func fetchGithubContent(githubURL string) (string, error) {
 	rawURL := githubURL

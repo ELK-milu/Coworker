@@ -3,7 +3,7 @@ import {
   Button, Card, Tag, Modal, Form, Input, Select, Toast, Tabs, TabPane, Popconfirm, Typography
 } from '@douyinfe/semi-ui';
 import { IconPlus, IconEdit, IconDelete, IconGithubLogo } from '@douyinfe/semi-icons';
-import { isAdmin } from '../../helpers/utils';
+import { isAdmin, getUserIdFromLocalStorage } from '../../helpers/utils';
 
 const { Text, Title } = Typography;
 
@@ -25,7 +25,7 @@ async function apiFetch(path, options = {}) {
 }
 
 function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, admin }) {
-  const isInstalled = installed.some(i => i.item_id === item.id && i.enabled);
+  const isInstalled = installed.includes(item.id);
 
   return (
     <Card
@@ -189,7 +189,8 @@ export default function Skills() {
   const [activeTab, setActiveTab] = useState('all');
   const admin = isAdmin();
 
-  const userId = localStorage.getItem('coworker_user_id') || '';
+  const rawId = getUserIdFromLocalStorage();
+  const userId = rawId && rawId !== -1 ? String(rawId) : '';
 
   const loadItems = useCallback(async () => {
     const data = await apiFetch('/items');
@@ -225,17 +226,25 @@ export default function Skills() {
   };
 
   const handleInstall = async (item) => {
-    const newInstalled = [...installed.filter(i => i.item_id !== item.id), { item_id: item.id, enabled: true }];
-    await apiFetch('/user', { method: 'PUT', body: JSON.stringify({ user_id: userId, items: newInstalled }) });
-    setInstalled(newInstalled);
-    Toast.success(`已安装 ${item.name}`);
+    const newInstalled = [...new Set([...installed, item.id])];
+    const data = await apiFetch('/user', { method: 'PUT', body: JSON.stringify({ user_id: userId, item_ids: newInstalled }) });
+    if (data.success) {
+      setInstalled(newInstalled);
+      Toast.success(`已安装 ${item.name}`);
+    } else {
+      Toast.error(data.error || '安装失败');
+    }
   };
 
   const handleUninstall = async (itemId) => {
-    const newInstalled = installed.filter(i => i.item_id !== itemId);
-    await apiFetch('/user', { method: 'PUT', body: JSON.stringify({ user_id: userId, items: newInstalled }) });
-    setInstalled(newInstalled);
-    Toast.success('已卸载');
+    const newInstalled = installed.filter(id => id !== itemId);
+    const data = await apiFetch('/user', { method: 'PUT', body: JSON.stringify({ user_id: userId, item_ids: newInstalled }) });
+    if (data.success) {
+      setInstalled(newInstalled);
+      Toast.success('已卸载');
+    } else {
+      Toast.error(data.error || '卸载失败');
+    }
   };
 
   const filtered = activeTab === 'all' ? items : items.filter(i => i.type === activeTab);

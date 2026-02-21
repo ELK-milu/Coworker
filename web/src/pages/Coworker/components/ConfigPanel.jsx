@@ -4,7 +4,7 @@ Copyright (C) 2025 QuantumNous
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Button, Typography, Toast, TextArea, Input, Select, Slider, Tag } from '@douyinfe/semi-ui';
-import { IconUpload, IconDownload, IconSave, IconRefresh, IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
+import { IconUpload, IconDownload, IconSave, IconRefresh, IconChevronDown, IconChevronUp, IconDelete, IconGridStroked } from '@douyinfe/semi-icons';
 import * as api from '../services/api';
 import './ConfigPanel.css';
 
@@ -46,6 +46,45 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     frequencyPenalty: false,
     presencePenalty: false,
   });
+
+  // 扩展技能状态
+  const [skillsExpanded, setSkillsExpanded] = useState(true);
+  const [storeItems, setStoreItems] = useState([]);
+  const [installedItems, setInstalledItems] = useState([]);
+
+  const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP' };
+  const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green' };
+
+  const loadStoreData = useCallback(async () => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const headers = user.token ? { Authorization: 'Bearer ' + user.token } : {};
+      const [itemsRes, userRes] = await Promise.all([
+        fetch('/coworker/store/items', { headers }).then(r => r.json()),
+        userId ? fetch(`/coworker/store/user?user_id=${userId}`, { headers }).then(r => r.json()) : { installed: [] },
+      ]);
+      setStoreItems(itemsRes.items || []);
+      setInstalledItems(userRes.installed || []);
+    } catch (e) {
+      console.log('Failed to load store data:', e.message);
+    }
+  }, [userId]);
+
+  const handleUninstall = async (itemId) => {
+    const newInstalled = installedItems.filter(id => id !== itemId);
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      await fetch('/coworker/store/user', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
+        body: JSON.stringify({ user_id: userId, item_ids: newInstalled }),
+      });
+      setInstalledItems(newInstalled);
+      Toast.success('已卸载');
+    } catch (e) {
+      Toast.error('卸载失败: ' + e.message);
+    }
+  };
 
   // 加载配置文件 (REST API)
   const loadConfig = async () => {
@@ -222,6 +261,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
       loadConfig();
       loadModels();
       loadGroups();
+      loadStoreData();
       (async () => {
         try {
           const data = await api.getUserInfo(userId);
@@ -488,6 +528,55 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
               style={{ marginTop: 8 }}
             >
               刷新模型列表
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* 扩展技能 */}
+      <div className="config-section">
+        <div
+          className="config-section-header"
+          onClick={() => setSkillsExpanded(!skillsExpanded)}
+        >
+          <Title heading={6}>扩展技能</Title>
+          {skillsExpanded ? <IconChevronUp /> : <IconChevronDown />}
+        </div>
+
+        {skillsExpanded && (
+          <div className="config-section-content">
+            {installedItems.length === 0 ? (
+              <Text type="tertiary" size="small">暂无已安装的技能</Text>
+            ) : (
+              installedItems.map(itemId => {
+                const item = storeItems.find(s => s.id === itemId);
+                if (!item) return null;
+                return (
+                  <div key={itemId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--semi-color-border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                      {item.icon && <span style={{ fontSize: 14 }}>{item.icon}</span>}
+                      <Text size="small" ellipsis={{ showTooltip: true }} style={{ flex: 1 }}>{item.name}</Text>
+                      <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
+                    </div>
+                    <Button
+                      size="small"
+                      type="danger"
+                      theme="borderless"
+                      icon={<IconDelete />}
+                      onClick={() => handleUninstall(itemId)}
+                      style={{ marginLeft: 4 }}
+                    />
+                  </div>
+                );
+              })
+            )}
+            <Button
+              icon={<IconGridStroked />}
+              size="small"
+              style={{ marginTop: 8 }}
+              onClick={() => window.open('/skills', '_blank')}
+            >
+              技能商店
             </Button>
           </div>
         )}

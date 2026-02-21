@@ -71,9 +71,9 @@ const MessageBubble = ({ role, content, timestamp, aborted, tasks, onUpdateTask,
       {/* 头像 */}
       <div className="message-avatar">
         {!isUser && assistantAvatar ? (
-          <img src={assistantAvatar} alt="avatar" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+          <img src={assistantAvatar} alt="avatar" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} />
         ) : (
-          <Avatar size="small" style={{ backgroundColor: isUser ? (userColor || 'var(--semi-color-primary)') : '#6B4EE6' }}>
+          <Avatar size="default" style={{ backgroundColor: isUser ? (userColor || 'var(--semi-color-primary)') : '#6B4EE6' }}>
             {isUser ? userInitial : (assistantName || 'C')[0].toUpperCase()}
           </Avatar>
         )}
