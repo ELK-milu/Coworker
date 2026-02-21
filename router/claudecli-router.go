@@ -2,7 +2,6 @@ package router
 
 import (
 	"github.com/QuantumNous/new-api/controller"
-	"github.com/QuantumNous/new-api/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -67,14 +66,14 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 		coworkerGroup.DELETE("/jobs/:id", claudeCLICtrl.DeleteJob)
 		coworkerGroup.POST("/jobs/:id/run", claudeCLICtrl.RunJob)
 
-		// 技能商店（列表所有用户可见，增删改仅管理员）
-		coworkerGroup.GET("/store/items", middleware.UserAuth(), claudeCLICtrl.ListStoreItems)
-		coworkerGroup.POST("/store/items", middleware.AdminAuth(), claudeCLICtrl.CreateStoreItem)
-		coworkerGroup.PUT("/store/items/:id", middleware.AdminAuth(), claudeCLICtrl.UpdateStoreItem)
-		coworkerGroup.DELETE("/store/items/:id", middleware.AdminAuth(), claudeCLICtrl.DeleteStoreItem)
+		// 技能商店
+		coworkerGroup.GET("/store/items", claudeCLICtrl.ListStoreItems)
+		coworkerGroup.POST("/store/items", claudeCLICtrl.CreateStoreItem)
+		coworkerGroup.PUT("/store/items/:id", claudeCLICtrl.UpdateStoreItem)
+		coworkerGroup.DELETE("/store/items/:id", claudeCLICtrl.DeleteStoreItem)
 		coworkerGroup.POST("/store/import", claudeCLICtrl.ImportStoreItems)
-		coworkerGroup.GET("/store/user", middleware.UserAuth(), claudeCLICtrl.GetUserStore)
-		coworkerGroup.PUT("/store/user", middleware.UserAuth(), claudeCLICtrl.SaveUserStore)
+		coworkerGroup.GET("/store/user", claudeCLICtrl.GetUserStore)
+		coworkerGroup.PUT("/store/user", claudeCLICtrl.SaveUserStore)
 
 		// WebSocket 连接
 		coworkerGroup.GET("/ws", claudeCLICtrl.HandleWebSocket)
