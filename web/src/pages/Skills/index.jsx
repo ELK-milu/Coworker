@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Button, Card, Tag, Modal, Form, Input, Select, Toast, Tabs, TabPane, Popconfirm, Typography
+  Button, Card, Tag, Modal, Input, Select, Toast, Tabs, TabPane, Popconfirm, Typography, TextArea
 } from '@douyinfe/semi-ui';
 import { IconPlus, IconEdit, IconDelete, IconGithubLogo } from '@douyinfe/semi-icons';
 import { isAdmin, getUserIdFromLocalStorage } from '../../helpers/utils';
@@ -24,6 +24,13 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
+function SkillIcon({ icon, size = 28 }) {
+  if (icon && icon.startsWith('data:image/')) {
+    return <img src={icon} alt="icon" style={{ width: size, height: size, borderRadius: 4, objectFit: 'cover' }} />;
+  }
+  return <span style={{ fontSize: size * 0.64 }}>{icon || '✨'}</span>;
+}
+
 function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, admin }) {
   const isInstalled = installed.includes(item.id);
 
@@ -36,7 +43,7 @@ function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, a
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            {item.icon && <span style={{ fontSize: 18 }}>{item.icon}</span>}
+            <SkillIcon icon={item.icon} size={28} />
             <Text strong>{item.name}</Text>
             <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
             {item.author && <Text type="tertiary" size="small">by {item.author}</Text>}
@@ -71,6 +78,7 @@ function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, a
 
 function EditModal({ visible, item, onClose, onSave }) {
   const [form, setForm] = useState({});
+  const iconInputRef = useRef(null);
 
   useEffect(() => {
     setForm(item ? { ...item } : { type: 'skill' });
@@ -85,6 +93,21 @@ function EditModal({ visible, item, onClose, onSave }) {
     onClose();
   };
 
+  const handleIconUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      Toast.error('请上传图片文件');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setForm(f => ({ ...f, icon: event.target.result }));
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   return (
     <Modal
       title={item ? '编辑条目' : '新增条目'}
@@ -93,35 +116,74 @@ function EditModal({ visible, item, onClose, onSave }) {
       onOk={handleSave}
       okText="保存"
     >
-      <Form labelPosition="left" labelWidth={80}>
-        <Form.Input label="名称" value={form.name || ''} onChange={v => setForm(f => ({ ...f, name: v }))} />
-        <Form.Select
-          label="类型"
-          value={form.type}
-          onChange={v => setForm(f => ({ ...f, type: v }))}
-          optionList={[
-            { label: '技能 (Skill)', value: 'skill' },
-            { label: 'Agent', value: 'agent' },
-            { label: 'MCP', value: 'mcp' },
-          ]}
-        />
-        <Form.TextArea label="描述" value={form.description || ''} onChange={v => setForm(f => ({ ...f, description: v }))} />
-        <Form.Input label="图标" placeholder="emoji 或留空" value={form.icon || ''} onChange={v => setForm(f => ({ ...f, icon: v }))} />
-        <Form.Input label="作者" value={form.author || ''} onChange={v => setForm(f => ({ ...f, author: v }))} />
-        <Form.Input label="GitHub URL" value={form.github_url || ''} onChange={v => setForm(f => ({ ...f, github_url: v }))} />
-        {form.type !== 'mcp' && (
-          <Form.TextArea
-            label="内容"
-            placeholder={form.type === 'agent' ? '系统提示词内容' : 'Markdown 技能内容（留空则从 GitHub URL 获取）'}
-            value={form.content || ''}
-            onChange={v => setForm(f => ({ ...f, content: v }))}
-            rows={6}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>名称</Text>
+          <Input value={form.name || ''} onChange={v => setForm(f => ({ ...f, name: v }))} />
+        </div>
+        <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>类型</Text>
+          <Select
+            value={form.type}
+            onChange={v => setForm(f => ({ ...f, type: v }))}
+            optionList={[
+              { label: '技能 (Skill)', value: 'skill' },
+              { label: 'Agent', value: 'agent' },
+              { label: 'MCP', value: 'mcp' },
+            ]}
+            style={{ width: '100%' }}
           />
+        </div>
+        <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>描述</Text>
+          <TextArea value={form.description || ''} onChange={v => setForm(f => ({ ...f, description: v }))} />
+        </div>
+        <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>图标</Text>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div
+              onClick={() => iconInputRef.current?.click()}
+              style={{
+                width: 48, height: 48, borderRadius: 8, border: '1px dashed var(--semi-color-border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                overflow: 'hidden', background: 'var(--semi-color-fill-0)',
+              }}
+            >
+              <SkillIcon icon={form.icon} size={36} />
+            </div>
+            <Button size="small" onClick={() => iconInputRef.current?.click()}>上传图片</Button>
+            {form.icon && (
+              <Button size="small" type="danger" onClick={() => setForm(f => ({ ...f, icon: '' }))}>清除</Button>
+            )}
+            <input ref={iconInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleIconUpload} />
+          </div>
+        </div>
+        <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>作者</Text>
+          <Input value={form.author || ''} onChange={v => setForm(f => ({ ...f, author: v }))} />
+        </div>
+        <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>GitHub URL</Text>
+          <Input value={form.github_url || ''} onChange={v => setForm(f => ({ ...f, github_url: v }))} />
+        </div>
+        {form.type !== 'mcp' && (
+          <div>
+            <Text size="small" style={{ display: 'block', marginBottom: 4 }}>内容</Text>
+            <TextArea
+              placeholder={form.type === 'agent' ? '系统提示词内容' : 'Markdown 技能内容（留空则从 GitHub URL 获取）'}
+              value={form.content || ''}
+              onChange={v => setForm(f => ({ ...f, content: v }))}
+              rows={6}
+            />
+          </div>
         )}
         {form.type === 'mcp' && (
-          <Form.Input label="服务器 URL" value={form.server_url || ''} onChange={v => setForm(f => ({ ...f, server_url: v }))} />
+          <div>
+            <Text size="small" style={{ display: 'block', marginBottom: 4 }}>服务器 URL</Text>
+            <Input value={form.server_url || ''} onChange={v => setForm(f => ({ ...f, server_url: v }))} />
+          </div>
         )}
-      </Form>
+      </div>
     </Modal>
   );
 }
@@ -165,14 +227,14 @@ function ImportModal({ visible, onClose, onDone }) {
       okText="安装"
       confirmLoading={loading}
     >
-      <Form labelPosition="left" labelWidth={100}>
-        <Form.Input
-          label="GitHub 仓库"
+      <div style={{ marginBottom: 12 }}>
+        <Text size="small" style={{ display: 'block', marginBottom: 4 }}>GitHub 仓库</Text>
+        <Input
           placeholder="owner/repo 或 https://github.com/owner/repo"
           value={repoURL}
           onChange={setRepoURL}
         />
-      </Form>
+      </div>
       <Text type="tertiary" size="small">
         支持格式：含 .claude-plugin/plugin.json、marketplace.json 或根目录 SKILL.md 的仓库
       </Text>

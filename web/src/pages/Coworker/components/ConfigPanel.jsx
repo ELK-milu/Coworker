@@ -554,7 +554,10 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                 return (
                   <div key={itemId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--semi-color-border)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                      {item.icon && <span style={{ fontSize: 14 }}>{item.icon}</span>}
+                      {item.icon && item.icon.startsWith('data:image/')
+                        ? <img src={item.icon} alt="icon" style={{ width: 20, height: 20, borderRadius: 3, objectFit: 'cover' }} />
+                        : <span style={{ fontSize: 14 }}>{item.icon || '✨'}</span>
+                      }
                       <Text size="small" ellipsis={{ showTooltip: true }} style={{ flex: 1 }}>{item.name}</Text>
                       <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
                     </div>
