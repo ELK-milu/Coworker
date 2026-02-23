@@ -367,3 +367,39 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 
 	return len(tokens), nil
 }
+
+// GetOrCreateCoworkerToken 获取或创建用户的 "Coworker" 默认令牌
+// 若用户已有名为 "Coworker" 的令牌则直接返回其 Key，否则自动创建一个
+// 无群组限制、无模型限制、无限额度、永不过期
+func GetOrCreateCoworkerToken(userId int) (string, error) {
+	var token Token
+	err := DB.Where("user_id = ? AND name = ?", userId, "Coworker").First(&token).Error
+	if err == nil {
+		return token.Key, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", fmt.Errorf("failed to query Coworker token: %w", err)
+	}
+	// 自动创建
+	key, err := common.GenerateKey()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate token key: %w", err)
+	}
+	newToken := Token{
+		UserId:             userId,
+		Name:               "Coworker",
+		Key:                key,
+		Status:             common.TokenStatusEnabled,
+		CreatedTime:        common.GetTimestamp(),
+		AccessedTime:       common.GetTimestamp(),
+		ExpiredTime:        -1,
+		UnlimitedQuota:     true,
+		ModelLimitsEnabled: false,
+		Group:              "",
+	}
+	if err := newToken.Insert(); err != nil {
+		return "", fmt.Errorf("failed to create Coworker token: %w", err)
+	}
+	common.SysLog(fmt.Sprintf("auto-created Coworker token for user %d", userId))
+	return newToken.Key, nil
+}

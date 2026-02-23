@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/client"
@@ -19,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/task"
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
+	"github.com/QuantumNous/new-api/model"
 )
 
 // JobExecutorDeps 执行器依赖
@@ -61,32 +63,39 @@ func NewAIExecutor(deps *JobExecutorDeps) JobExecutor {
 	}
 }
 
-// getClientForJobUser 根据用户配置创建 per-user 客户端
+// getClientForJobUser 根据用户配置创建 per-user 客户端（使用 Coworker 默认令牌）
 func getClientForJobUser(deps *JobExecutorDeps, userID string) *client.ClaudeClient {
 	if deps.Workspace == nil {
 		return deps.Client
 	}
 	info, err := deps.Workspace.LoadUserInfo(userID)
 	if err != nil || info == nil {
+		info = &workspace.UserInfo{}
+	}
+	selectedModel := deps.Config.Claude.Model
+	if info.SelectedModel != "" {
+		selectedModel = info.SelectedModel
+	}
+	// 令牌：始终使用 Coworker 默认令牌
+	userIdInt, err := strconv.Atoi(userID)
+	if err != nil {
+		log.Printf("[JobExecutor] User %s: invalid userID, falling back to global client", userID)
 		return deps.Client
 	}
-	model := deps.Config.Claude.Model
-	if info.SelectedModel != "" {
-		model = info.SelectedModel
-	}
-	tokenKey := info.ApiTokenKey
-	if tokenKey == "" {
-		tokenKey = "playground-default"
+	tokenKey, err := model.GetOrCreateCoworkerToken(userIdInt)
+	if err != nil {
+		log.Printf("[JobExecutor] User %s: failed to get Coworker token: %v, falling back to global client", userID, err)
+		return deps.Client
 	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "3000"
 	}
 	relayBaseURL := "http://127.0.0.1:" + port
-	log.Printf("[JobExecutor] User %s using Relay, token: %s, model: %s", userID, tokenKey, model)
+	log.Printf("[JobExecutor] User %s using Relay, token: Coworker, model: %s", userID, selectedModel)
 	c := client.NewClaudeClient(
 		tokenKey, "", relayBaseURL,
-		model, int(deps.Config.Claude.MaxTokens),
+		selectedModel, int(deps.Config.Claude.MaxTokens),
 	)
 	c.SetSamplingParams(info.Temperature, info.TopP)
 	return c

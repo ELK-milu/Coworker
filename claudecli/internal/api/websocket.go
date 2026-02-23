@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/variable"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -498,24 +500,30 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	go h.forwardEvents(conn, sess.ID, chat.UserID, eventCh)
 }
 
-// getClientForUser 根据用户配置创建 per-user 客户端（固定令牌 playground-default）
+// getClientForUser 根据用户配置创建 per-user 客户端（使用 Coworker 默认令牌）
 func (h *WSHandler) getClientForUser(userID string) *client.ClaudeClient {
 	if h.workspace == nil {
 		return h.client
 	}
 	info, err := h.workspace.LoadUserInfo(userID)
 	if err != nil || info == nil {
-		return h.client
+		info = &workspace.UserInfo{}
 	}
 	// 使用用户选择的模型，未选则用全局默认
-	model := h.config.Claude.Model
+	selectedModel := h.config.Claude.Model
 	if info.SelectedModel != "" {
-		model = info.SelectedModel
+		selectedModel = info.SelectedModel
 	}
-	// 令牌：优先用户配置的 key，否则用固定 "playground-default"
-	tokenKey := info.ApiTokenKey
-	if tokenKey == "" {
-		tokenKey = "playground-default"
+	// 令牌：始终使用 Coworker 默认令牌，不存在则自动创建
+	userIdInt, err := strconv.Atoi(userID)
+	if err != nil {
+		log.Printf("[WS] User %s: invalid userID, falling back to global client", userID)
+		return h.client
+	}
+	tokenKey, err := model.GetOrCreateCoworkerToken(userIdInt)
+	if err != nil {
+		log.Printf("[WS] User %s: failed to get Coworker token: %v, falling back to global client", userID, err)
+		return h.client
 	}
 	// 构建 Relay URL: http://127.0.0.1:{PORT}
 	port := os.Getenv("PORT")
@@ -523,10 +531,10 @@ func (h *WSHandler) getClientForUser(userID string) *client.ClaudeClient {
 		port = "3000"
 	}
 	relayBaseURL := "http://127.0.0.1:" + port
-	log.Printf("[WS] User %s using Relay, token: %s, model: %s", userID, tokenKey, model)
+	log.Printf("[WS] User %s using Relay, token: Coworker, model: %s", userID, selectedModel)
 	c := client.NewClaudeClient(
 		tokenKey, "", relayBaseURL,
-		model, int(h.config.Claude.MaxTokens),
+		selectedModel, int(h.config.Claude.MaxTokens),
 	)
 	c.SetSamplingParams(info.Temperature, info.TopP)
 	return c

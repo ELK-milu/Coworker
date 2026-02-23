@@ -4,363 +4,444 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Coworker is a fork of [new-api](https://github.com/Calcium-Ion/new-api), an LLM Gateway and AI Asset Management System. This fork adds a ClaudeCLI module that provides Claude Code CLI functionality via WebSocket.
+Coworker is a fork of [new-api](https://github.com/Calcium-Ion/new-api), an LLM Gateway and AI Asset Management System. This fork adds a **ClaudeCLI module** — a full Claude Code CLI experience delivered via WebSocket, with sandbox isolation, persistent memory, and multi-user support.
 
 **Tech Stack:**
 - Backend: Go 1.25.1 + Gin + GORM + Air (hot reload)
-- Frontend: React 18 + Vite + Semi-UI + Bun
-- Database: PostgreSQL (dev), SQLite/MySQL (supported)
-- Cache: Redis
-- Deployment: Docker + Docker Compose
+- Frontend: React 18 + Vite 5 + Semi-UI + Bun
+- Database: PostgreSQL (primary), SQLite/MySQL (supported)
+- Cache: Redis (optional, falls back to in-memory)
+- Vector DB: Milvus 2.5.6 (Linux amd64/arm64 only, stub on other platforms)
+- Deployment: Docker + Docker Compose (multi-stage build)
 
 ---
 
 ## Development Commands
 
-### Start Development Environment
+### Docker Development (3 modes)
 
 ```bash
-# Start all services (backend, frontend build, postgres, redis)
+# Mode 1: Standard dev (frontend build + Air hot reload + Postgres + Redis + Milvus)
 docker-compose -f docker-compose-dev.yml up
-
-# Start in background
-docker-compose -f docker-compose-dev.yml up -d
-
-# View logs
-docker logs -f new-api-dev  # Backend
-
-# Rebuild frontend after code changes
+# Rebuild frontend after changes:
 docker-compose -f docker-compose-dev.yml restart web-dev
+
+# Mode 2: Fast dev with Vite HMR (frontend at :5173, backend at :3000)
+docker-compose -f docker-compose-dev-fast.yml up
+
+# Mode 3: Production
+docker-compose up -d
 ```
 
-**Access URL:**
-- Application: http://localhost:3000 (Backend serves static files)
-- PostgreSQL: localhost:5432
+**Access URLs:**
+- Application: http://localhost:3000 (backend serves static files)
+- Vite HMR (fast mode only): http://localhost:5173
+- PostgreSQL: localhost:5432 (user: root, db: new-api)
 - Redis: localhost:6379
+- Milvus: localhost:19530
 
-**Note:** Frontend uses build mode (not dev server). After modifying frontend code, run `docker-compose -f docker-compose-dev.yml restart web-dev` to rebuild.
-
-### Backend Development
+### Local Development (without Docker)
 
 ```bash
-# Run backend locally (without Docker)
-go run main.go
+# Backend
+go run main.go                           # Run directly
+go build -o new-api                      # Build binary
+go test ./...                            # All tests
+go test -v ./model -run TestChannelCache # Single test
+go fmt ./...                             # Format
+go mod tidy                              # Clean deps
 
-# Build
-go build -o new-api
-
-# Run tests
-go test ./...
-
-# Run specific test
-go test -v ./model -run TestChannelCache
-
-# Update dependencies
-go mod tidy
-go mod download
-
-# Format code
-go fmt ./...
-
-# Lint (if golangci-lint installed)
-golangci-lint run
+# Frontend
+cd web
+bun install          # Install deps
+bun run dev          # Vite dev server
+bun run build        # Production build
+bun run lint         # Prettier check
 ```
 
-### Frontend Development
+### Hot Reload (Air)
 
+Air uses polling mode for Windows Docker compatibility (`.air.toml`). After Go file changes, watch logs for "building..." confirmation:
 ```bash
-cd web
-
-# Install dependencies
-bun install
-
-# Start dev server
-bun run dev
-
-# Build for production
-bun run build
-
-# Preview production build
-bun run preview
-
-# Lint
-bun run lint
+docker logs --tail 20 new-api-dev
 ```
 
 ---
 
 ## Architecture Overview
 
-### Backend Architecture
+### Request Flow
 
-**Request Flow:**
 ```
-HTTP Request → Middleware Chain → Router → Controller → Service → Model → Database
-                                                    ↓
-                                              External APIs
+HTTP Request
+  → Middleware (CORS, Auth, RateLimit, Distribute)
+  → Router (api / relay / claudecli / video / web)
+  → Controller → Service → Model → Database
+                          ↓
+                    External LLM APIs
 ```
 
-**Key Layers:**
+### Backend Layers
 
-1. **Router** (`router/`)
-   - `main.go` - Main router setup, integrates all sub-routers
-   - `api-router.go` - Core API routes (/api/user, /api/channel, /api/token, etc.)
-   - `claudecli-router.go` - ClaudeCLI WebSocket routes
-   - `relay-router.go` - LLM API relay routes (/v1/*, /mj/*, /pg/*)
-
-2. **Controller** (`controller/`)
-   - HTTP request handlers
-   - Input validation and response formatting
-   - Calls service layer for business logic
-
-3. **Service** (`service/`)
-   - Business logic implementation
-   - Channel selection strategies
-   - Quota management
-   - Token counting and billing
-
-4. **Model** (`model/`)
-   - GORM database models
-   - Database operations (CRUD)
-   - Cache management (Redis + in-memory)
-
-5. **Middleware** (`middleware/`)
-   - `auth.go` - Authentication (UserAuth, AdminAuth, RootAuth)
-   - `rate-limit.go` - Rate limiting
-   - `distributor.go` - Request distribution to channels
-   - `logger.go` - Request logging
-
-**Core Data Models:**
-- `User` - User accounts with quota management
-- `Channel` - LLM API channels (OpenAI, Claude, etc.)
-- `Token` - API tokens with group/model restrictions
-- `Log` - Request logs with billing info
-- `Midjourney` - Midjourney task tracking
-- `Task` - Async task queue
+| Layer | Location | Purpose |
+|-------|----------|---------|
+| Router | `router/` | Route groups: api, relay (/v1/*), claudecli (WebSocket), video, dashboard, web (static) |
+| Controller | `controller/` | HTTP handlers, input validation, response formatting |
+| Service | `service/` | Business logic: channel selection, quota billing, format conversion |
+| Model | `model/` | GORM models, DB operations, Redis+memory cache |
+| Middleware | `middleware/` | Auth (UserAuth/AdminAuth/TokenAuth), rate-limit, distributor, logger |
+| Relay | `relay/` | LLM API proxying with 30+ provider adapters |
+| ClaudeCLI | `claudecli/` | Claude Code CLI via WebSocket (independent module) |
+| Common | `common/` | Constants, env loading, crypto, database type detection |
+| DTO | `dto/` | Request/response types for relay formats |
 
 ### Frontend Architecture
 
-**Component Structure:**
+**Provider hierarchy** (index.jsx):
 ```
-web/src/
-├── pages/              # Page components (Token, Channel, Coworker, etc.)
-├── components/
-│   ├── layout/        # PageLayout, SiderBar, HeaderBar
-│   ├── table/         # Data tables
-│   └── ...
-├── hooks/             # Custom React hooks
-│   └── common/
-│       └── useSidebar.js  # Sidebar configuration
-├── helpers/           # Utility functions
-│   ├── auth.jsx       # PrivateRoute, AdminRoute
-│   └── render.jsx     # Icon rendering
-├── context/           # React Context (User, Status, Theme)
-└── App.jsx            # Main app with routes
+StatusProvider → UserProvider → BrowserRouter → ThemeProvider → SemiLocaleWrapper → PageLayout
 ```
 
-**Layout System:**
-- `PageLayout.jsx` controls global layout (sidebar + header)
-- Console pages (`/console/*`) automatically get sidebar
-- Pages must use standard container: `<div className='mt-[60px] px-2'>`
-- `cardProPages` array in PageLayout.jsx controls footer visibility
+**Layout system:**
+- `PageLayout.jsx` — Fixed header (64px) + collapsible sidebar + content area
+- Console pages (`/console/*`) automatically get sidebar via `cardProPages` array
+- All console pages must use container: `<div className='mt-[60px] px-2'>`
+- `useSidebar` hook controls module visibility (merges admin + user config)
 
-### ClaudeCLI Module
+**State management:** React Context (User, Status, Theme) — no Redux.
 
-**Location:** `claudecli/` (independent module)
+**i18n:** i18next with 6 languages (en, zh, fr, ru, ja, vi). Chinese keys as source strings.
 
-**Architecture:**
-```
-claudecli/
-├── init.go                    # Module initialization
-├── internal/
-│   ├── api/
-│   │   ├── handler.go        # REST API handlers
-│   │   ├── websocket.go      # WebSocket handler
-│   │   └── file_handler.go   # File upload/download handlers
-│   ├── client/
-│   │   └── claude.go         # Anthropic API client
-│   ├── context/              # Context management (compact)
-│   │   ├── context.go        # Context manager
-│   │   ├── compress.go       # Message compression
-│   │   ├── tokens.go         # Token estimation
-│   │   └── summary.go        # Summary generation
-│   ├── session/
-│   │   └── manager.go        # Session management
-│   ├── task/
-│   │   └── task.go           # Task management (todo list)
-│   ├── workspace/
-│   │   └── workspace.go      # User workspace management
-│   ├── sandbox/              # Microsandbox MicroVM integration
-│   │   ├── microsandbox_client.go  # HTTP API client
-│   │   ├── pool.go           # SandboxPool manager (task-binding)
-│   │   └── sandbox.go        # Path mapping & security
-│   ├── tools/                # Claude Code tools
-│   │   ├── bash.go
-│   │   ├── read.go
-│   │   ├── write.go
-│   │   ├── edit.go
-│   │   ├── glob.go
-│   │   └── grep.go
-│   └── loop/
-│       └── conversation.go   # Conversation loop
-└── pkg/types/                # Type definitions
+**Key frontend patterns:**
+- Semi-UI components (ByteDance design system)
+- Lucide-react + @lobehub/icons for icons
+- CodeMirror for code editing (Playground)
+- Lazy loading for heavy pages
+- Axios for REST, native WebSocket for real-time
+
+---
+
+## Relay System (LLM Gateway)
+
+The relay system proxies requests to 30+ LLM providers through a unified adapter pattern.
+
+### Adapter Interface
+
+Every provider implements the `Adaptor` interface (`relay/channel/adapter.go`):
+```go
+type Adaptor interface {
+    Init(info *relaycommon.RelayInfo)
+    GetRequestURL(info *relaycommon.RelayInfo) (string, error)
+    SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error
+    ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error)
+    DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error)
+    DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError)
+    GetModelList() []string
+    GetChannelName() string
+}
 ```
 
-**Integration Points:**
-- Controller: `controller/claudecli.go`
-- Router: `router/claudecli-router.go`
-- Frontend: `web/src/pages/Coworker/index.jsx`
+### Adding a New Provider
 
-**WebSocket Protocol:**
-```javascript
-// Client → Server (Chat)
-{ "type": "chat", "payload": { "message": "...", "session_id": "...", "user_id": "...", "mode": "normal" } }
-{ "type": "abort" }  // Abort current response
+1. Create `relay/channel/new_provider/` with: `adaptor.go`, `constants.go`, `dto.go`, `text.go`
+2. Implement `Adaptor` interface (use `relay/channel/openai/` as reference)
+3. Register in `relay/relay_adaptor.go` → `GetAdaptor()` switch
+4. Add constant in `relay/constant/` if needed
+5. Add routes in `router/relay-router.go` if special paths needed
 
-// Client → Server (Session Management)
-{ "type": "load_history", "payload": { "session_id": "..." } }
-{ "type": "list_sessions", "payload": { "user_id": "..." } }
-{ "type": "delete_session", "payload": { "session_id": "..." } }
+### Relay Request Lifecycle
 
-// Client → Server (File Management)
-{ "type": "list_files", "payload": { "user_id": "...", "path": "..." } }
-{ "type": "create_folder", "payload": { "user_id": "...", "path": "..." } }
-{ "type": "delete_file", "payload": { "user_id": "...", "path": "..." } }
-{ "type": "rename_file", "payload": { "user_id": "...", "path": "...", "new_name": "..." } }
-
-// Server → Client (Chat)
-{ "type": "text", "payload": { "content": "...", "session_id": "..." } }
-{ "type": "tool_start", "payload": { "name": "...", "tool_id": "...", "input": {...} } }
-{ "type": "tool_end", "payload": { "tool_id": "...", "result": "...", "is_error": false } }
-{ "type": "status", "payload": { "model": "...", "total_tokens": 0, "context_percent": 0 } }
-{ "type": "done" }
-{ "type": "error", "payload": { "error": "..." } }
-
-// Server → Client (Session/File)
-{ "type": "history", "payload": { "messages": [...] } }
-{ "type": "sessions_list", "payload": { "sessions": [...] } }
-{ "type": "files_list", "payload": { "files": [...], "path": "..." } }
-{ "type": "folder_created", "payload": { "success": true, "path": "..." } }
-{ "type": "file_deleted", "payload": { "success": true, "path": "..." } }
-{ "type": "file_renamed", "payload": { "success": true, "old_path": "...", "new_name": "..." } }
-
-// Client → Server (Task Management)
-{ "type": "task_create", "payload": { "user_id": "...", "list_id": "default", "subject": "...", "description": "..." } }
-{ "type": "task_get", "payload": { "user_id": "...", "list_id": "default", "task_id": "..." } }
-{ "type": "task_update", "payload": { "user_id": "...", "list_id": "default", "task_id": "...", "status": "..." } }
-{ "type": "task_list", "payload": { "user_id": "...", "list_id": "default" } }
-
-// Client → Server (Context Compact)
-{ "type": "compact", "payload": { "session_id": "..." } }
-{ "type": "context_stats", "payload": { "session_id": "..." } }
-
-// Server → Client (Task)
-{ "type": "tasks_list", "payload": { "tasks": [...] } }
-{ "type": "task_created", "payload": { "success": true, "task": {...} } }
-{ "type": "task_updated", "payload": { "success": true, "task": {...} } }
-
-// Server → Client (Context)
-{ "type": "compact_done", "payload": { "success": true, "stats": {...} } }
-{ "type": "context_stats", "payload": { "stats": {...} } }
+```
+TokenAuth → Distribute (channel selection)
+  → GenRelayInfo (build context)
+  → EstimateRequestToken → ModelPriceHelper
+  → PreConsumeQuota (deduct estimated quota)
+  → [retry loop]
+    → GetChannel → Adaptor.Init → ConvertRequest → DoRequest → DoResponse
+    → On error: processChannelError, try next channel
+  → PostConsumeQuota (settle actual vs estimated)
+  → On failure: ReturnPreConsumedQuota
 ```
 
-### Coworker Frontend Features
+### Channel Selection Logic
 
-**Location:** `web/src/pages/Coworker/`
+**`service/channel_select.go`** — Smart channel selection:
+- Selects by model name, user group, and priority level
+- Retry count maps to priority level (retry 0 = highest priority channels)
+- "auto" group iterates user's auto-groups list
+- Affinity cache (`service/channel_affinity.go`) remembers preferred channels per fingerprint
 
-**Components:**
+**Channel features:**
+- Multi-key support (newline-separated keys, modes: Random/Polling/Weighted)
+- Parameter override (JSON map applied to converted request)
+- Header override with placeholders: `{api_key}`, `{client_header:X-Name}`
+- In-memory + Redis cache with periodic DB sync
+
+### Streaming
+
+SSE streaming handled by `relay/helper/stream_scanner.go`:
+- Buffered scanner (64MB max)
+- Ping keep-alive (`": PING\n\n"`) during long responses
+- Per-provider stream parsers in each adapter
+
+### Billing Formula
+
 ```
-web/src/pages/Coworker/
-├── index.jsx                    # Main page with WebSocket connection
-├── styles.css                   # Main styles
-└── components/
-    ├── MessageBubble.jsx        # Chat message display
-    ├── ToolCallCard.jsx         # Tool call visualization
-    ├── SessionSidebar.jsx       # DeepSeek-style session sidebar
-    ├── SessionSidebar.css
-    ├── FileExplorer.jsx         # Google Colab-style file manager
-    ├── FileExplorer.css
-    ├── TaskList.jsx             # Claude Code-style task list
-    └── TaskList.css
+QuotaPerUnit = 500,000 (= $1 USD)
+
+Text billing:
+  quota = (inputTokens + outputTokens × completionRatio) × groupRatio × modelRatio
+
+Cache billing (Claude):
+  quota = (promptTokens + cachedTokens × cacheRatio + cacheCreationTokens × cacheCreationRatio) × groupRatio × modelRatio
+
+Audio billing:
+  quota = (inputText + outputText × completionRatio + inputAudio × audioRatio + outputAudio × audioRatio × audioCompletionRatio) × groupRatio × modelRatio
+
+USD = quota / 500000
 ```
 
-**File Manager Features (Google Colab Style):**
-- File/folder listing with icons by file type
-- Drag-and-drop file upload
-- Create new folders (inline input)
-- Rename files/folders (inline editing)
-- Delete files/folders with confirmation
-- Download files (direct download, no new window)
-- Download folders as ZIP
-- Breadcrumb navigation
-- Right-click context menu
+Key files: `service/quota.go`, `setting/ratio_setting/`, `dto/pricing.go`
 
-**Session Sidebar Features (DeepSeek Style):**
-- Session list grouped by time (Today, Yesterday, Last 7 days, etc.)
-- New chat button
-- Session switching with history loading
-- Delete sessions
-- Collapsible sidebar
+---
 
-**Task List Features (Claude Code Style):**
-- Create tasks with subject and description
-- Task status: pending → in_progress → completed
-- Progress bar showing completion percentage
-- Task dependencies (blocks/blockedBy)
-- Inline task status updates
-- Delete tasks
-- Persistent storage per user
+## ClaudeCLI Module
 
-**Context Compact Features:**
-- Automatic context compression when usage exceeds 70%
-- Token estimation for messages (English ~3.5 chars/token, Chinese ~2 chars/token)
-- Code block compression (keep 60% head + 40% tail, max 50 lines)
-- Tool output compression (max 2000 chars)
-- Summary generation for old messages
-- Manual compact trigger via WebSocket
+The ClaudeCLI module (`claudecli/`) is an independent subsystem providing Claude Code CLI functionality via WebSocket.
 
-**User Workspace Isolation:**
-- Each user has isolated workspace: `./userdata/{user_id}/workspace/`
-- User ID stored in localStorage: `coworker_user_id`
-- Session ID stored in localStorage: `coworker_session_id`
+### Module Initialization (`init.go`)
+
+Initialization sequence: Config → Workspace → Claude Client → Session Manager → Tool Registry → Task Manager → Job Manager → Variable Manager → Memory Manager → Embedding Client → Milvus Client → Profile Manager → Sandbox Pool → EventBus → REST/WS Handlers → File Handler
+
+### Subsystem Overview
+
+| Subsystem | Location | Purpose |
+|-----------|----------|---------|
+| **WebSocket API** | `internal/api/websocket.go` | Message pump, 20+ message types |
+| **REST API** | `internal/api/handler.go` | Sessions, memories, jobs, files, ratio config |
+| **Anthropic Client** | `internal/client/` | SSE stream parsing, retry with exponential backoff+jitter, multi-endpoint (API key or auth token) |
+| **Conversation Loop** | `internal/loop/conversation.go` | AI agent loop with Doom Loop detection, step limits (default 50), finish_reason routing |
+| **Context Manager** | `internal/context/` | Microcompact (tool output pruning) → Prune (token-based trimming, 40K window) → Summarize (AI summary) |
+| **Tool Registry** | `internal/tools/` | Bash, Read, Write, Edit, Glob, Grep, Memory tools, Task tools, StructuredOutput |
+| **Sandbox** | `internal/sandbox/sandbox.go` | Virtual path mapping (`/workspace/` ↔ real path), traversal protection |
+| **Sandbox Pool** | `internal/sandbox/pool.go` | nsjail/Microsandbox task-binding pool, Acquire/Release/Exec |
+| **Session Manager** | `internal/session/` | File-based persistence under `userdata/{user_id}/sessions/` |
+| **Memory System** | `internal/memory/` | Hybrid retrieval (BM25 + Dense Vector), Milvus integration, AI extraction on compact/session-end |
+| **Embedding Client** | `internal/embedding/` | SiliconFlow / DashScope providers, rerank support |
+| **EventBus** | `internal/eventbus/` | Sync + async handlers: BeforeCompact, TurnCompleted, SessionEnd |
+| **Task Manager** | `internal/task/` | TodoList CRUD, file-backed, AI can create/update via tools |
+| **Job Scheduler** | `internal/job/` | Cron-like scheduled tasks with AI execution |
+| **Permissions** | `internal/permissions/` | Ruleset evaluation, wildcard matching, internal tool whitelist |
+| **Prompt Builder** | `internal/prompt/` | Dynamic system prompt: agent type, COWORKER.md rules, memories, git status |
+| **Agent Types** | `internal/agent/` | 6 built-in agents (build, plan, explore, general, compaction, title) with per-agent tool whitelists |
+| **Skills** | `internal/skills/` | Skill definitions (YAML frontmatter + content), parser, registry, executor |
+| **MCP** | `internal/mcp/` | Model Context Protocol via stdio transport |
+| **Profile** | `internal/profile/` | User preference learning |
+| **Variables** | `internal/variable/` | Variable system with builtins |
+
+### Conversation Loop (`loop/conversation.go`)
+
+```
+RunLoop:
+  while steps < maxSteps:
+    1. Build messages + tools + system prompt
+    2. Call CreateMessageStream()
+    3. Check finish_reason:
+       - "end_turn" → return response
+       - "tool_use" → execute tools
+       - "max_tokens" → inject continue prompt
+    4. For tool_use:
+       - Doom Loop check: last 3 calls identical (name + SHA256(input))? → error
+       - Execute tools in goroutines
+       - Check context near limit → auto compact
+    5. Continue loop
+```
+
+### Tool System
+
+**Factory pattern** (`tools/factory.go`): Auto input validation + output truncation (2000 lines / 50KB). Full output saved to `/tmp` with 7-day TTL.
+
+**Edit tool** (`tools/edit.go` + `edit_replacer.go`): 9-layer replacer chain for fuzzy matching:
+1. SimpleReplacer (exact)
+2. LineTrimmedReplacer (trailing whitespace)
+3. LeadingWhitespaceReplacer
+4. BlockAnchorReplacer (Levenshtein fuzzy)
+5. WhitespaceNormalizedReplacer
+6. IndentNormalizedReplacer (tab↔space)
+7-9. Additional normalization layers
+
+**Sandbox execution priority:** nsjail (container) > Microsandbox (MicroVM) > Local (path-isolated)
+
+### Context Compression Pipeline
+
+```
+Trigger: context > 70% capacity (auto) or manual /compact
+
+1. EventBus.Emit(BeforeCompact) → Memory extraction (sync, blocks)
+2. Microcompact: Clean tool results older than last 3
+3. Prune: Keep recent 40K tokens, remove old tool outputs
+4. Summarize: AI-generated summary of pruned content
+5. EventBus.Emit(TurnCompleted) → Fact extraction (async)
+```
+
+### Memory System Architecture
+
+```
+AI Tool Call (MemorySearch/MemorySave)
+     ↓
+memory.Manager (CRUD + dedup by content hash)
+     ↓
+Hybrid Retrieval: BM25 full-text + Dense Vector (embedding)
+     ↓
+Storage: JSON files (disk) + Milvus vectors (Linux amd64/arm64)
+     ↓
+Injection: Relevant memories → system prompt
+```
+
+EventBus triggers:
+- `BeforeCompact` (sync) → Extract window summary before context loss
+- `TurnCompleted` (async) → Extract discrete facts
+- `SessionEnd` (async) → Final summary + remaining facts
+
+### WebSocket Protocol
+
+**Endpoint:** `/claudecli/ws` (or `/coworker/ws`)
+
+**Client → Server:** `chat`, `abort`, `load_history`, `list_sessions`, `delete_session`, `list_files`, `create_folder`, `delete_file`, `rename_file`, `task_create`, `task_update`, `task_list`, `compact`, `context_stats`, `extract_memories`
+
+**Server → Client:** `text`, `thinking`, `tool_start`, `tool_end`, `status`, `done`, `error`, `history`, `sessions_list`, `files_list`, `tasks_list`, `task_created`, `task_updated`, `compact_done`, `context_stats`
+
+All messages use format: `{ "type": "<type>", "payload": { ... } }`
+
+### Coworker Frontend (`web/src/pages/Coworker/`)
+
+Main page (index.jsx, ~1200 lines) with:
+- **Left panel:** Chat messages (MessageBubble, ToolCallCard) + input area
+- **Right panel (560px):** SessionSidebar with 6 tabs — History, Files (Colab-style), Tasks (Claude Code-style), Config, Memory, Jobs
+- **Status bar:** Connection state, model, cost, tokens, context %
+
+Key components: `MessageBubble.jsx`, `ToolCallCard.jsx`, `SessionSidebar.jsx`, `FileExplorer.jsx`, `TaskList.jsx`, `ConfigPanel.jsx`, `MemoryPanel.jsx`, `InlineTaskCard.jsx`
+
+Token billing: Real-time from API stream (`status` events), cost from REST log query (`/api/log/self/`) after `done`.
+
+---
+
+## Database
+
+### Multi-Database Support
+
+Detection via `SQL_DSN` prefix:
+- `postgresql://` → PostgreSQL (recommended for production)
+- `local` or empty → SQLite (default, file: `one-api.db`)
+- Otherwise → MySQL
+
+### SQL Dialect Differences
+
+PostgreSQL uses quoted identifiers (`"group"`, `"key"`), MySQL/SQLite uses backticks. GORM handles this automatically, but raw SQL must use the correct quoting.
+
+### Auto-Migration
+
+All models auto-migrate on startup (`model/main.go`). Root user (root/123456) created automatically on empty database.
+
+### Connection Pool Defaults
+
+```go
+SetMaxIdleConns(100)      // SQL_MAX_IDLE_CONNS
+SetMaxOpenConns(1000)     // SQL_MAX_OPEN_CONNS
+SetConnMaxLifetime(60s)   // SQL_MAX_LIFETIME
+```
+
+---
+
+## Environment Variables
+
+### Core
+
+```bash
+SQL_DSN=postgresql://user:pass@host:5432/dbname  # Database connection
+LOG_SQL_DSN=                                      # Optional separate log DB
+REDIS_CONN_STRING=redis://localhost:6379           # Redis (optional)
+PORT=3000                                          # Server port
+GIN_MODE=release                                   # release or debug
+SESSION_SECRET=<must-change>                       # Session encryption key
+CRYPTO_SECRET=                                     # Defaults to SESSION_SECRET
+TZ=Asia/Shanghai                                   # Timezone
+```
+
+### ClaudeCLI
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...            # Claude API key
+ANTHROPIC_AUTH_TOKEN=                    # Alternative: web auth token
+ANTHROPIC_API_BASE_URL=                 # Custom base URL
+CLAUDE_MODEL=claude-sonnet-4-20250514   # Default model
+WORKSPACE_BASE_PATH=./userdata          # User workspace root
+```
+
+### Sandbox Isolation
+
+```bash
+# nsjail (container-based, requires privileged Docker)
+NSJAIL_ENABLED=true
+NSJAIL_CONTAINER_NAME=nsjail-sandbox
+NSJAIL_MAX_CONCURRENT=50
+NSJAIL_MEMORY_MB=512
+NSJAIL_EXEC_TIMEOUT=120
+
+# Microsandbox (MicroVM, Linux only)
+MICROSANDBOX_ENABLED=false
+MSB_SERVER_URL=http://linux-server:5555
+MSB_API_KEY=
+MSB_POOL_SIZE=5
+MSB_MEMORY_MB=512
+MSB_CPUS=1
+MSB_EXEC_TIMEOUT=120
+```
+
+### Vector Memory
+
+```bash
+MILVUS_ENABLED=false
+MILVUS_HOST=milvus
+MILVUS_PORT=19530
+MILVUS_COLLECTION=claude_memories
+EMBEDDING_PROVIDER=siliconflow           # or dashscope
+EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+EMBEDDING_DIMENSION=1024
+SILICONFLOW_API_KEY=
+DASHSCOPE_API_KEY=
+```
+
+### Relay & Performance
+
+```bash
+RELAY_TIMEOUT=0                # 0 = unlimited
+STREAMING_TIMEOUT=300          # Stream response timeout (seconds)
+SYNC_FREQUENCY=60              # Channel sync interval (seconds)
+MEMORY_CACHE_ENABLED=true      # In-process cache fallback
+BATCH_UPDATE_ENABLED=true      # Batch DB updates
+BATCH_UPDATE_INTERVAL=5
+DEBUG=false                    # Debug logging
+ENABLE_PPROF=false             # CPU profiling
+```
+
+### Load Order
+
+1. Command-line flags (`--port`, `--log-dir`)
+2. `.env` file (via godotenv)
+3. OS environment variables
+4. Code defaults (`common/constants.go`)
 
 ---
 
 ## Adding New Console Pages
 
-**Complete Checklist:**
-
-1. **Create page component** (`web/src/pages/NewPage/index.jsx`)
-   ```jsx
-   const NewPage = () => {
-     return (
-       <div className='mt-[60px] px-2'>
-         {/* Content */}
-       </div>
-     );
-   };
-   ```
-
-2. **Add route** (`web/src/App.jsx`)
-   ```jsx
-   <Route path='/console/newpage' element={
-     <PrivateRoute><NewPage /></PrivateRoute>
-   } />
-   ```
-
-3. **Add sidebar button** (`web/src/components/layout/SiderBar.jsx`)
-   - Add to `routerMap`: `newpage: '/console/newpage'`
-   - Add to appropriate menu array (workspaceItems, etc.)
-
-4. **Add to PageLayout** (`web/src/components/layout/PageLayout.jsx`)
-   - Add `/console/newpage` to `cardProPages` array
-
-5. **Add module config** (`web/src/hooks/common/useSidebar.js`)
-   - Add to `DEFAULT_ADMIN_CONFIG` under appropriate section
-
-6. **Add icon** (`web/src/helpers/render.jsx`)
-   - Import icon from lucide-react
-   - Add case in `getLucideIcon()` function
+1. Create `web/src/pages/NewPage/index.jsx` with `<div className='mt-[60px] px-2'>` container
+2. Add route in `web/src/App.jsx` (wrap with `<PrivateRoute>` or `<AdminRoute>`)
+3. Add sidebar entry in `web/src/components/layout/SiderBar.jsx` (`routerMap` + menu array)
+4. Add path to `cardProPages` array in `web/src/components/layout/PageLayout.jsx`
+5. Add module config in `web/src/hooks/common/useSidebar.js` (`DEFAULT_ADMIN_CONFIG`)
+6. Add icon mapping in `web/src/helpers/render.jsx` (`getLucideIcon()`)
 
 ---
 
@@ -368,672 +449,123 @@ web/src/pages/Coworker/
 
 ### Semi-UI Component Imports
 
-**❌ Wrong:**
 ```javascript
+// WRONG: TextArea will be undefined
 import { Input } from '@douyinfe/semi-ui';
-const { TextArea } = Input;  // TextArea will be undefined
-```
+const { TextArea } = Input;
 
-**✅ Correct:**
-```javascript
+// CORRECT: Import directly
 import { TextArea } from '@douyinfe/semi-ui';
 ```
 
-**Rule:** Import Semi-UI components directly from the main package, not as sub-properties.
+### React Closure Trap in WebSocket Handlers
+
+State values captured in WebSocket `onmessage` become stale. Always use `useRef` to track values accessed in closures:
+
+```javascript
+const currentPathRef = useRef(currentPath);
+useEffect(() => { currentPathRef.current = currentPath; }, [currentPath]);
+
+const handleMessage = (data) => {
+  loadFiles(currentPathRef.current);  // Always latest value
+};
+```
+
+### ClaudeCLI Async Requirements
+
+All blocking operations in WebSocket handlers must run in goroutines. WebSocket writes must use `sync.Mutex`:
+
+```go
+// Async handler pattern
+func (h *WSHandler) handleTaskCreate(conn *websocket.Conn, payload json.RawMessage) {
+    go func() {
+        t, err := h.tasks.Create(...)
+        h.sendJSON(conn, result)  // sendJSON uses h.connMu.Lock()
+    }()
+}
+```
+
+### Sandbox Path Resolution
+
+All ClaudeCLI tools must resolve paths through the sandbox to enforce workspace isolation:
+
+```go
+sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
+realPath, err := sb.ToReal(virtualPath)  // /workspace/src → /app/userdata/uid/workspace/src
+// ../../../etc/passwd → ErrPathTraversal
+```
+
+### Milvus Build on Windows
+
+Milvus SDK only compiles on Linux amd64/arm64. Other platforms use `milvus_stub.go` (build tags: `!linux || (!amd64 && !arm64)`).
 
 ### Hot Reload Not Working (Docker on Windows)
 
-**Problem:** File changes not detected in Docker container.
-
-**Solution:** Air must use polling mode on Windows.
-
-**File:** `.air.toml`
-```toml
-[build]
-  poll = true
-  poll_interval = 1000  # Check every second
-```
-
-**Verify:** Check logs for "building..." after file changes:
-```bash
-docker logs --tail 20 new-api-dev
-```
-
-### New Page Missing Sidebar
-
-**Symptoms:** Page loads but sidebar doesn't appear.
-
-**Checklist:**
-- [ ] Page uses `<div className='mt-[60px] px-2'>` container (not custom Layout)
-- [ ] Path added to `PageLayout.jsx` → `cardProPages` array
-- [ ] Route configured in `App.jsx`
-- [ ] Sidebar button added in `SiderBar.jsx`
-- [ ] Module config added in `useSidebar.js`
-
-### React Closure Trap in WebSocket Handlers
-
-**Problem:** State values captured in WebSocket `onmessage` handler become stale.
-
-**Symptoms:** After operations (create folder, delete file, rename), UI jumps to root directory instead of staying in current path.
-
-**Cause:** `handleWebSocketMessage` function captures initial state values (e.g., `currentPath = ''`) and never updates.
-
-**❌ Wrong:**
-```javascript
-const handleWebSocketMessage = (data) => {
-  // currentPath is captured at function definition time
-  loadFilesList(wsRef.current, currentPath);  // Always uses stale value!
-};
-```
-
-**✅ Correct:**
-```javascript
-const currentPathRef = useRef(currentPath);
-
-useEffect(() => {
-  currentPathRef.current = currentPath;  // Sync to ref on every change
-}, [currentPath]);
-
-const handleWebSocketMessage = (data) => {
-  loadFilesList(wsRef.current, currentPathRef.current);  // Always gets latest value
-};
-```
-
-**Rule:** Use `useRef` to track state values that need to be accessed in closures (WebSocket handlers, event listeners, timers).
+Air must use polling mode. Verify `.air.toml` has `poll = true` and `poll_interval = 1000`.
 
 ---
 
-## Database Migrations
+## Deployment
 
-**Location:** `model/main.go` → `init()` function
+### Docker Multi-Stage Build
 
-**Auto-migration on startup:**
-```go
-err := db.AutoMigrate(
-    &User{},
-    &Channel{},
-    &Token{},
-    // ... all models
-)
-```
+The `Dockerfile` uses 3 stages:
+1. **Bun builder** — Installs deps, builds React frontend
+2. **Go builder** — Compiles static Go binary (CGO_ENABLED=0, multi-arch)
+3. **Runtime** — debian:bookworm-slim with just the binary + CA certs
 
-**Manual migration:**
-```bash
-# Connect to database
-docker exec -it postgres-dev psql -U root -d new-api
+### CI/CD
 
-# Run SQL
-ALTER TABLE users ADD COLUMN new_field VARCHAR(255);
-```
+GitHub Actions (`.github/workflows/docker-image-alpha.yml`):
+- Matrix build: amd64 (ubuntu-latest) + arm64 (ubuntu-24.04-arm)
+- Multi-arch manifest pushed to Docker Hub + GHCR
+- Version format: `alpha-YYYYMMDD-{short_sha}`
 
----
+### nsjail Sandbox Image
 
-## Environment Variables
-
-**Key Variables:**
-
-```bash
-# Database
-SQL_DSN=postgresql://user:pass@host:5432/dbname
-
-# Redis
-REDIS_CONN_STRING=redis://host:6379
-
-# Server
-PORT=3000
-GIN_MODE=release  # or debug
-
-# Session
-SESSION_SECRET=random-secret-key
-
-# ClaudeCLI Module
-ANTHROPIC_API_KEY=sk-ant-...
-WORKING_DIR=/data/users
-CLAUDE_MODEL=claude-sonnet-4-20250514
-```
-
-**Load order:**
-1. `.env` file (if exists)
-2. Environment variables
-3. Default values in code
+`docker/nsjail/Dockerfile` — Debian-based with pre-installed Python packages (numpy, pandas, Pillow, openpyxl, etc.) and nsjail binary for process isolation.
 
 ---
 
 ## Git Workflow
 
-**Only commit when explicitly requested by user.**
+**Commit message format:** `<type>: <subject>` (types: feat, fix, docs, style, refactor, perf, test, chore)
 
-**Commit message format:**
-```
-<type>: <subject>
-
-<body>
-
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
-```
-
-**Types:** feat, fix, docs, style, refactor, perf, test, chore
+Only commit when explicitly requested by user.
 
 ---
 
-## Project-Specific Notes
+## Key Conventions
 
-### Channel System
-
-Channels represent different LLM API providers (OpenAI, Claude, Gemini, etc.). The system:
-- Automatically selects channels based on model, group, and priority
-- Tracks usage and quotas per channel
-- Supports failover and load balancing
-- Caches channel data in Redis for performance
-
-**Key files:**
-- `service/channel_select.go` - Channel selection logic
-- `service/channel_affinity.go` - Affinity-based routing
-- `model/channel_cache.go` - Channel caching
-
-### Token System
-
-Tokens are API keys for accessing the gateway. Features:
-- Group-based model restrictions
-- Quota limits (unlimited or fixed)
-- Expiration dates
-- Usage tracking
-
-**Key files:**
-- `controller/token.go`
-- `middleware/auth.go` - Token authentication
-
-### Billing System
-
-Pay-per-use billing with configurable model pricing:
-- Token-based billing (input/output tokens)
-- Cache billing support (prompt caching)
-- Quota deduction on request completion
-- Detailed logs for auditing
-
-**Key files:**
-- `service/quota.go`
-- `service/token_counter.go`
-- `dto/pricing.go`
-
----
-
-## Recent Changes (2026-02-05)
-
-### Microsandbox MicroVM 沙箱隔离
-
-实现了基于 Microsandbox 的 MicroVM 级别沙箱隔离，采用任务绑定模式（Task-Binding）最大化资源利用率。
-
-**架构设计：**
-- 任务绑定模式：沙箱按需分配，执行完立即归还，不绑定用户
-- 预热池：预先创建沙箱，获取延迟 < 200ms
-- 硬件级隔离：MicroVM 提供比容器更强的安全隔离
-
-**新增文件:**
-- `claudecli/internal/sandbox/microsandbox_client.go` - Microsandbox HTTP API 客户端
-  - `StartSandbox()` - 启动沙箱
-  - `StopSandbox()` - 停止沙箱
-  - `RunCommand()` - 执行命令
-  - `Ping()` - 健康检查
-- `claudecli/internal/sandbox/pool.go` - SandboxPool 沙箱池管理器
-  - `Start()` - 启动池并预热沙箱
-  - `Acquire()` - 获取空闲沙箱（阻塞等待）
-  - `Release()` - 归还沙箱到池中
-  - `Exec()` - 执行命令（自动获取/归还）
-  - `Stats()` - 返回池统计信息
-
-**修改文件:**
-- `claudecli/internal/config/config.go` - 新增 MicrosandboxConfig 配置结构
-- `claudecli/init.go` - 添加 SandboxPool 初始化和优雅关闭
-- `claudecli/internal/tools/bash.go` - 新增 `executeInMicrosandbox()` 方法
-- `.env.example` - 添加 Microsandbox 配置说明
-- `.env` - 添加 Microsandbox 配置（默认禁用）
-
-**执行优先级：**
-```
-Microsandbox (MicroVM) > Local (开发模式)
-```
-
-**环境变量配置：**
-```bash
-# 启用 Microsandbox
-MICROSANDBOX_ENABLED=true
-
-# 远程云服务器模式（推荐生产环境）
-MSB_SERVER_URL=http://your-linux-server:5555
-MSB_API_KEY=your-api-key
-
-# 本地开发模式（--dev 无需 API Key）
-MSB_SERVER_URL=http://127.0.0.1:5555
-MSB_API_KEY=
-
-# 池配置
-MSB_POOL_SIZE=5          # 预热沙箱数量
-MSB_MEMORY_MB=512        # 每沙箱内存
-MSB_CPUS=1               # 每沙箱 CPU
-MSB_EXEC_TIMEOUT=120     # 执行超时（秒）
-```
-
-**部署方式：**
-
-1. **远程云服务器（推荐）**
-   - 后端运行在 Windows，Microsandbox 部署在 Linux 云服务器
-   - 安装：`curl -sSL https://get.microsandbox.dev | sh`
-   - 启动：`msb server start --detach`
-   - 生成 API Key：`msb server keygen --expire 3mo`
-
-2. **本地开发模式（仅 Linux/macOS）**
-   - 启动开发模式：`msb server start --dev`
-   - 无需 API Key
-
-**容量提升：**
-
-| 指标 | gVisor 容器 | Microsandbox |
-|------|------------|--------------|
-| 内存开销/沙箱 | 50-100MB | 64MB |
-| 4核4G 并发 | 5-6 用户 | **50 用户** |
-| 启动时间 | 2-5秒 | <200ms |
-| 隔离级别 | 用户态内核 | MicroVM |
-
----
-
-## Microsandbox 配置
-
-### 镜像下载（中国大陆服务器）
-
-由于中国大陆服务器无法直接访问 Docker Hub，需要使用 SSH 反向隧道代理方式下载镜像。
-
-**前提条件：**
-- 本地 Windows 机器运行 Clash 代理（监听 127.0.0.1:7890）
-- 华为云服务器已安装 microsandbox
-
-**步骤 1：建立 SSH 反向隧道**
-
-在 Windows PowerShell 中运行（保持窗口打开）：
-```powershell
-ssh -R 7890:127.0.0.1:7890 root@<华为云服务器IP>
-```
-
-**步骤 2：测试代理连通性**
-
-在华为云服务器上：
-```bash
-curl -x http://127.0.0.1:7890 https://registry-1.docker.io/v2/
-# 返回 {"errors":[{"code":"UNAUTHORIZED"...}]} 说明代理工作正常
-```
-
-**步骤 3：拉取镜像**
-
-```bash
-# 设置代理环境变量并拉取镜像
-HTTP_PROXY=http://127.0.0.1:7890 \
-HTTPS_PROXY=http://127.0.0.1:7890 \
-msb pull sandboxes.io/python
-
-# 也可以拉取其他镜像
-HTTP_PROXY=http://127.0.0.1:7890 \
-HTTPS_PROXY=http://127.0.0.1:7890 \
-msb pull alpine
-```
-
-**步骤 4：启动 msbserver**
-
-```bash
-HTTP_PROXY=http://127.0.0.1:7890 \
-HTTPS_PROXY=http://127.0.0.1:7890 \
-msbserver --dev
-```
-
-**注意事项：**
-- SSH 隧道断开后代理失效，需要重新建立
-- 不要设置 `OCI_REGISTRY_DOMAIN` 为中国镜像源（不支持）
-- `--dev` 模式用于开发，生产环境需要配置 key
-
----
-
-## Recent Changes (2026-02-02)
-
-### Tool Execution Enhancement
-
-增强了工具执行功能，添加执行时间显示和失败日志。
-
-**修改文件:**
-- `claudecli/pkg/types/tool.go` - 扩展 ToolResult 结构，添加 ElapsedMs、TimeoutMs、TimedOut、Metadata 字段
-- `claudecli/internal/tools/bash.go` - Bash 工具返回执行时间信息
-- `claudecli/internal/loop/conversation.go` - 扩展 LoopEvent，添加工具失败日志
-- `claudecli/internal/api/websocket.go` - tool_end 消息添加执行时间字段
-- `web/src/pages/Coworker/components/ToolCallCard.jsx` - 显示执行时间和超时标签
-- `web/src/pages/Coworker/index.jsx` - 处理新的 WebSocket 字段
-
-**功能:**
-- Bash 工具返回执行时间 (elapsed_ms)、超时设置 (timeout_ms)、是否超时 (timed_out)
-- 前端工具卡片显示执行耗时
-- 超时命令显示橙色"超时"标签
-- 后端日志记录工具执行失败详情
-
-### Structured Output Tool
-
-新增结构化输出验证工具，支持 JSON Schema 验证。
-
-**新增文件:**
-- `claudecli/internal/tools/structured_output.go` - JSON Schema 验证工具
-
-**修改文件:**
-- `claudecli/internal/tools/registry.go` - 添加 SetStructuredOutputSchema、ClearStructuredOutputSchema 方法
-- `claudecli/internal/api/websocket.go` - 添加 set_output_schema、clear_output_schema 消息处理
-- `claudecli/init.go` - 注册 StructuredOutputTool
-- `go.mod` - 添加 github.com/santhosh-tekuri/jsonschema/v5 依赖
-
-**功能:**
-- 动态设置 JSON Schema
-- 验证 AI 输出是否符合指定格式
-- WebSocket 消息支持设置/清除 schema
-
----
-
-## Recent Changes (2026-02-01)
-
-### Task Management Feature (Claude Code Style)
-
-集成了 Claude Code CLI 的任务管理功能，支持将用户需求分解为 Todolist。
-
-**新增文件:**
-- `claudecli/internal/task/task.go` - 任务管理后端模块
-- `web/src/pages/Coworker/components/TaskList.jsx` - 任务列表组件
-- `web/src/pages/Coworker/components/TaskList.css` - 任务列表样式
-
-**修改文件:**
-- `claudecli/init.go` - 添加 task 包导入和 Tasks 字段
-- `claudecli/internal/api/websocket.go` - 添加任务相关 WebSocket 消息处理
-- `web/src/pages/Coworker/index.jsx` - 添加任务状态和 WebSocket 处理
-- `web/src/pages/Coworker/components/SessionSidebar.jsx` - 添加任务标签页
-
-### Context Compact Feature
-
-集成了 Claude Code CLI 的上下文压缩功能，支持自动/手动压缩上下文。
-
-**修改文件:**
-- `claudecli/internal/api/websocket.go` - 添加 compact 和 context_stats 消息处理
-
-### Microcompact Feature (New)
-
-实现了轻量级压缩功能，清理旧的工具调用结果，保留最近 3 个工具结果。
-
-**新增功能:**
-- 工具白名单机制（Read, Bash, Grep, Glob, WebSearch, WebFetch）
-- 自动清理旧工具结果，替换为占位符
-- 与摘要压缩配合使用
-
-**修改文件:**
-- `claudecli/internal/context/compress.go` - 添加 Microcompact 函数
-- `claudecli/internal/context/context.go` - 集成 Microcompact 到 Compact 流程
-
-### Session Memory Feature (New)
-
-实现了 Session Memory 功能，将对话摘要保存到结构化模板文件。
-
-**新增文件:**
-- `claudecli/internal/context/session_memory.go` - Session Memory 管理器
-
-**功能:**
-- 结构化模板保存关键信息（任务规格、文件、工作流、错误等）
-- 章节 token 估算和警告
-- 格式化用于系统提示
-
-### AI Summary Generation (New)
-
-增强了 AI 摘要生成功能，添加压缩边界标记。
-
-**新增文件:**
-- `claudecli/internal/context/summarizer.go` - 摘要生成器
-
-**功能:**
-- 生成对话摘要提示词
-- 创建压缩边界标记
-- 格式化摘要消息
-
-### Inline Task Display (New)
-
-在对话框中显示任务状态，而不仅仅在侧边栏显示。
-
-**新增文件:**
-- `web/src/pages/Coworker/components/InlineTaskCard.jsx` - 内联任务卡片
-- `web/src/pages/Coworker/components/InlineTaskCard.css` - 样式
-
-**修改文件:**
-- `web/src/pages/Coworker/components/MessageBubble.jsx` - 集成任务卡片
-- `web/src/pages/Coworker/index.jsx` - 传递任务到消息组件
-
-### Async Implementation for Multi-User Support (New)
-
-由于 ClaudeCLI 需要支持多用户同时操作以提供线上 HTTPS 服务，所有可能阻塞的操作必须使用异步实现。
-
-**设计原则:**
-- 所有文件 I/O 操作必须在 goroutine 中执行
-- WebSocket 写操作使用 `sync.Mutex` 保证线程安全
-- 避免在主 handler 中执行耗时操作
-
-**异步模式示例:**
+### User Roles
 
 ```go
-// ✅ 正确：异步执行文件 I/O
-func (h *WSHandler) handleTaskCreate(conn *websocket.Conn, payload json.RawMessage) {
-    var req TaskCreateRequest
-    if err := json.Unmarshal(payload, &req); err != nil {
-        h.sendError(conn, "invalid request")
-        return
-    }
-
-    // 异步执行文件 I/O 操作
-    go func() {
-        t, err := h.tasks.Create(req.UserID, req.ListID, req.Subject, req.Description, req.ActiveForm)
-        if err != nil {
-            h.sendError(conn, "failed to create task: "+err.Error())
-            return
-        }
-        h.sendJSON(conn, map[string]interface{}{
-            "type": "task_created",
-            "payload": map[string]interface{}{
-                "success": true,
-                "task":    t,
-            },
-        })
-    }()
-}
-
-// ❌ 错误：同步执行会阻塞其他用户
-func (h *WSHandler) handleTaskCreate(conn *websocket.Conn, payload json.RawMessage) {
-    // 直接执行文件 I/O，会阻塞
-    t, err := h.tasks.Create(...)
-    h.sendJSON(conn, ...)
-}
+RoleGuestUser  = 0
+RoleCommonUser = 1
+RoleAdminUser  = 10
+RoleRootUser   = 100
 ```
 
-**已异步化的 Handler:**
-- `handleTaskCreate` - 任务创建
-- `handleTaskUpdate` - 任务更新
-- `handleTaskList` - 任务列表
-- `handleListFiles` - 文件列表
-- `handleCreateFolder` - 创建文件夹
-- `handleDeleteFile` - 删除文件
-- `handleRenameFile` - 重命名文件
-- `handleCompact` - 上下文压缩
-- `handleChat` - 聊天（已使用 goroutine）
+### Quota System
 
-**线程安全的 WebSocket 写入:**
+`QuotaPerUnit = 500,000` (= $1 USD). Model and group ratios stored in `setting/ratio_setting/`. Exposed via `/api/ratio_config` (if enabled) and `/coworker/ratio_config`.
+
+### Error Pattern
 
 ```go
-type WSHandler struct {
-    writeMu sync.Mutex  // 保护 WebSocket 写操作
-}
-
-func (h *WSHandler) sendJSON(conn *websocket.Conn, data interface{}) {
-    h.writeMu.Lock()
-    defer h.writeMu.Unlock()
-    conn.WriteJSON(data)
-}
+types.NewAPIError{Err, Code, HttpCode, SkipRetry}
 ```
 
----
+Relay errors are normalized from provider-specific formats to OpenAI error format. Retry decisions based on HTTP status code and `SkipRetry` flag.
 
-## Project Statistics (2026-02-01 Scan)
+### Rate Limiting
 
-### File Count Summary
+Redis sorted set pattern: `rateLimit:{mark}:{clientIP}` with timestamp-based sliding window.
 
-| Category | Count | Location |
-|----------|-------|----------|
-| Go Files | 488 | Backend |
-| JS/JSX/TS/TSX Files | 421 | Frontend |
-| Frontend Pages | 62 | `web/src/pages/` |
-| Relay Channels | 148 | `relay/channel/` |
-| Service Files | 41 | `service/` |
-| Model Files | 29 | `model/` |
-| Controller Files | 30+ | `controller/` |
-| Middleware Files | 18 | `middleware/` |
-| Router Files | 7 | `router/` |
-| ClaudeCLI Files | 30+ | `claudecli/` |
+### Multi-Tenancy
 
-### Module Structure
+User isolation via workspace directories (`userdata/{user_id}/`), session files, task lists, and memory stores — all keyed by user ID.
 
-```
-E:\PythonWorks\Coworker\
-├── main.go                 # Application entry point
-├── router/                 # Route definitions (7 files)
-│   ├── main.go            # Main router setup
-│   ├── api-router.go      # Core API routes
-│   ├── claudecli-router.go # ClaudeCLI WebSocket routes
-│   ├── relay-router.go    # LLM API relay routes
-│   ├── video-router.go    # Video API routes
-│   ├── dashboard.go       # Dashboard routes
-│   └── web-router.go      # Static file serving
-├── controller/            # HTTP handlers (30+ files)
-├── service/               # Business logic (41 files)
-├── model/                 # Database models (29 files)
-├── middleware/            # Request middleware (18 files)
-├── common/                # Shared utilities (20+ files)
-├── dto/                   # Data transfer objects (20+ files)
-├── relay/                 # LLM API relay system
-│   └── channel/           # Provider adapters (148 files)
-│       ├── ali/           # Alibaba Cloud
-│       ├── aws/           # AWS Bedrock
-│       ├── baidu/         # Baidu Wenxin
-│       ├── claude/        # Anthropic Claude
-│       ├── cloudflare/    # Cloudflare Workers AI
-│       ├── codex/         # GitHub Copilot
-│       └── ...            # 20+ providers
-├── claudecli/             # Claude Code CLI module (30+ files)
-│   ├── init.go            # Module initialization
-│   └── internal/
-│       ├── api/           # REST & WebSocket handlers
-│       ├── client/        # Anthropic API client
-│       ├── context/       # Context compression
-│       ├── session/       # Session management
-│       ├── task/          # Task management
-│       ├── workspace/     # User workspace
-│       ├── tools/         # CLI tools (bash, read, write, etc.)
-│       ├── loop/          # Conversation loop
-│       └── prompt/        # System prompt builder
-└── web/                   # React frontend
-    └── src/
-        ├── pages/         # 35 page directories
-        │   ├── Coworker/  # Claude Code CLI UI
-        │   ├── Channel/   # Channel management
-        │   ├── Token/     # Token management
-        │   ├── Dashboard/ # Analytics dashboard
-        │   ├── Playground/# API playground
-        │   └── ...
-        ├── components/    # Reusable components
-        ├── hooks/         # Custom React hooks
-        ├── helpers/       # Utility functions
-        └── context/       # React Context providers
-```
+### Config Hot Reload
 
-### Supported LLM Providers (relay/channel/)
-
-| Provider | Directory | Features |
-|----------|-----------|----------|
-| OpenAI | `openai/` | Chat, Embeddings, Images, Audio |
-| Anthropic Claude | `claude/` | Chat, Vision |
-| Google Gemini | `gemini/` | Chat, Vision |
-| AWS Bedrock | `aws/` | Claude, Titan |
-| Azure OpenAI | `azure/` | All OpenAI models |
-| Alibaba Qwen | `ali/` | Chat, Images |
-| Baidu Wenxin | `baidu/`, `baidu_v2/` | Chat |
-| Tencent Hunyuan | `tencent/` | Chat |
-| Zhipu GLM | `zhipu/` | Chat |
-| Moonshot | `moonshot/` | Chat |
-| DeepSeek | `deepseek/` | Chat |
-| Mistral | `mistral/` | Chat |
-| Cohere | `cohere/` | Chat, Rerank |
-| Cloudflare | `cloudflare/` | Workers AI |
-| Ollama | `ollama/` | Local models |
-| GitHub Copilot | `codex/` | Code completion |
-| Midjourney | `midjourney/` | Image generation |
-| Suno | `suno/` | Music generation |
-
-### Frontend Pages (web/src/pages/)
-
-| Page | Route | Access |
-|------|-------|--------|
-| Home | `/` | Public |
-| Dashboard | `/console` | Private |
-| Coworker | `/console/coworker` | Private |
-| Channel | `/console/channel` | Admin |
-| Token | `/console/token` | Private |
-| User | `/console/user` | Admin |
-| Log | `/console/log` | Private |
-| Pricing | `/pricing` | Configurable |
-| Playground | `/console/playground` | Private |
-| Midjourney | `/console/midjourney` | Private |
-| Task | `/console/task` | Private |
-| Setting | `/console/setting` | Admin |
-| Model | `/console/models` | Admin |
-| Deployment | `/console/deployment` | Admin |
-
----
-
-## Coverage Report
-
-### Well-Documented Modules
-
-| Module | Coverage | Notes |
-|--------|----------|-------|
-| ClaudeCLI | 95% | Fully documented with WebSocket protocol |
-| Coworker Frontend | 90% | Components and features documented |
-| Router | 85% | All routes documented |
-| Architecture | 80% | Request flow and layers documented |
-
-### Areas Needing Documentation
-
-| Area | Priority | Recommendation |
-|------|----------|----------------|
-| Relay Channel Adapters | Medium | Add per-provider configuration docs |
-| Billing/Quota System | Medium | Document pricing calculation logic |
-| Model Deployment | Low | Document io.net integration |
-| OAuth Providers | Low | Document each OAuth flow |
-
----
-
-## Recommended Next Steps
-
-### Immediate (High Priority)
-
-1. **Test Coverage**: Add unit tests for `claudecli/internal/` modules
-2. **Error Handling**: Improve error messages in WebSocket handlers
-3. **Logging**: Add structured logging for debugging
-
-### Short-term (Medium Priority)
-
-1. **Documentation**: Add API documentation for relay endpoints
-2. **Performance**: Profile and optimize context compression
-3. **Security**: Audit workspace isolation implementation
-
-### Long-term (Low Priority)
-
-1. **Refactoring**: Extract common patterns in relay channel adapters
-2. **Monitoring**: Add Prometheus metrics for ClaudeCLI usage
-3. **Testing**: Add integration tests for WebSocket protocol
-
----
-
-*Last updated: 2026-02-05*
+System options stored in DB `options` table, periodically synced via `model.SyncOptions()`. Channel cache refreshed via `model.SyncChannelCache()`.
