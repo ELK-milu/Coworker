@@ -169,6 +169,11 @@ export async function saveFileContent(userId, filePath, blob, fileName) {
   return uploadFile(userId, dir, file);
 }
 
+// 工作空间使用统计
+export async function getWorkspaceStats(userId) {
+  return request(`/files/stats?user_id=${encodeURIComponent(userId)}`);
+}
+
 // ========== 配置管理 API ==========
 
 export async function getConfig(userId) {

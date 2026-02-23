@@ -38,6 +38,7 @@ func SetClaudeCLIRouter(router *gin.Engine) {
 		coworkerGroup.POST("/files/upload", claudeCLICtrl.UploadFile)
 		coworkerGroup.GET("/files/download", claudeCLICtrl.DownloadFile)
 		coworkerGroup.GET("/files/preview", claudeCLICtrl.PreviewFile)
+		coworkerGroup.GET("/files/stats", claudeCLICtrl.GetWorkspaceStats)
 
 		// 配置管理
 		coworkerGroup.GET("/config", claudeCLICtrl.GetConfig)

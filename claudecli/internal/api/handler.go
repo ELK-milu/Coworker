@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/QuantumNous/new-api/claudecli/internal/config"
 	"github.com/QuantumNous/new-api/claudecli/internal/job"
 	"github.com/QuantumNous/new-api/claudecli/internal/memory"
 	"github.com/QuantumNous/new-api/claudecli/internal/session"
@@ -426,6 +427,38 @@ func (h *RESTHandler) RenameFile(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "new_name": req.NewName})
+}
+
+// GetWorkspaceStats 获取工作空间使用统计
+func (h *RESTHandler) GetWorkspaceStats(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if h.workspace == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "workspace not initialized"})
+		return
+	}
+
+	stats, err := h.workspace.GetWorkspaceStats(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	cfg := config.Get()
+	quotaMB := cfg.Security.WorkspaceQuotaMB
+	quotaBytes := int64(quotaMB) * 1024 * 1024
+
+	c.JSON(http.StatusOK, gin.H{
+		"total_size":  stats["total_size"],
+		"file_count":  stats["file_count"],
+		"dir_count":   stats["dir_count"],
+		"quota_bytes": quotaBytes,
+		"quota_mb":    quotaMB,
+	})
 }
 
 // ========== 配置管理 API ==========

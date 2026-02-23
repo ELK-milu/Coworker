@@ -121,6 +121,11 @@ func (ctrl *ClaudeCLIController) RenameFile(c *gin.Context) {
 	ctrl.module.RESTHandler.RenameFile(c)
 }
 
+// GetWorkspaceStats 获取工作空间使用统计
+func (ctrl *ClaudeCLIController) GetWorkspaceStats(c *gin.Context) {
+	ctrl.module.RESTHandler.GetWorkspaceStats(c)
+}
+
 // ========== 配置管理 ==========
 
 // GetConfig 获取配置

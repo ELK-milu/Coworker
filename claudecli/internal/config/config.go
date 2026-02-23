@@ -36,6 +36,7 @@ type SecurityConfig struct {
 	WorkingDir      string
 	AllowedDirs     []string
 	BlockedCommands []string
+	WorkspaceQuotaMB int // 每用户工作空间配额 (MB)，0 = 不限制
 }
 
 // NsjailConfig nsjail 进程沙箱配置
@@ -84,6 +85,7 @@ func Load() *Config {
 					"rm -rf /", "mkfs", "dd if=",
 					":(){ :|:& };:", "chmod -R 777 /",
 				},
+				WorkspaceQuotaMB: int(getEnvInt("WORKSPACE_QUOTA_MB", 128)),
 			},
 			Nsjail: NsjailConfig{
 				Enabled:       getEnv("NSJAIL_ENABLED", "true") == "true",

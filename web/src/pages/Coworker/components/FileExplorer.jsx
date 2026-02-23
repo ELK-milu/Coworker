@@ -3,7 +3,7 @@ Copyright (C) 2025 QuantumNous
 Google Colab 风格文件浏览器
 */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Typography, Spin, Button, Breadcrumb, Toast, Modal } from '@douyinfe/semi-ui';
 import {
   IconFolder,
@@ -136,6 +136,15 @@ const formatTime = (timestamp) => {
   });
 };
 
+// 格式化空间大小（紧凑版，用于工具栏）
+const formatSizeCompact = (bytes) => {
+  if (!bytes || bytes <= 0) return '0';
+  const k = 1024;
+  if (bytes < k * k) return (bytes / k).toFixed(0) + 'K';
+  if (bytes < k * k * k) return (bytes / (k * k)).toFixed(1) + 'M';
+  return (bytes / (k * k * k)).toFixed(1) + 'G';
+};
+
 // 右键菜单组件
 const ContextMenu = ({ x, y, file, onClose, onDownload, onDelete, onRename, onCopyPath }) => {
   const menuRef = useRef(null);
@@ -199,6 +208,15 @@ const FileExplorer = ({
   const folderInputRef = useRef(null);
   const newFolderInputRef = useRef(null);
   const renameInputRef = useRef(null);
+
+  // 工作空间使用统计
+  const [spaceStats, setSpaceStats] = useState(null);
+  const fetchStats = useCallback(() => {
+    if (!userId) return;
+    api.getWorkspaceStats(userId).then(setSpaceStats).catch(() => {});
+  }, [userId]);
+
+  useEffect(() => { fetchStats(); }, [fetchStats]);
 
   // 解析路径为面包屑
   const pathParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
@@ -289,6 +307,7 @@ const FileExplorer = ({
           await api.deleteFile(userId, file.path);
           Toast.success('删除成功');
           onRefresh();
+          fetchStats();
         } catch (error) {
           Toast.error('删除失败: ' + error.message);
         }
@@ -382,6 +401,7 @@ const FileExplorer = ({
 
     setUploading(false);
     onRefresh();
+    fetchStats();
   };
 
   // 处理文件选择
@@ -424,7 +444,27 @@ const FileExplorer = ({
     <div className="file-explorer">
       {/* 工具栏 */}
       <div className="file-toolbar">
-        <span className="file-toolbar-title">文件</span>
+        <span className="file-toolbar-title" style={!(spaceStats && spaceStats.quota_bytes > 0) ? { marginRight: 'auto' } : undefined}>文件</span>
+        {spaceStats && spaceStats.quota_bytes > 0 && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 'auto', marginLeft: 6 }}>
+            <span style={{
+              display: 'inline-block', width: 48, height: 4, borderRadius: 2,
+              background: 'var(--semi-color-fill-1)', overflow: 'hidden', flexShrink: 0,
+            }}>
+              <span style={{
+                display: 'block', height: '100%', borderRadius: 2,
+                width: `${Math.min(100, (spaceStats.total_size / spaceStats.quota_bytes) * 100)}%`,
+                background: (spaceStats.total_size / spaceStats.quota_bytes) > 0.9
+                  ? '#f43f5e' : (spaceStats.total_size / spaceStats.quota_bytes) > 0.7
+                  ? '#f59e0b' : 'var(--semi-color-primary)',
+                transition: 'width 0.3s',
+              }} />
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--semi-color-text-2)', whiteSpace: 'nowrap' }}>
+              {formatSizeCompact(spaceStats.total_size)}/{formatSizeCompact(spaceStats.quota_bytes)}
+            </span>
+          </span>
+        )}
         <Button
           icon={<IconUpload />}
           size="small"
