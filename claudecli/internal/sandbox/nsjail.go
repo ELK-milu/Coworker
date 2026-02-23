@@ -63,6 +63,11 @@ func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string
 			"--bindmount /lib:/lib:ro "+
 			"--bindmount /lib64:/lib64:ro "+
 			"--bindmount /usr:/usr:ro "+
+			"--bindmount /etc:/etc:ro "+
+			"--bindmount /tmp:/tmp "+
+			"--bindmount /dev/null:/dev/null "+
+			"--bindmount /dev/zero:/dev/zero:ro "+
+			"--bindmount /dev/urandom:/dev/urandom:ro "+
 			"--cwd /workspace "+
 			"--time_limit %d "+
 			"--rlimit_as %d "+
