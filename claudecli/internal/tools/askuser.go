@@ -3,33 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"sync"
-	"time"
 
 	"github.com/QuantumNous/new-api/claudecli/pkg/types"
 )
 
-const (
-	askUserTimeout = 5 * time.Minute
-)
-
-// AskUserContextKey context key for ask user callback
-type AskUserContextKey string
-
-const (
-	// AskUserCallbackKey callback function key
-	AskUserCallbackKey AskUserContextKey = "ask_user_callback"
-)
-
-// AskUserCallback 发送问题到前端的回调函数类型
-type AskUserCallback func(requestID string, questions []Question) error
-
-// AskUserQuestionTool 向用户提问工具
-type AskUserQuestionTool struct {
-	pendingMu   sync.Mutex
-	pendingReqs map[string]chan *UserResponse
-}
+// AskUserQuestionTool 向用户提问工具（非阻塞模式）
+// 工具立即返回，前端从 tool_end 事件中解析 questions 并展示交互面板
+// 用户回答后作为普通聊天消息发送，AI 在下一轮对话中接收
+type AskUserQuestionTool struct{}
 
 // AskUserInput 输入参数
 type AskUserInput struct {
@@ -50,18 +31,9 @@ type Option struct {
 	Description string `json:"description"`
 }
 
-// UserResponse 用户响应
-type UserResponse struct {
-	RequestID string            `json:"request_id"`
-	Answers   map[string]string `json:"answers"`
-	Cancelled bool              `json:"cancelled"`
-}
-
 // NewAskUserQuestionTool 创建工具实例
 func NewAskUserQuestionTool() *AskUserQuestionTool {
-	return &AskUserQuestionTool{
-		pendingReqs: make(map[string]chan *UserResponse),
-	}
+	return &AskUserQuestionTool{}
 }
 
 func (t *AskUserQuestionTool) Name() string { return "AskUserQuestion" }
@@ -110,73 +82,11 @@ func (t *AskUserQuestionTool) Execute(ctx context.Context, input json.RawMessage
 		return &types.ToolResult{Success: false, Error: "at least one question required"}, nil
 	}
 
-	// 从 context 获取回调函数
-	callback, ok := ctx.Value(AskUserCallbackKey).(AskUserCallback)
-	if !ok || callback == nil {
-		return &types.ToolResult{Success: false, Error: "ask user callback not available"}, nil
-	}
-
-	// 生成请求 ID
-	requestID := fmt.Sprintf("ask_%d", time.Now().UnixNano())
-
-	// 创建响应通道
-	respCh := make(chan *UserResponse, 1)
-	t.pendingMu.Lock()
-	t.pendingReqs[requestID] = respCh
-	t.pendingMu.Unlock()
-
-	defer func() {
-		t.pendingMu.Lock()
-		delete(t.pendingReqs, requestID)
-		t.pendingMu.Unlock()
-	}()
-
-	// 发送问题到前端
-	if err := callback(requestID, in.Questions); err != nil {
-		return &types.ToolResult{Success: false, Error: "failed to send: " + err.Error()}, nil
-	}
-
-	// 等待用户响应
-	select {
-	case <-ctx.Done():
-		return &types.ToolResult{Success: false, Error: "cancelled"}, nil
-	case <-time.After(askUserTimeout):
-		return &types.ToolResult{Success: false, Error: "timeout"}, nil
-	case resp := <-respCh:
-		if resp.Cancelled {
-			return &types.ToolResult{Success: false, Error: "user cancelled"}, nil
-		}
-		return &types.ToolResult{Success: true, Output: formatAnswers(in.Questions, resp.Answers)}, nil
-	}
-}
-
-// HandleResponse 处理用户响应
-func (t *AskUserQuestionTool) HandleResponse(resp *UserResponse) bool {
-	t.pendingMu.Lock()
-	ch, ok := t.pendingReqs[resp.RequestID]
-	t.pendingMu.Unlock()
-
-	if !ok {
-		return false
-	}
-
-	select {
-	case ch <- resp:
-		return true
-	default:
-		return false
-	}
-}
-
-func formatAnswers(questions []Question, answers map[string]string) string {
-	result := "User responses:\n"
-	for i, q := range questions {
-		key := fmt.Sprintf("q%d", i)
-		answer := answers[key]
-		if answer == "" {
-			answer = "(no answer)"
-		}
-		result += fmt.Sprintf("- %s: %s\n", q.Header, answer)
-	}
-	return result
+	// 非阻塞模式：立即返回，告知 AI 问题已展示给用户
+	// 前端从 tool_end 事件中解析 input.questions 并展示交互面板
+	// 用户回答后作为普通聊天消息发送
+	return &types.ToolResult{
+		Success: true,
+		Output:  "Questions have been presented to the user. Wait for their response in the next message.",
+	}, nil
 }

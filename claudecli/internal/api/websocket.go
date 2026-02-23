@@ -277,10 +277,6 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 		case "list_skills":
 			log.Printf("[WS] Processing list_skills message")
 			h.handleListSkills(conn)
-		// AskUser 响应消息
-		case "ask_user_response":
-			log.Printf("[WS] Processing ask_user_response message")
-			h.handleAskUserResponse(conn, wsMsg.Payload)
 		// MCP 相关消息
 		case "mcp_connect":
 			log.Printf("[WS] Processing mcp_connect message")
@@ -1586,50 +1582,6 @@ func (h *WSHandler) handleListSkills(conn *websocket.Conn) {
 		"type":    "skills_list",
 		"payload": map[string]interface{}{"skills": skillList},
 	})
-}
-
-// ========== AskUser 相关处理 ==========
-
-// AskUserResponsePayload 用户响应载荷
-type AskUserResponsePayload struct {
-	RequestID string            `json:"request_id"`
-	Answers   map[string]string `json:"answers"`
-	Cancelled bool              `json:"cancelled"`
-}
-
-// handleAskUserResponse 处理用户响应
-func (h *WSHandler) handleAskUserResponse(conn *websocket.Conn, payload json.RawMessage) {
-	var req AskUserResponsePayload
-	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid ask_user_response payload")
-		return
-	}
-
-	// 获取 AskUserQuestionTool 实例
-	tool, found := h.tools.Get("AskUserQuestion")
-	if !found {
-		h.sendError(conn, "AskUserQuestion tool not found")
-		return
-	}
-
-	askTool, ok := tool.(*tools.AskUserQuestionTool)
-	if !ok {
-		h.sendError(conn, "invalid AskUserQuestion tool type")
-		return
-	}
-
-	// 转发响应到工具
-	resp := &tools.UserResponse{
-		RequestID: req.RequestID,
-		Answers:   req.Answers,
-		Cancelled: req.Cancelled,
-	}
-
-	if askTool.HandleResponse(resp) {
-		log.Printf("[WS] AskUser response handled: %s", req.RequestID)
-	} else {
-		log.Printf("[WS] AskUser response not found: %s", req.RequestID)
-	}
 }
 
 // ========== MCP 相关处理 ==========

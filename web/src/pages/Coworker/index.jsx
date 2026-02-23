@@ -8,6 +8,7 @@ import { IconSend, IconStop, IconInfoCircle, IconClose, IconMenu } from '@douyin
 import MessageBubble from './components/MessageBubble';
 import ToolCallCard from './components/ToolCallCard';
 import InlineTaskCard from './components/InlineTaskCard';
+import QuestionPrompt from './components/QuestionPrompt';
 import SessionSidebar from './components/SessionSidebar';
 import * as api from './services/api';
 import FilePreview from './components/FilePreview';
@@ -67,6 +68,8 @@ const Coworker = () => {
   const [jobsLoading, setJobsLoading] = useState(false);
   const [showRightPanel, setShowRightPanel] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
+  // AskUserQuestion 非阻塞交互状态
+  const [pendingQuestion, setPendingQuestion] = useState(null);
   // Token 统计相关状态
   const [turnStats, setTurnStats] = useState(null);  // 本轮统计
   const [sessionStats, setSessionStats] = useState({
@@ -490,6 +493,15 @@ const Coworker = () => {
         if (payload.name && payload.name.startsWith('Task')) {
           loadTasksList();
         }
+        // 检测 AskUserQuestion 工具完成 → 显示问题面板
+        if (payload.name === 'AskUserQuestion' && !payload.is_error) {
+          try {
+            const input = typeof payload.input === 'string' ? JSON.parse(payload.input) : payload.input;
+            if (input?.questions?.length > 0) {
+              setPendingQuestion(input.questions);
+            }
+          } catch (e) { /* ignore parse errors */ }
+        }
         break;
 
       case 'done':
@@ -546,6 +558,7 @@ const Coworker = () => {
       case 'error':
         setLoading(false);
         setThinking(false);
+        setPendingQuestion(null);
         setMessages(prev => [...prev, { type: 'error', content: payload.error }]);
         break;
 
@@ -754,12 +767,58 @@ const Coworker = () => {
     });
   };
 
+  // AskUserQuestion 提交处理 — 格式化答案作为普通聊天消息发送
+  const handleQuestionSubmit = (formattedText) => {
+    setPendingQuestion(null);
+    turnCostRef.current = 0;
+    turnStartTimeRef.current = Math.floor(Date.now() / 1000);
+    setMessages(prev => [...prev, { type: 'user', content: formattedText, timestamp: Date.now() }]);
+    setLoading(true);
+    setThinking(true);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'chat',
+        payload: {
+          message: formattedText,
+          session_id: sessionIdRef.current,
+          user_id: userId,
+          mode,
+          working_path: currentPathRef.current,
+        }
+      }));
+    }
+  };
+
+  // AskUserQuestion 跳过处理
+  const handleQuestionCancel = () => {
+    setPendingQuestion(null);
+    const skipText = '(Skipped the question)';
+    turnCostRef.current = 0;
+    turnStartTimeRef.current = Math.floor(Date.now() / 1000);
+    setMessages(prev => [...prev, { type: 'user', content: skipText, timestamp: Date.now() }]);
+    setLoading(true);
+    setThinking(true);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'chat',
+        payload: {
+          message: skipText,
+          session_id: sessionIdRef.current,
+          user_id: userId,
+          mode,
+          working_path: currentPathRef.current,
+        }
+      }));
+    }
+  };
+
   // 新建对话
   const newChat = () => {
     setSessionId('');
     setMessages([]);
     setStatus(null);
     setTurnStats(null);
+    setPendingQuestion(null);
     setSessionStats({ totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0, totalCost: 0, turnCount: 0 });
     localStorage.removeItem(SESSION_STORAGE_KEY);
   };
@@ -1083,6 +1142,14 @@ const Coworker = () => {
 
           {/* 输入区域 */}
           <div className="input-container">
+            {/* AskUserQuestion 交互面板 */}
+            {pendingQuestion && (
+              <QuestionPrompt
+                questions={pendingQuestion}
+                onSubmit={handleQuestionSubmit}
+                onCancel={handleQuestionCancel}
+              />
+            )}
             {/* 动态状态栏 - 回复时实时更新，结束后保留最后一轮 */}
             {(loading || turnStats) && status && (
               <div className="status-bar dynamic">

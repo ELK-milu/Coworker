@@ -141,6 +141,8 @@ web/src/pages/Coworker/
     ├── MemoryPanel.css
     ├── PermissionDialog.jsx    # 权限确认对话框
     ├── PermissionModeSelector.jsx # 权限模式选择器
+    ├── QuestionPrompt.jsx      # AskUserQuestion 交互面板
+    ├── QuestionPrompt.css
     ├── ProfileSettings.jsx     # 用户画像设置
     └── ProfileSettings.css
 ```
@@ -287,6 +289,29 @@ if err != nil {
 ---
 
 ## 已完成功能
+
+### 2026-02-23 (AskUserQuestion 非阻塞交互)
+
+- [x] AskUserQuestion 工具改为非阻塞模式 (`tools/askuser.go`)
+  - 删除 channel 阻塞逻辑（pendingMu/pendingReqs/HandleResponse/AskUserCallback）
+  - Execute() 立即返回提示文本，不等待用户响应
+  - 工具结构体简化为无状态 `struct{}`
+- [x] WebSocket 清理 (`api/websocket.go`)
+  - 删除 `handleAskUserResponse` 函数
+  - 删除 `ask_user_response` case 分支
+  - 删除 `AskUserResponsePayload` 结构体
+- [x] QuestionPrompt 前端组件 (`components/QuestionPrompt.jsx` + `.css`)
+  - 交互式问题面板，渲染在输入框上方
+  - 支持单选 (RadioGroup) / 多选 (CheckboxGroup) + "Other" 自由输入
+  - 多问题 Tab 切换
+  - 提交时格式化为 `Q: ... / A: ...` 文本
+  - 从底部滑入动画，与 ToolCallCard 风格统一
+- [x] index.jsx 集成
+  - `pendingQuestion` 状态管理
+  - `tool_end` 事件中检测 AskUserQuestion 完成 → 解析 input.questions → 显示面板
+  - `handleQuestionSubmit()` 格式化答案作为普通 chat 消息发送
+  - `handleQuestionCancel()` 发送跳过消息
+  - error 事件清除 pendingQuestion，done 事件保留（让用户有时间回答）
 
 ### 2026-02-17 (Token 统计修复 + 日志计费集成)
 
