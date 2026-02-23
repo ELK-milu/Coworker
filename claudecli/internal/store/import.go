@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
 // ImportFromGithub 从 GitHub 仓库导入 skills/agents
-func ImportFromGithub(repoURL string) ([]StoreItem, error) {
+// storeDir: 技能文件全局存储目录（store/skills/），空字符串表示不下载文件
+func ImportFromGithub(repoURL string, storeDir string) ([]StoreItem, error) {
 	owner, repo := parseRepo(repoURL)
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("invalid repo: %s", repoURL)
@@ -18,17 +21,17 @@ func ImportFromGithub(repoURL string) ([]StoreItem, error) {
 	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 
 	// 1. 尝试 .claude-plugin/plugin.json
-	if items, err := tryPluginJSON(owner, repo, ghURL); err == nil && len(items) > 0 {
+	if items, err := tryPluginJSON(owner, repo, ghURL, storeDir); err == nil && len(items) > 0 {
 		return items, nil
 	}
 
 	// 2. 尝试 .claude-plugin/marketplace.json
-	if items, err := tryMarketplaceJSON(owner, repo, ghURL); err == nil && len(items) > 0 {
+	if items, err := tryMarketplaceJSON(owner, repo, ghURL, storeDir); err == nil && len(items) > 0 {
 		return items, nil
 	}
 
 	// 3. 尝试根目录 SKILL.md / skill.md
-	if items, err := tryRootSkill(owner, repo, ghURL); err == nil && len(items) > 0 {
+	if items, err := tryRootSkill(owner, repo, ghURL, storeDir); err == nil && len(items) > 0 {
 		return items, nil
 	}
 
@@ -91,7 +94,7 @@ func ghRawGet(owner, repo, path string) (string, error) {
 	return string(body), err
 }
 
-func tryPluginJSON(owner, repo, ghURL string) ([]StoreItem, error) {
+func tryPluginJSON(owner, repo, ghURL, storeDir string) ([]StoreItem, error) {
 	raw, err := ghRawGet(owner, repo, ".claude-plugin/plugin.json")
 	if err != nil {
 		return nil, err
@@ -101,10 +104,10 @@ func tryPluginJSON(owner, repo, ghURL string) ([]StoreItem, error) {
 		return nil, err
 	}
 
-	return scanSkillsDir(owner, repo, "skills", plugin.Author, ghURL)
+	return scanSkillsDir(owner, repo, "skills", plugin.Author, ghURL, storeDir)
 }
 
-func tryMarketplaceJSON(owner, repo, ghURL string) ([]StoreItem, error) {
+func tryMarketplaceJSON(owner, repo, ghURL, storeDir string) ([]StoreItem, error) {
 	raw, err := ghRawGet(owner, repo, ".claude-plugin/marketplace.json")
 	if err != nil {
 		return nil, err
@@ -122,7 +125,7 @@ func tryMarketplaceJSON(owner, repo, ghURL string) ([]StoreItem, error) {
 		}
 		localPath = strings.TrimPrefix(localPath, "./")
 		skillsPath := localPath + "/skills"
-		items, err := scanSkillsDir(owner, repo, skillsPath, p.Name, ghURL)
+		items, err := scanSkillsDir(owner, repo, skillsPath, p.Name, ghURL, storeDir)
 		if err != nil {
 			continue
 		}
@@ -134,20 +137,28 @@ func tryMarketplaceJSON(owner, repo, ghURL string) ([]StoreItem, error) {
 	return allItems, nil
 }
 
-func tryRootSkill(owner, repo, ghURL string) ([]StoreItem, error) {
+func tryRootSkill(owner, repo, ghURL, storeDir string) ([]StoreItem, error) {
 	for _, name := range []string{"SKILL.md", "skill.md"} {
 		content, err := ghRawGet(owner, repo, name)
 		if err != nil {
 			continue
 		}
 		item := parseSkillMD(content, repo, ghURL)
+		// 下载整个仓库根目录到 store/skills/{name}/
+		if storeDir != "" {
+			localDir := sanitizeDirName(item.Name)
+			destDir := filepath.Join(storeDir, localDir)
+			if err := downloadSkillDir(owner, repo, "", destDir); err == nil {
+				item.LocalDir = localDir
+			}
+		}
 		return []StoreItem{item}, nil
 	}
 	return nil, fmt.Errorf("no root skill.md")
 }
 
 // scanSkillsDir 扫描 skills/ 目录下的子目录
-func scanSkillsDir(owner, repo, dirPath, author, ghURL string) ([]StoreItem, error) {
+func scanSkillsDir(owner, repo, dirPath, author, ghURL, storeDir string) ([]StoreItem, error) {
 	apiPath := fmt.Sprintf("%s/%s/contents/%s", owner, repo, dirPath)
 	data, err := ghAPIGet(apiPath)
 	if err != nil {
@@ -176,6 +187,15 @@ func scanSkillsDir(owner, repo, dirPath, author, ghURL string) ([]StoreItem, err
 			item := parseSkillMD(content, e.Name, ghURL)
 			if author != "" {
 				item.Author = author
+			}
+			// 下载整个 skill 子目录到 store/skills/{name}/
+			if storeDir != "" {
+				localDir := sanitizeDirName(item.Name)
+				destDir := filepath.Join(storeDir, localDir)
+				remotePath := dirPath + "/" + e.Name
+				if err := downloadSkillDir(owner, repo, remotePath, destDir); err == nil {
+					item.LocalDir = localDir
+				}
 			}
 			items = append(items, item)
 			break
@@ -223,4 +243,61 @@ func extractYAMLField(yaml, field string) string {
 		}
 	}
 	return ""
+}
+
+// downloadSkillDir 递归下载 GitHub 目录到本地
+func downloadSkillDir(owner, repo, remotePath, localDir string) error {
+	apiPath := fmt.Sprintf("%s/%s/contents", owner, repo)
+	if remotePath != "" {
+		apiPath += "/" + remotePath
+	}
+
+	data, err := ghAPIGet(apiPath)
+	if err != nil {
+		return err
+	}
+
+	var entries []struct {
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		Path        string `json:"path"`
+		DownloadURL string `json:"download_url"`
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return err
+	}
+
+	os.MkdirAll(localDir, 0755)
+
+	for _, e := range entries {
+		localPath := filepath.Join(localDir, e.Name)
+		if e.Type == "dir" {
+			// 递归下载子目录
+			subRemote := e.Path
+			if err := downloadSkillDir(owner, repo, subRemote, localPath); err != nil {
+				return err
+			}
+		} else if e.Type == "file" {
+			// 下载文件
+			content, err := ghRawGet(owner, repo, e.Path)
+			if err != nil {
+				return fmt.Errorf("download %s: %w", e.Path, err)
+			}
+			os.MkdirAll(filepath.Dir(localPath), 0755)
+			if err := os.WriteFile(localPath, []byte(content), 0644); err != nil {
+				return fmt.Errorf("write %s: %w", localPath, err)
+			}
+		}
+	}
+	return nil
+}
+
+// sanitizeDirName 将 skill 名称转为安全的目录名
+func sanitizeDirName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, " ", "-")
+	name = strings.ReplaceAll(name, "/", "-")
+	name = strings.ReplaceAll(name, "\\", "-")
+	name = strings.ToLower(name)
+	return name
 }

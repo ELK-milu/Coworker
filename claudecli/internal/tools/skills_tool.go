@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +19,7 @@ type skillEntry struct {
 	Name        string
 	Description string
 	Content     string
+	LocalDir    string // 本地目录名（相对于 store/skills/）
 }
 
 // SkillsTool 技能工具 — 渐进式披露（Progressive Disclosure）
@@ -28,6 +31,7 @@ type SkillsTool struct {
 
 	mu           sync.RWMutex
 	userID       string       // 当前用户 ID
+	workspaceDir string       // 当前用户 workspace 路径
 	cachedDesc   string       // 缓存的动态 description
 	cachedHint   string       // 缓存的 name 示例（用于 InputSchema）
 	cachedSkills []skillEntry // 缓存的可用技能列表
@@ -41,10 +45,11 @@ func NewSkillsTool(storeMgr *store.Manager) *SkillsTool {
 
 // RefreshForUser 刷新当前用户的可用技能列表（每次对话前调用）
 // 参考 OpenCode tool/skill.ts: Tool.define("skill", async (ctx) => { ... })
-func (t *SkillsTool) RefreshForUser(userID string) {
+func (t *SkillsTool) RefreshForUser(userID string, workspaceDir string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.userID = userID
+	t.workspaceDir = workspaceDir
 	t.rebuildCache(userID)
 }
 
@@ -109,13 +114,42 @@ func (t *SkillsTool) Execute(ctx context.Context, input json.RawMessage) (*types
 	}
 
 	// 参考 OpenCode tool/skill.ts:99-115 — 输出 <skill_content> 块
-	output := strings.Join([]string{
+	var lines []string
+	lines = append(lines,
 		fmt.Sprintf(`<skill_content name="%s">`, entry.Name),
 		fmt.Sprintf("# Skill: %s", entry.Name),
 		"",
 		strings.TrimSpace(entry.Content),
-		"</skill_content>",
-	}, "\n")
+	)
+
+	// 如果有本地目录，添加 base directory 和文件列表
+	if entry.LocalDir != "" {
+		skillBasePath := "/workspace/.skills/" + entry.LocalDir + "/"
+		lines = append(lines,
+			"",
+			fmt.Sprintf("Base directory for this skill: %s", skillBasePath),
+			"Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.",
+		)
+		// 扫描 workspace 中的 skill 文件
+		t.mu.RLock()
+		wsDir := t.workspaceDir
+		t.mu.RUnlock()
+		if wsDir != "" {
+			realSkillDir := filepath.Join(wsDir, ".skills", entry.LocalDir)
+			files := listSkillFiles(realSkillDir, 10)
+			if len(files) > 0 {
+				lines = append(lines, "", "<skill_files>")
+				for _, f := range files {
+					virtualPath := skillBasePath + f
+					lines = append(lines, fmt.Sprintf("<file>%s</file>", virtualPath))
+				}
+				lines = append(lines, "</skill_files>")
+			}
+		}
+	}
+
+	lines = append(lines, "</skill_content>")
+	output := strings.Join(lines, "\n")
 
 	return &types.ToolResult{
 		Success:   true,
@@ -185,7 +219,12 @@ func (t *SkillsTool) collectSkills(userID string) []skillEntry {
 		if item == nil || item.Type != store.TypeSkill || seen[item.Name] {
 			continue
 		}
-		entries = append(entries, skillEntry{Name: item.Name, Description: item.Description, Content: item.Content})
+		entries = append(entries, skillEntry{
+			Name:        item.Name,
+			Description: item.Description,
+			Content:     item.Content,
+			LocalDir:    item.LocalDir,
+		})
 		seen[item.Name] = true
 	}
 	return entries
@@ -206,7 +245,12 @@ func (t *SkillsTool) findSkill(name string) *skillEntry {
 	for _, id := range t.store.LoadUserInstalled(userID) {
 		item := t.store.GetByID(id)
 		if item != nil && item.Type == store.TypeSkill && item.Name == name && item.Content != "" {
-			return &skillEntry{Name: item.Name, Description: item.Description, Content: item.Content}
+			return &skillEntry{
+				Name:        item.Name,
+				Description: item.Description,
+				Content:     item.Content,
+				LocalDir:    item.LocalDir,
+			}
 		}
 	}
 	return nil
@@ -221,4 +265,32 @@ func (t *SkillsTool) listNames() []string {
 		names[i] = e.Name
 	}
 	return names
+}
+
+// listSkillFiles 递归列出目录下的文件（排除 SKILL.md），最多 limit 个
+func listSkillFiles(dir string, limit int) []string {
+	var files []string
+	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		lower := strings.ToLower(name)
+		if lower == "skill.md" {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return nil
+		}
+		files = append(files, filepath.ToSlash(rel))
+		if len(files) >= limit {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return files
 }

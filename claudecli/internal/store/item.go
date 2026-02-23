@@ -29,6 +29,7 @@ type StoreItem struct {
 	Author       string        `json:"author,omitempty"`
 	GithubURL    string        `json:"github_url,omitempty"`
 	Content      string        `json:"content,omitempty"`    // skill/agent: markdown 内容
+	LocalDir     string        `json:"local_dir,omitempty"` // 本地目录路径（相对于 store/skills/）
 	ServerURL    string        `json:"server_url,omitempty"` // mcp: 服务器 URL
 	ConfigSchema []ConfigField `json:"config_schema,omitempty"`
 	CreatedAt    time.Time     `json:"created_at"`

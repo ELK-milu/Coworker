@@ -94,12 +94,17 @@ func (m *Manager) Update(id string, item StoreItem) (StoreItem, error) {
 	return StoreItem{}, fmt.Errorf("item not found: %s", id)
 }
 
-// Delete 删除条目
+// Delete 删除条目（同时清理本地 skill 目录）
 func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i, s := range m.items {
 		if s.ID == id {
+			// 清理本地 skill 目录
+			if s.LocalDir != "" {
+				skillDir := filepath.Join(m.dataDir, "skills", s.LocalDir)
+				os.RemoveAll(skillDir)
+			}
 			m.items = append(m.items[:i], m.items[i+1:]...)
 			return m.save()
 		}
@@ -107,9 +112,88 @@ func (m *Manager) Delete(id string) error {
 	return fmt.Errorf("item not found: %s", id)
 }
 
+// SkillDir 返回 skill 的全局目录绝对路径
+func (m *Manager) SkillDir(item *StoreItem) string {
+	if item == nil || item.LocalDir == "" {
+		return ""
+	}
+	return filepath.Join(m.dataDir, "skills", item.LocalDir)
+}
+
+// CopySkillsToWorkspace 将用户已安装的 skill 复制到 workspace/.skills/
+func (m *Manager) CopySkillsToWorkspace(userID, workspaceDir string) error {
+	ids := m.LoadUserInstalled(userID)
+	if len(ids) == 0 {
+		return nil
+	}
+
+	targetBase := filepath.Join(workspaceDir, ".skills")
+
+	// 收集需要复制的 skill
+	type skillCopy struct {
+		srcDir  string
+		name    string
+	}
+	var toCopy []skillCopy
+
+	m.mu.RLock()
+	for _, id := range ids {
+		for _, item := range m.items {
+			if item.ID == id && item.Type == TypeSkill && item.LocalDir != "" {
+				srcDir := filepath.Join(m.dataDir, "skills", item.LocalDir)
+				if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+					toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir})
+				}
+				break
+			}
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(toCopy) == 0 {
+		return nil
+	}
+
+	// 清空 .skills/ 再复制（保证一致性）
+	os.RemoveAll(targetBase)
+	os.MkdirAll(targetBase, 0755)
+
+	for _, sc := range toCopy {
+		dst := filepath.Join(targetBase, sc.name)
+		if err := copyDir(sc.srcDir, dst); err != nil {
+			return fmt.Errorf("copy skill %s: %w", sc.name, err)
+		}
+	}
+	return nil
+}
+
+// copyDir 递归复制目录
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		os.MkdirAll(filepath.Dir(target), 0755)
+		return os.WriteFile(target, data, 0644)
+	})
+}
+
 // Import 从 GitHub 导入 skills，跳过已存在的同名条目
 func (m *Manager) Import(repoURL string) ([]StoreItem, error) {
-	parsed, err := ImportFromGithub(repoURL)
+	skillsDir := filepath.Join(m.dataDir, "skills")
+	parsed, err := ImportFromGithub(repoURL, skillsDir)
 	if err != nil {
 		return nil, err
 	}
