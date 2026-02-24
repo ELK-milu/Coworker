@@ -471,6 +471,7 @@ func scanAgentsMD(owner, repo, dirPath string) []SubItem {
 		agentName := strings.TrimSuffix(e.Name, filepath.Ext(e.Name))
 		description := "Agent: " + agentName
 		model := ""
+		var tools []string
 
 		// 解析 YAML frontmatter
 		if strings.HasPrefix(content, "---") {
@@ -486,6 +487,9 @@ func scanAgentsMD(owner, repo, dirPath string) []SubItem {
 				if m := extractYAMLField(fm, "model"); m != "" {
 					model = m
 				}
+				if t := extractYAMLField(fm, "tools"); t != "" {
+					tools = NormalizeToolNames(t)
+				}
 			}
 		}
 
@@ -495,6 +499,7 @@ func scanAgentsMD(owner, repo, dirPath string) []SubItem {
 			Description: description,
 			Content:     content,
 			Model:       model,
+			Tools:       tools,
 		})
 	}
 	return subs
@@ -606,4 +611,81 @@ func scanCommandsMD(owner, repo, dirPath string) []SubItem {
 		})
 	}
 	return subs
+}
+
+// toolNameMap 外部 agent md 中的工具名 → Coworker 内部工具名映射
+var toolNameMap = map[string]string{
+	"ls":        "LS",
+	"read":      "Read",
+	"write":     "Write",
+	"edit":      "Edit",
+	"glob":      "Glob",
+	"grep":      "Grep",
+	"bash":      "Bash",
+	"webfetch":  "WebFetch",
+	"websearch": "WebSearch",
+	// 大小写变体
+	"LS":        "LS",
+	"Read":      "Read",
+	"Write":     "Write",
+	"Edit":      "Edit",
+	"Glob":      "Glob",
+	"Grep":      "Grep",
+	"Bash":      "Bash",
+	"WebFetch":  "WebFetch",
+	"WebSearch": "WebSearch",
+}
+
+// NormalizeToolNames 将逗号/空格分隔的 tools 字符串解析并映射为 Coworker 内部工具名
+// 输入示例: "LS, Read, Grep, Glob, Bash"
+// 输出: ["LS", "Read", "Grep", "Glob", "Bash"]
+// 未识别的名称保留原样（可能是 MCP 工具等）
+func NormalizeToolNames(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "*" {
+		return nil // nil = 全部工具
+	}
+
+	// 支持逗号或空格分隔
+	var parts []string
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+
+	seen := make(map[string]bool)
+	var result []string
+	for _, p := range parts {
+		if mapped, ok := toolNameMap[p]; ok {
+			if !seen[mapped] {
+				result = append(result, mapped)
+				seen[mapped] = true
+			}
+		} else if !seen[p] {
+			// 未识别的保留原样
+			result = append(result, p)
+			seen[p] = true
+		}
+	}
+	return result
+}
+
+// ParseAgentTools 从 agent markdown 内容的 frontmatter 中解析 tools 字段
+// 用于独立 TypeAgent 条目（非 plugin 子条目）在注册时解析
+func ParseAgentTools(content string) []string {
+	if !strings.HasPrefix(content, "---") {
+		return nil
+	}
+	parts := strings.SplitN(content[3:], "---", 2)
+	if len(parts) < 2 {
+		return nil
+	}
+	fm := parts[0]
+	t := extractYAMLField(fm, "tools")
+	if t == "" {
+		return nil
+	}
+	return NormalizeToolNames(t)
 }

@@ -300,6 +300,7 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 	tools.RegisterWithFactory(registry, factory, tools.NewEditTool(workingDir))
 	tools.RegisterWithFactory(registry, factory, tools.NewGlobTool(workingDir))
 	tools.RegisterWithFactory(registry, factory, tools.NewGrepTool(workingDir))
+	tools.RegisterWithFactory(registry, factory, tools.NewLSTool(workingDir))
 	tools.RegisterWithFactory(registry, factory, tools.NewWebFetchTool())
 	tools.RegisterWithFactory(registry, factory, tools.NewAskUserQuestionTool())
 	tools.RegisterWithFactory(registry, factory, tools.NewStructuredOutputTool())
@@ -321,7 +322,7 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 	// 注册子代理任务工具（渐进式披露）
 	tools.RegisterWithFactory(registry, factory, tools.NewTaskTool(storeManager))
 
-	log.Printf("[Coworker] Registered %d tools with factory pattern (sandbox pool: %v)", 18, sandboxPool != nil)
+	log.Printf("[Coworker] Registered %d tools with factory pattern (sandbox pool: %v)", 19, sandboxPool != nil)
 }
 
 // Shutdown 优雅关闭模块

@@ -28,6 +28,7 @@ type SubItem struct {
 	Content     string      `json:"content"`              // markdown 全文
 	LocalDir    string      `json:"local_dir,omitempty"`   // skill 的本地目录（相对于 store/plugins/{plugin}/skills/）
 	Model       string      `json:"model,omitempty"`       // agent 专属：opus/sonnet/haiku/inherit
+	Tools       []string    `json:"tools,omitempty"`       // agent 专属：允许的工具列表（空 = 全部）
 }
 
 // ConfigField 用户配置字段定义

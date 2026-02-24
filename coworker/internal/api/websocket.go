@@ -1983,39 +1983,58 @@ func (h *WSHandler) refreshStoreAgents(userID string) {
 			continue
 		}
 		if item.Type == store.TypeAgent {
-			agent.DefaultRegistry.Register(&agent.AgentType{
-				Name:        item.Name,
-				Description: item.Description,
-				Mode:        agent.ModeSubagent,
-				Native:      false,
-				Tools:       []string{"*"},
-				Permission: permissions.Merge(agent.DefaultPermission, permissions.Ruleset{
-					{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
-				}),
-				Prompt:   item.Content,
-				MaxTurns: 30,
-			})
-			log.Printf("[WS] Registered store agent: %s", item.Name)
+			// 从 Content frontmatter 解析 tools
+			tools := store.ParseAgentTools(item.Content)
+			at := buildAgentType(item.Name, item.Description, item.Content, tools)
+			agent.DefaultRegistry.Register(at)
+			log.Printf("[WS] Registered store agent: %s (tools: %v)", item.Name, at.Tools)
 		}
 		if item.Type == store.TypePlugin {
 			for _, sub := range item.SubItems {
 				if sub.Type == store.SubTypeAgent {
-					agent.DefaultRegistry.Register(&agent.AgentType{
-						Name:        sub.Name,
-						Description: sub.Description,
-						Mode:        agent.ModeSubagent,
-						Native:      false,
-						Tools:       []string{"*"},
-						Permission: permissions.Merge(agent.DefaultPermission, permissions.Ruleset{
-							{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
-						}),
-						Prompt:   sub.Content,
-						MaxTurns: 30,
-					})
-					log.Printf("[WS] Registered plugin agent: %s (from plugin %s)", sub.Name, item.Name)
+					at := buildAgentType(sub.Name, sub.Description, sub.Content, sub.Tools)
+					agent.DefaultRegistry.Register(at)
+					log.Printf("[WS] Registered plugin agent: %s (from plugin %s, tools: %v)", sub.Name, item.Name, at.Tools)
 				}
 			}
 		}
+	}
+}
+
+// buildAgentType 根据 tools 白名单构建 AgentType
+// tools 为 nil/空 → 全部工具（"*"）；非空 → 仅允许指定工具
+func buildAgentType(name, description, content string, tools []string) *agent.AgentType {
+	agentTools := []string{"*"}
+	perm := permissions.Merge(agent.DefaultPermission, permissions.Ruleset{
+		{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
+	})
+
+	if len(tools) > 0 {
+		agentTools = tools
+		// 基于工具白名单生成权限规则：先 deny all，再逐个 allow
+		rules := permissions.Ruleset{
+			{Permission: "*", Pattern: "*", Action: permissions.BehaviorDeny},
+			{Permission: "read", Pattern: "*", Action: permissions.BehaviorAllow}, // 读权限始终开放
+			{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
+		}
+		for _, t := range tools {
+			lowerTool := strings.ToLower(t)
+			rules = append(rules, permissions.Rule{
+				Permission: lowerTool, Pattern: "*", Action: permissions.BehaviorAllow,
+			})
+		}
+		perm = permissions.Merge(agent.DefaultPermission, rules)
+	}
+
+	return &agent.AgentType{
+		Name:        name,
+		Description: description,
+		Mode:        agent.ModeSubagent,
+		Native:      false,
+		Tools:       agentTools,
+		Permission:  perm,
+		Prompt:      content,
+		MaxTurns:    30,
 	}
 }
 
