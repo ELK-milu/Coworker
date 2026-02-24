@@ -68,9 +68,25 @@ type PluginJSON struct {
 	Author      string `json:"author"`
 }
 
+// MarketplaceOwner marketplace 顶层 owner
+type MarketplaceOwner struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	URL   string `json:"url"`
+}
+
+// MarketplaceMetadata marketplace 顶层 metadata
+type MarketplaceMetadata struct {
+	Description string `json:"description"`
+	Version     string `json:"version"`
+}
+
 // MarketplaceJSON .claude-plugin/marketplace.json 格式
 type MarketplaceJSON struct {
-	Plugins []MarketplacePlugin `json:"plugins"`
+	Name     string               `json:"name"`
+	Owner    *MarketplaceOwner    `json:"owner"`
+	Metadata *MarketplaceMetadata `json:"metadata"`
+	Plugins  []MarketplacePlugin  `json:"plugins"`
 }
 
 // MarketplacePlugin marketplace 中的单个 plugin 条目
@@ -78,6 +94,11 @@ type MarketplacePlugin struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	Version     string      `json:"version"`
-	Source      interface{} `json:"source"`   // string 或 { "source": "url", "url": "..." }
-	Skills      []string    `json:"skills"`   // 显式 skill 路径列表（如 ["./skills/pdf", "./skills/docx"]）
+	Source      interface{} `json:"source"`              // string 或 { "source": "url", "url": "..." }
+	Skills      []string    `json:"skills"`              // 显式 skill 路径列表（如 ["./skills/pdf", "./skills/docx"]）
+	Strict      bool        `json:"strict"`
+	Author      interface{} `json:"author"`              // string 或 {"name":"...","email":"..."}
+	Homepage    string      `json:"homepage"`
+	License     string      `json:"license"`
+	Category    string      `json:"category"`
 }
