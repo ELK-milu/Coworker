@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -70,10 +71,13 @@ func ghAPIGet(path string) ([]byte, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		log.Printf("[Store] ghAPIGet network error: %s → %v", path, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[Store] ghAPIGet HTTP %d: %s → %s", resp.StatusCode, path, string(body[:min(len(body), 200)]))
 		return nil, fmt.Errorf("GitHub API %d: %s", resp.StatusCode, path)
 	}
 	return io.ReadAll(resp.Body)
@@ -322,11 +326,12 @@ func ImportAgentsFromGithub(repoURL string) ([]StoreItem, error) {
 	return nil, fmt.Errorf("no agents/ directory found in %s/%s", owner, repo)
 }
 
-// scanAgentsToStoreItems 扫描 agents/ 目录，每个 .md 文件创建独立的 TypeAgent StoreItem
+// scanAgentsToStoreItems 递归扫描 agents/ 目录，每个 .md 文件创建独立的 TypeAgent StoreItem
 func scanAgentsToStoreItems(owner, repo, dirPath, ghURL string) []StoreItem {
 	apiPath := fmt.Sprintf("%s/%s/contents/%s", owner, repo, dirPath)
 	data, err := ghAPIGet(apiPath)
 	if err != nil {
+		log.Printf("[Store] scanAgents: failed to list %s: %v", dirPath, err)
 		return nil
 	}
 
@@ -335,11 +340,20 @@ func scanAgentsToStoreItems(owner, repo, dirPath, ghURL string) []StoreItem {
 		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(data, &entries); err != nil {
+		log.Printf("[Store] scanAgents: JSON parse error for %s: %v", dirPath, err)
 		return nil
 	}
 
+	log.Printf("[Store] scanAgents: %s → %d entries", dirPath, len(entries))
+
 	var items []StoreItem
 	for _, e := range entries {
+		// 递归扫描子目录
+		if e.Type == "dir" {
+			sub := scanAgentsToStoreItems(owner, repo, dirPath+"/"+e.Name, ghURL)
+			items = append(items, sub...)
+			continue
+		}
 		if e.Type != "file" || !strings.HasSuffix(strings.ToLower(e.Name), ".md") {
 			continue
 		}
