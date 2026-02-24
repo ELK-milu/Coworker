@@ -1,6 +1,6 @@
 /*
 Copyright (C) 2025 QuantumNous
-任务列表组件 - Claude Code 风格
+任务列表组件 - Coworker 风格
 */
 
 import React, { useState, useRef } from 'react';

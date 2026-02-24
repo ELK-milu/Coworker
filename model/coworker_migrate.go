@@ -101,7 +101,7 @@ func IsCoworkerMigrationDone() bool {
 
 // migrateMemories 迁移用户记忆
 func migrateMemories(baseDir, userDirName string, dbUserID int) (int, error) {
-	memoriesDir := filepath.Join(baseDir, userDirName, ".claude", "memories")
+	memoriesDir := filepath.Join(baseDir, userDirName, ".coworker", "memories")
 	entries, err := os.ReadDir(memoriesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -159,7 +159,7 @@ func migrateMemories(baseDir, userDirName string, dbUserID int) (int, error) {
 
 // migrateUserProfile 迁移用户画像
 func migrateUserProfile(baseDir, userDirName string, dbUserID int) (bool, error) {
-	claudeDir := filepath.Join(baseDir, userDirName, ".claude")
+	claudeDir := filepath.Join(baseDir, userDirName, ".coworker")
 
 	// 读取 userinfo.json
 	var userInfo userInfoJSON
@@ -218,7 +218,7 @@ func migrateUserProfile(baseDir, userDirName string, dbUserID int) (bool, error)
 
 // migrateJobs 迁移 Jobs
 func migrateJobs(baseDir, userDirName string, dbUserID int) (int, error) {
-	jobsDir := filepath.Join(baseDir, userDirName, ".claude", "jobs")
+	jobsDir := filepath.Join(baseDir, userDirName, ".coworker", "jobs")
 	entries, err := os.ReadDir(jobsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
