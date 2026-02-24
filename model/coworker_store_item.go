@@ -13,6 +13,7 @@ type CoworkerStoreItem struct {
 	LocalDir     string `json:"local_dir" gorm:"type:varchar(256)"`
 	ServerURL    string `json:"server_url" gorm:"type:varchar(512)"`
 	ConfigSchema string `json:"config_schema" gorm:"type:text"` // JSON array
+	SubItems     string `json:"sub_items" gorm:"type:text"`     // JSON array of SubItem
 	CreatedAt    int64  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt    int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }

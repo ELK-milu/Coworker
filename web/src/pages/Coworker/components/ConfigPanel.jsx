@@ -52,8 +52,8 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const [storeItems, setStoreItems] = useState([]);
   const [installedItems, setInstalledItems] = useState([]);
 
-  const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP' };
-  const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green' };
+  const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP', plugin: '插件' };
+  const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green', plugin: 'orange' };
 
   const loadStoreData = useCallback(async () => {
     try {

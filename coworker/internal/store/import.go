@@ -301,3 +301,309 @@ func sanitizeDirName(name string) string {
 	name = strings.ToLower(name)
 	return name
 }
+
+// --- Plugin Import ---
+
+// ImportPluginFromGithub 从 GitHub 导入插件（完整的 agents + skills + commands）
+func ImportPluginFromGithub(repoURL string, pluginsDir string) ([]StoreItem, error) {
+	owner, repo := parseRepo(repoURL)
+	if owner == "" || repo == "" {
+		return nil, fmt.Errorf("invalid repo: %s", repoURL)
+	}
+
+	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
+
+	// 1. 尝试 marketplace.json → 多个插件
+	if items, err := tryMarketplacePlugins(owner, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
+		return items, nil
+	}
+
+	// 2. 尝试 plugin.json → 单个插件
+	if items, err := trySinglePlugin(owner, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
+		return items, nil
+	}
+
+	// 3. 尝试根目录直接扫描 agents/ + skills/ + commands/
+	if items, err := tryRootPlugin(owner, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
+		return items, nil
+	}
+
+	return nil, fmt.Errorf("no plugin found in %s/%s", owner, repo)
+}
+
+func tryMarketplacePlugins(owner, repo, ghURL, pluginsDir string) ([]StoreItem, error) {
+	raw, err := ghRawGet(owner, repo, ".claude-plugin/marketplace.json")
+	if err != nil {
+		return nil, err
+	}
+	var mp MarketplaceJSON
+	if err := json.Unmarshal([]byte(raw), &mp); err != nil {
+		return nil, err
+	}
+
+	var allItems []StoreItem
+	for _, p := range mp.Plugins {
+		localPath, ok := p.Source.(string)
+		if !ok {
+			continue
+		}
+		localPath = strings.TrimPrefix(localPath, "./")
+
+		item := buildPluginItem(owner, repo, localPath, p.Name, p.Description, ghURL, pluginsDir)
+		if item != nil {
+			allItems = append(allItems, *item)
+		}
+	}
+	if len(allItems) == 0 {
+		return nil, fmt.Errorf("no plugins found in marketplace")
+	}
+	return allItems, nil
+}
+
+func trySinglePlugin(owner, repo, ghURL, pluginsDir string) ([]StoreItem, error) {
+	raw, err := ghRawGet(owner, repo, ".claude-plugin/plugin.json")
+	if err != nil {
+		return nil, err
+	}
+	var plugin PluginJSON
+	if err := json.Unmarshal([]byte(raw), &plugin); err != nil {
+		return nil, err
+	}
+
+	name := plugin.Name
+	if name == "" {
+		name = repo
+	}
+	desc := plugin.Description
+	if desc == "" {
+		desc = "Imported plugin from GitHub"
+	}
+
+	item := buildPluginItem(owner, repo, "", name, desc, ghURL, pluginsDir)
+	if item == nil {
+		return nil, fmt.Errorf("no sub-items found in plugin")
+	}
+	if plugin.Author != "" {
+		item.Author = plugin.Author
+	}
+	return []StoreItem{*item}, nil
+}
+
+func tryRootPlugin(owner, repo, ghURL, pluginsDir string) ([]StoreItem, error) {
+	item := buildPluginItem(owner, repo, "", repo, "Imported plugin from GitHub", ghURL, pluginsDir)
+	if item == nil {
+		return nil, fmt.Errorf("no sub-items found in root")
+	}
+	return []StoreItem{*item}, nil
+}
+
+func buildPluginItem(owner, repo, remotePath, name, desc, ghURL, pluginsDir string) *StoreItem {
+	var subItems []SubItem
+
+	agentDir := "agents"
+	skillDir := "skills"
+	cmdDir := "commands"
+	if remotePath != "" {
+		agentDir = remotePath + "/agents"
+		skillDir = remotePath + "/skills"
+		cmdDir = remotePath + "/commands"
+	}
+
+	// 扫描 agents/
+	agentSubs := scanAgentsMD(owner, repo, agentDir)
+	subItems = append(subItems, agentSubs...)
+
+	// 扫描 skills/
+	skillSubs := scanSkillsMD(owner, repo, skillDir)
+	subItems = append(subItems, skillSubs...)
+
+	// 扫描 commands/
+	cmdSubs := scanCommandsMD(owner, repo, cmdDir)
+	subItems = append(subItems, cmdSubs...)
+
+	if len(subItems) == 0 {
+		return nil
+	}
+
+	// 下载整个插件目录到 plugins/{name}/
+	localDir := sanitizeDirName(name)
+	if pluginsDir != "" {
+		destDir := filepath.Join(pluginsDir, localDir)
+		downloadPath := remotePath
+		downloadSkillDir(owner, repo, downloadPath, destDir)
+	}
+
+	return &StoreItem{
+		Name:        name,
+		Description: desc,
+		Type:        TypePlugin,
+		GithubURL:   ghURL,
+		SubItems:    subItems,
+		LocalDir:    localDir,
+	}
+}
+
+// scanAgentsMD 扫描 agents/ 目录下的 .md 文件
+func scanAgentsMD(owner, repo, dirPath string) []SubItem {
+	apiPath := fmt.Sprintf("%s/%s/contents/%s", owner, repo, dirPath)
+	data, err := ghAPIGet(apiPath)
+	if err != nil {
+		return nil
+	}
+
+	var entries []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil
+	}
+
+	var subs []SubItem
+	for _, e := range entries {
+		if e.Type != "file" || !strings.HasSuffix(strings.ToLower(e.Name), ".md") {
+			continue
+		}
+		content, err := ghRawGet(owner, repo, dirPath+"/"+e.Name)
+		if err != nil {
+			continue
+		}
+		agentName := strings.TrimSuffix(e.Name, filepath.Ext(e.Name))
+		description := "Agent: " + agentName
+		model := ""
+
+		// 解析 YAML frontmatter
+		if strings.HasPrefix(content, "---") {
+			parts := strings.SplitN(content[3:], "---", 2)
+			if len(parts) == 2 {
+				fm := parts[0]
+				if n := extractYAMLField(fm, "name"); n != "" {
+					agentName = n
+				}
+				if d := extractYAMLField(fm, "description"); d != "" {
+					description = d
+				}
+				if m := extractYAMLField(fm, "model"); m != "" {
+					model = m
+				}
+			}
+		}
+
+		subs = append(subs, SubItem{
+			Type:        SubTypeAgent,
+			Name:        agentName,
+			Description: description,
+			Content:     content,
+			Model:       model,
+		})
+	}
+	return subs
+}
+
+// scanSkillsMD 扫描 skills/ 目录下的子目录（每个含 SKILL.md）
+func scanSkillsMD(owner, repo, dirPath string) []SubItem {
+	apiPath := fmt.Sprintf("%s/%s/contents/%s", owner, repo, dirPath)
+	data, err := ghAPIGet(apiPath)
+	if err != nil {
+		return nil
+	}
+
+	var entries []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil
+	}
+
+	var subs []SubItem
+	for _, e := range entries {
+		if e.Type != "dir" {
+			continue
+		}
+		// 尝试 SKILL.md 或 skill.md
+		for _, fname := range []string{"SKILL.md", "skill.md"} {
+			content, err := ghRawGet(owner, repo, dirPath+"/"+e.Name+"/"+fname)
+			if err != nil {
+				continue
+			}
+			skillName := e.Name
+			description := "Skill: " + skillName
+
+			if strings.HasPrefix(content, "---") {
+				parts := strings.SplitN(content[3:], "---", 2)
+				if len(parts) == 2 {
+					fm := parts[0]
+					if n := extractYAMLField(fm, "name"); n != "" {
+						skillName = n
+					}
+					if d := extractYAMLField(fm, "description"); d != "" {
+						description = d
+					}
+				}
+			}
+
+			subs = append(subs, SubItem{
+				Type:        SubTypeSkill,
+				Name:        skillName,
+				Description: description,
+				Content:     content,
+				LocalDir:    "skills/" + e.Name,
+			})
+			break
+		}
+	}
+	return subs
+}
+
+// scanCommandsMD 扫描 commands/ 目录下的 .md 文件
+func scanCommandsMD(owner, repo, dirPath string) []SubItem {
+	apiPath := fmt.Sprintf("%s/%s/contents/%s", owner, repo, dirPath)
+	data, err := ghAPIGet(apiPath)
+	if err != nil {
+		return nil
+	}
+
+	var entries []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil
+	}
+
+	var subs []SubItem
+	for _, e := range entries {
+		if e.Type != "file" || !strings.HasSuffix(strings.ToLower(e.Name), ".md") {
+			continue
+		}
+		content, err := ghRawGet(owner, repo, dirPath+"/"+e.Name)
+		if err != nil {
+			continue
+		}
+		cmdName := strings.TrimSuffix(e.Name, filepath.Ext(e.Name))
+		description := "Command: " + cmdName
+
+		if strings.HasPrefix(content, "---") {
+			parts := strings.SplitN(content[3:], "---", 2)
+			if len(parts) == 2 {
+				fm := parts[0]
+				if d := extractYAMLField(fm, "description"); d != "" {
+					description = d
+				}
+				// command name from argument-hint or filename
+				if ah := extractYAMLField(fm, "argument-hint"); ah != "" {
+					description += " (" + ah + ")"
+				}
+			}
+		}
+
+		subs = append(subs, SubItem{
+			Type:        SubTypeCommand,
+			Name:        cmdName,
+			Description: description,
+			Content:     content,
+		})
+	}
+	return subs
+}

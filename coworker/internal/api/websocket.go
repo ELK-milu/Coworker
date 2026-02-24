@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/coworker/internal/loop"
 	"github.com/QuantumNous/new-api/coworker/internal/mcp"
 	"github.com/QuantumNous/new-api/coworker/internal/memory"
+	"github.com/QuantumNous/new-api/coworker/internal/permissions"
 	"github.com/QuantumNous/new-api/coworker/internal/profile"
 	"github.com/QuantumNous/new-api/coworker/internal/prompt"
 	"github.com/QuantumNous/new-api/coworker/internal/sandbox"
@@ -68,6 +69,8 @@ type WSHandler struct {
 	fileTime *tools.FileTime
 	// 事件总线
 	bus *eventbus.Bus
+	// 每用户 MCP 管理器
+	userMCP *mcp.UserMCPManager
 }
 
 // NewWSHandler 创建 WebSocket 处理器
@@ -134,6 +137,16 @@ func (h *WSHandler) SetEventBus(bus *eventbus.Bus) {
 // SetStoreManager 设置商店管理器
 func (h *WSHandler) SetStoreManager(sm *store.Manager) {
 	h.store = sm
+}
+
+// SetUserMCPManager 设置每用户 MCP 管理器
+func (h *WSHandler) SetUserMCPManager(umcp *mcp.UserMCPManager) {
+	h.userMCP = umcp
+}
+
+// GetClientForUser 暴露客户端工厂（供 SubagentExecutor 使用）
+func (h *WSHandler) GetClientForUser(userID string) *client.ClaudeClient {
+	return h.getClientForUser(userID)
 }
 
 // IsBusySession 检查会话是否正在被 WebSocket 使用
@@ -452,6 +465,31 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 		}
 	}
 
+	// 刷新商店 Agent → 注入 agent.Registry（渐进式披露准备）
+	if h.store != nil {
+		h.refreshStoreAgents(chat.UserID)
+	}
+
+	// 刷新 TaskTool 的可用子代理列表
+	if taskTool, ok := h.tools.Get("Task"); ok {
+		if inner, ok := tools.UnwrapAs[*tools.TaskTool](taskTool); ok {
+			inner.RefreshForUser(chat.UserID)
+		}
+	}
+
+	// 创建每用户工具覆盖层（MCP 工具注入）
+	var toolProvider types.ToolProvider = h.tools
+	if h.userMCP != nil {
+		overlay := tools.NewToolOverlay(h.tools)
+		if err := h.userMCP.EnsureConnected(context.Background(), chat.UserID); err != nil {
+			log.Printf("[WS] MCP connection warning: %v", err)
+		}
+		for _, mcpTool := range h.userMCP.GetToolsForUser(chat.UserID) {
+			overlay.AddTool(mcpTool)
+		}
+		toolProvider = overlay
+	}
+
 	// 动态构建系统提示词（使用虚拟路径，传入用户消息用于记忆检索）
 	systemPrompt := h.buildUserSystemPrompt(chat.UserID, sb, chat.Message)
 
@@ -490,7 +528,7 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	}
 
 	// 启动对话循环（传递沙箱和 Agent）
-	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, selectedAgent, eventCh, conn, isNewSession)
+	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, selectedAgent, eventCh, conn, isNewSession, toolProvider)
 
 	// 异步转发事件到 WebSocket（不阻塞消息读取循环）
 	go h.forwardEvents(conn, sess.ID, chat.UserID, eventCh)
@@ -537,13 +575,13 @@ func (h *WSHandler) getClientForUser(userID string) *client.ClaudeClient {
 }
 
 // runConversation 运行对话
-func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, ag *agent.AgentType, eventCh chan loop.LoopEvent, conn *websocket.Conn, isNewSession bool) {
+func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, ag *agent.AgentType, eventCh chan loop.LoopEvent, conn *websocket.Conn, isNewSession bool, toolProvider types.ToolProvider) {
 	defer close(eventCh)
 	// P0.4: 对话结束时释放 Busy 锁
 	defer h.busySessions.Delete(sess.ID)
 
 	userClient := h.getClientForUser(userID)
-	l := loop.NewConversationLoop(userClient, sess, h.tools, systemPrompt, userID, sb, h.fileTime, ag, eventCh)
+	l := loop.NewConversationLoop(userClient, sess, toolProvider, systemPrompt, userID, sb, h.fileTime, ag, eventCh)
 	l.ProcessMessage(ctx, msg)
 
 	// 对话结束后保存会话
@@ -1878,13 +1916,7 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 		log.Printf("[WS] WARNING: workspace manager is nil, cannot load COWORKER.md")
 	}
 
-	// 加载用户已安装的 Agent 指令（Skill 已通过工具描述渐进式披露）
-	installedAgents := ""
-	if h.store != nil {
-		installedAgents = h.buildInstalledAgentsPrompt(userID)
-	}
-
-	// 构建提示词上下文
+	// 构建提示词上下文（Agent 不再被动注入系统提示词，改为通过 TaskTool 按需使用）
 	promptCtx := &prompt.PromptContext{
 		WorkingDir:       virtualWorkDir, // 使用虚拟路径
 		Model:            h.config.Claude.Model,
@@ -1893,7 +1925,6 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 		TasksRender:      tasksRender,
 		RelevantMemories: relevantMemories,
 		CustomRules:      customRules,
-		InstalledAgents:  installedAgents,
 		// 用户信息
 		UserName:     userName,
 		CoworkerName: coworkerName,
@@ -1939,27 +1970,53 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 	return systemPrompt
 }
 
-// buildInstalledAgentsPrompt 注入用户已安装的 Agent 指令到系统提示词
-// 注意：Skill 已通过 SkillsTool 的动态 Description 实现渐进式披露，不再注入系统提示词
-func (h *WSHandler) buildInstalledAgentsPrompt(userID string) string {
-	ids := h.store.LoadUserInstalled(userID)
-	if len(ids) == 0 {
-		return ""
-	}
+// refreshStoreAgents 刷新商店 Agent → 注入 agent.Registry
+func (h *WSHandler) refreshStoreAgents(userID string) {
+	// 清理旧的非内置代理
+	agent.DefaultRegistry.UnregisterNonNative()
 
-	var agentPrompts []string
+	// 注入商店 Agent
+	ids := h.store.LoadUserInstalled(userID)
 	for _, id := range ids {
 		item := h.store.GetByID(id)
-		if item != nil && item.Type == store.TypeAgent && item.Content != "" {
-			agentPrompts = append(agentPrompts, fmt.Sprintf("## Agent: %s\n%s", item.Name, item.Content))
+		if item == nil {
+			continue
+		}
+		if item.Type == store.TypeAgent {
+			agent.DefaultRegistry.Register(&agent.AgentType{
+				Name:        item.Name,
+				Description: item.Description,
+				Mode:        agent.ModeSubagent,
+				Native:      false,
+				Tools:       []string{"*"},
+				Permission: permissions.Merge(agent.DefaultPermission, permissions.Ruleset{
+					{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
+				}),
+				Prompt:   item.Content,
+				MaxTurns: 30,
+			})
+			log.Printf("[WS] Registered store agent: %s", item.Name)
+		}
+		if item.Type == store.TypePlugin {
+			for _, sub := range item.SubItems {
+				if sub.Type == store.SubTypeAgent {
+					agent.DefaultRegistry.Register(&agent.AgentType{
+						Name:        sub.Name,
+						Description: sub.Description,
+						Mode:        agent.ModeSubagent,
+						Native:      false,
+						Tools:       []string{"*"},
+						Permission: permissions.Merge(agent.DefaultPermission, permissions.Ruleset{
+							{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
+						}),
+						Prompt:   sub.Content,
+						MaxTurns: 30,
+					})
+					log.Printf("[WS] Registered plugin agent: %s (from plugin %s)", sub.Name, item.Name)
+				}
+			}
 		}
 	}
-
-	if len(agentPrompts) == 0 {
-		return ""
-	}
-
-	return "# Installed Agent Instructions\n\n" + strings.Join(agentPrompts, "\n\n")
 }
 
 // generateSessionTitle 异步生成会话标题

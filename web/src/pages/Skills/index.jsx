@@ -7,8 +7,8 @@ import { isAdmin, getUserIdFromLocalStorage } from '../../helpers/utils';
 
 const { Text, Title } = Typography;
 
-const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP' };
-const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green' };
+const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP', plugin: '插件' };
+const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green', plugin: 'orange' };
 
 const API_BASE = '/coworker/store';
 
@@ -34,6 +34,8 @@ function SkillIcon({ icon, size = 28 }) {
 function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, admin }) {
   const isInstalled = installed.includes(item.id);
 
+  const countByType = (type) => (item.sub_items || []).filter(s => s.type === type).length;
+
   return (
     <Card
       style={{ marginBottom: 12 }}
@@ -49,6 +51,13 @@ function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, a
             {item.author && <Text type="tertiary" size="small">by {item.author}</Text>}
           </div>
           <Text type="secondary" size="small">{item.description}</Text>
+          {item.type === 'plugin' && item.sub_items && item.sub_items.length > 0 && (
+            <div style={{ marginTop: 4, display: 'flex', gap: 8 }}>
+              {countByType('agent') > 0 && <Tag size="small" color="purple">{countByType('agent')} Agents</Tag>}
+              {countByType('skill') > 0 && <Tag size="small" color="blue">{countByType('skill')} Skills</Tag>}
+              {countByType('command') > 0 && <Tag size="small" color="cyan">{countByType('command')} Commands</Tag>}
+            </div>
+          )}
           {item.github_url && (
             <div style={{ marginTop: 4 }}>
               <a href={item.github_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -130,6 +139,7 @@ function EditModal({ visible, item, onClose, onSave }) {
               { label: '技能 (Skill)', value: 'skill' },
               { label: 'Agent', value: 'agent' },
               { label: 'MCP', value: 'mcp' },
+              { label: '插件 (Plugin)', value: 'plugin' },
             ]}
             style={{ width: '100%' }}
           />
@@ -190,6 +200,7 @@ function EditModal({ visible, item, onClose, onSave }) {
 
 function ImportModal({ visible, onClose, onDone }) {
   const [repoURL, setRepoURL] = useState('');
+  const [importType, setImportType] = useState('skill');
   const [loading, setLoading] = useState(false);
 
   const handleImport = async () => {
@@ -201,11 +212,12 @@ function ImportModal({ visible, onClose, onDone }) {
     try {
       const data = await apiFetch('/import', {
         method: 'POST',
-        body: JSON.stringify({ repo_url: repoURL.trim() }),
+        body: JSON.stringify({ repo_url: repoURL.trim(), import_type: importType }),
       });
       if (data.success) {
         Toast.success(`已导入 ${data.count} 个条目`);
         setRepoURL('');
+        setImportType('skill');
         onClose();
         onDone();
       } else {
@@ -228,6 +240,18 @@ function ImportModal({ visible, onClose, onDone }) {
       confirmLoading={loading}
     >
       <div style={{ marginBottom: 12 }}>
+        <Text size="small" style={{ display: 'block', marginBottom: 4 }}>导入类型</Text>
+        <Select
+          value={importType}
+          onChange={setImportType}
+          optionList={[
+            { label: '技能 (Skill)', value: 'skill' },
+            { label: '插件 (Plugin)', value: 'plugin' },
+          ]}
+          style={{ width: '100%' }}
+        />
+      </div>
+      <div style={{ marginBottom: 12 }}>
         <Text size="small" style={{ display: 'block', marginBottom: 4 }}>GitHub 仓库</Text>
         <Input
           placeholder="owner/repo 或 https://github.com/owner/repo"
@@ -236,7 +260,10 @@ function ImportModal({ visible, onClose, onDone }) {
         />
       </div>
       <Text type="tertiary" size="small">
-        支持格式：含 .claude-plugin/plugin.json、marketplace.json 或根目录 SKILL.md 的仓库
+        {importType === 'plugin'
+          ? '插件导入：将 agents + skills + commands 作为整体安装，支持 marketplace.json 和 plugin.json'
+          : '技能导入：导入 skills 目录中的独立技能，支持 SKILL.md 格式'
+        }
       </Text>
     </Modal>
   );
@@ -332,6 +359,7 @@ export default function Skills() {
         <TabPane tab="技能" itemKey="skill" />
         <TabPane tab="Agent" itemKey="agent" />
         <TabPane tab="MCP" itemKey="mcp" />
+        <TabPane tab="插件" itemKey="plugin" />
       </Tabs>
 
       {filtered.length === 0 && (

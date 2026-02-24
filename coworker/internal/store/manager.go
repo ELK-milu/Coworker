@@ -43,6 +43,7 @@ func (m *Manager) SetUseDB(useDB bool) {
 // storeItemToDBModel 将 StoreItem 转为 DB 模型
 func storeItemToDBModel(item StoreItem) *model.CoworkerStoreItem {
 	configJSON, _ := json.Marshal(item.ConfigSchema)
+	subItemsJSON, _ := json.Marshal(item.SubItems)
 	return &model.CoworkerStoreItem{
 		ID:           item.ID,
 		Name:         item.Name,
@@ -55,6 +56,7 @@ func storeItemToDBModel(item StoreItem) *model.CoworkerStoreItem {
 		LocalDir:     item.LocalDir,
 		ServerURL:    item.ServerURL,
 		ConfigSchema: string(configJSON),
+		SubItems:     string(subItemsJSON),
 		CreatedAt:    item.CreatedAt.Unix(),
 		UpdatedAt:    item.UpdatedAt.Unix(),
 	}
@@ -64,6 +66,9 @@ func storeItemToDBModel(item StoreItem) *model.CoworkerStoreItem {
 func dbModelToStoreItem(dbItem *model.CoworkerStoreItem) StoreItem {
 	var configSchema []ConfigField
 	json.Unmarshal([]byte(dbItem.ConfigSchema), &configSchema)
+
+	var subItems []SubItem
+	json.Unmarshal([]byte(dbItem.SubItems), &subItems)
 
 	return StoreItem{
 		ID:           dbItem.ID,
@@ -77,6 +82,7 @@ func dbModelToStoreItem(dbItem *model.CoworkerStoreItem) StoreItem {
 		LocalDir:     dbItem.LocalDir,
 		ServerURL:    dbItem.ServerURL,
 		ConfigSchema: configSchema,
+		SubItems:     subItems,
 		CreatedAt:    time.Unix(dbItem.CreatedAt, 0),
 		UpdatedAt:    time.Unix(dbItem.UpdatedAt, 0),
 	}
@@ -198,6 +204,11 @@ func (m *Manager) Delete(id string) error {
 				skillDir := filepath.Join(m.dataDir, "skills", s.LocalDir)
 				os.RemoveAll(skillDir)
 			}
+			// 清理 plugin 目录
+			if s.Type == TypePlugin && s.LocalDir != "" {
+				pluginDir := filepath.Join(m.dataDir, "plugins", s.LocalDir)
+				os.RemoveAll(pluginDir)
+			}
 			m.items = append(m.items[:i], m.items[i+1:]...)
 
 			// DB 路径
@@ -222,6 +233,14 @@ func (m *Manager) SkillDir(item *StoreItem) string {
 	return filepath.Join(m.dataDir, "skills", item.LocalDir)
 }
 
+// PluginDir 返回 plugin 的全局目录绝对路径
+func (m *Manager) PluginDir(item *StoreItem) string {
+	if item == nil || item.LocalDir == "" || item.Type != TypePlugin {
+		return ""
+	}
+	return filepath.Join(m.dataDir, "plugins", item.LocalDir)
+}
+
 // CopySkillsToWorkspace 将用户已安装的 skill 复制到 workspace/.skills/
 func (m *Manager) CopySkillsToWorkspace(userID, workspaceDir string) error {
 	ids := m.LoadUserInstalled(userID)
@@ -241,13 +260,29 @@ func (m *Manager) CopySkillsToWorkspace(userID, workspaceDir string) error {
 	m.mu.RLock()
 	for _, id := range ids {
 		for _, item := range m.items {
-			if item.ID == id && item.Type == TypeSkill && item.LocalDir != "" {
+			if item.ID != id {
+				continue
+			}
+			if item.Type == TypeSkill && item.LocalDir != "" {
 				srcDir := filepath.Join(m.dataDir, "skills", item.LocalDir)
 				if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
 					toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir})
 				}
-				break
 			}
+			if item.Type == TypePlugin && item.LocalDir != "" {
+				// 扫描 plugin 目录下的 skills/ 子目录
+				pluginSkillsDir := filepath.Join(m.dataDir, "plugins", item.LocalDir, "skills")
+				if info, err := os.Stat(pluginSkillsDir); err == nil && info.IsDir() {
+					entries, _ := os.ReadDir(pluginSkillsDir)
+					for _, entry := range entries {
+						if entry.IsDir() {
+							srcDir := filepath.Join(pluginSkillsDir, entry.Name())
+							toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: entry.Name()})
+						}
+					}
+				}
+			}
+			break
 		}
 	}
 	m.mu.RUnlock()
@@ -325,6 +360,53 @@ func (m *Manager) Import(repoURL string) ([]StoreItem, error) {
 			dbItem := storeItemToDBModel(item)
 			if err := model.CreateCoworkerStoreItem(dbItem); err != nil {
 				log.Printf("[Store] DB create failed for import item %s: %v", item.Name, err)
+			}
+		}
+
+		time.Sleep(time.Millisecond) // 确保 ID 唯一
+	}
+
+	if len(added) > 0 && !m.useDB {
+		if err := m.save(); err != nil {
+			return nil, err
+		}
+	}
+	return added, nil
+}
+
+// ImportPlugin 从 GitHub 导入插件（完整的 agents + skills + commands）
+func (m *Manager) ImportPlugin(repoURL string) ([]StoreItem, error) {
+	pluginsDir := filepath.Join(m.dataDir, "plugins")
+	parsed, err := ImportPluginFromGithub(repoURL, pluginsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing := make(map[string]bool)
+	for _, item := range m.items {
+		existing[item.Name] = true
+	}
+
+	var added []StoreItem
+	for _, item := range parsed {
+		if existing[item.Name] {
+			continue
+		}
+		item.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+		item.CreatedAt = time.Now()
+		item.UpdatedAt = time.Now()
+		m.items = append(m.items, item)
+		added = append(added, item)
+		existing[item.Name] = true
+
+		// DB 路径
+		if m.useDB {
+			dbItem := storeItemToDBModel(item)
+			if err := model.CreateCoworkerStoreItem(dbItem); err != nil {
+				log.Printf("[Store] DB create failed for import plugin %s: %v", item.Name, err)
 			}
 		}
 

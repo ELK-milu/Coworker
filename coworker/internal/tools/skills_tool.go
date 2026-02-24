@@ -216,7 +216,24 @@ func (t *SkillsTool) collectSkills(userID string) []skillEntry {
 	seen := make(map[string]bool)
 	for _, id := range t.store.LoadUserInstalled(userID) {
 		item := t.store.GetByID(id)
-		if item == nil || item.Type != store.TypeSkill || seen[item.Name] {
+		if item == nil {
+			continue
+		}
+		if item.Type == store.TypePlugin {
+			for _, sub := range item.SubItems {
+				if (sub.Type == store.SubTypeSkill || sub.Type == store.SubTypeCommand) && !seen[sub.Name] {
+					entries = append(entries, skillEntry{
+						Name:        sub.Name,
+						Description: sub.Description,
+						Content:     sub.Content,
+						LocalDir:    sub.LocalDir,
+					})
+					seen[sub.Name] = true
+				}
+			}
+			continue
+		}
+		if item.Type != store.TypeSkill || seen[item.Name] {
 			continue
 		}
 		entries = append(entries, skillEntry{
@@ -244,7 +261,23 @@ func (t *SkillsTool) findSkill(name string) *skillEntry {
 	}
 	for _, id := range t.store.LoadUserInstalled(userID) {
 		item := t.store.GetByID(id)
-		if item != nil && item.Type == store.TypeSkill && item.Name == name && item.Content != "" {
+		if item == nil {
+			continue
+		}
+		if item.Type == store.TypePlugin {
+			for _, sub := range item.SubItems {
+				if (sub.Type == store.SubTypeSkill || sub.Type == store.SubTypeCommand) && sub.Name == name && sub.Content != "" {
+					return &skillEntry{
+						Name:        sub.Name,
+						Description: sub.Description,
+						Content:     sub.Content,
+						LocalDir:    sub.LocalDir,
+					}
+				}
+			}
+			continue
+		}
+		if item.Type == store.TypeSkill && item.Name == name && item.Content != "" {
 			return &skillEntry{
 				Name:        item.Name,
 				Description: item.Description,

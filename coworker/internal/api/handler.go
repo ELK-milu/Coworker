@@ -1134,13 +1134,21 @@ func (h *RESTHandler) ImportStoreItems(c *gin.Context) {
 		return
 	}
 	var req struct {
-		RepoURL string `json:"repo_url"`
+		RepoURL    string `json:"repo_url"`
+		ImportType string `json:"import_type"` // "skill"(默认) 或 "plugin"
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.RepoURL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "repo_url is required"})
 		return
 	}
-	items, err := h.store.Import(req.RepoURL)
+
+	var items []store.StoreItem
+	var err error
+	if req.ImportType == "plugin" {
+		items, err = h.store.ImportPlugin(req.RepoURL)
+	} else {
+		items, err = h.store.Import(req.RepoURL)
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

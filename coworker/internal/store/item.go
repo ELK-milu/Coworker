@@ -5,10 +5,30 @@ import "time"
 type ItemType string
 
 const (
-	TypeSkill ItemType = "skill"
-	TypeAgent ItemType = "agent"
-	TypeMCP   ItemType = "mcp"
+	TypeSkill  ItemType = "skill"
+	TypeAgent  ItemType = "agent"
+	TypeMCP    ItemType = "mcp"
+	TypePlugin ItemType = "plugin"
 )
+
+// SubItemType 子条目类型
+type SubItemType string
+
+const (
+	SubTypeAgent   SubItemType = "agent"
+	SubTypeSkill   SubItemType = "skill"
+	SubTypeCommand SubItemType = "command"
+)
+
+// SubItem 插件的子条目（agent/skill/command）
+type SubItem struct {
+	Type        SubItemType `json:"type"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Content     string      `json:"content"`              // markdown 全文
+	LocalDir    string      `json:"local_dir,omitempty"`   // skill 的本地目录（相对于 store/plugins/{plugin}/skills/）
+	Model       string      `json:"model,omitempty"`       // agent 专属：opus/sonnet/haiku/inherit
+}
 
 // ConfigField 用户配置字段定义
 type ConfigField struct {
@@ -32,6 +52,7 @@ type StoreItem struct {
 	LocalDir     string        `json:"local_dir,omitempty"` // 本地目录路径（相对于 store/skills/）
 	ServerURL    string        `json:"server_url,omitempty"` // mcp: 服务器 URL
 	ConfigSchema []ConfigField `json:"config_schema,omitempty"`
+	SubItems     []SubItem     `json:"sub_items,omitempty"` // plugin: 子条目列表
 	CreatedAt    time.Time     `json:"created_at"`
 	UpdatedAt    time.Time     `json:"updated_at"`
 }
