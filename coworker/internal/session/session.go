@@ -13,6 +13,7 @@ type Session struct {
 	ID         string
 	UserID     string
 	Title      string // 会话标题（AI 生成）
+	ParentID   string // 父会话 ID（子代理用）
 	Messages   []types.Message
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -163,4 +164,11 @@ func (s *Session) SetExtractionState(extractedAt int64, msgCount int) {
 	defer s.mu.Unlock()
 	s.LastExtractedAt = extractedAt
 	s.LastExtractedMsgCount = msgCount
+}
+
+// SetParentID 设置父会话 ID（子代理用）
+func (s *Session) SetParentID(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ParentID = id
 }

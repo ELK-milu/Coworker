@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/coworker/internal/sandbox"
 	"github.com/QuantumNous/new-api/coworker/internal/session"
 	"github.com/QuantumNous/new-api/coworker/internal/store"
+	"github.com/QuantumNous/new-api/coworker/internal/subagent"
 	"github.com/QuantumNous/new-api/coworker/internal/task"
 	"github.com/QuantumNous/new-api/coworker/internal/tools"
 	"github.com/QuantumNous/new-api/coworker/internal/variable"
@@ -209,6 +210,24 @@ func Init() *Module {
 	wsHandler.SetEventBus(bus)
 	log.Println("[Coworker] EventBus initialized with memory handlers")
 
+	// 创建每用户 MCP 管理器
+	userMCPManager := mcp.NewUserMCPManager(storeManager)
+	wsHandler.SetUserMCPManager(userMCPManager)
+
+	// 注入 SubagentExecutor 到 TaskTool
+	if taskToolRaw, ok := toolRegistry.Get("Task"); ok {
+		if tt, ok := tools.UnwrapAs[*tools.TaskTool](taskToolRaw); ok {
+			executor := subagent.NewConversationSubagentExecutor(
+				wsHandler.GetClientForUser,
+				sessionManager,
+				workspaceManager,
+				cfg,
+			)
+			tt.SetExecutor(executor)
+			log.Println("[Coworker] SubagentExecutor injected into TaskTool")
+		}
+	}
+
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)
 
@@ -299,7 +318,10 @@ func registerTools(registry *tools.Registry, cfg *config.Config, taskManager *ta
 	// 注册技能工具（仅 store 源，渐进式披露）
 	tools.RegisterWithFactory(registry, factory, tools.NewSkillsTool(storeManager))
 
-	log.Printf("[Coworker] Registered %d tools with factory pattern (sandbox pool: %v)", 17, sandboxPool != nil)
+	// 注册子代理任务工具（渐进式披露）
+	tools.RegisterWithFactory(registry, factory, tools.NewTaskTool(storeManager))
+
+	log.Printf("[Coworker] Registered %d tools with factory pattern (sandbox pool: %v)", 18, sandboxPool != nil)
 }
 
 // Shutdown 优雅关闭模块

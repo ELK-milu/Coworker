@@ -34,7 +34,7 @@ type toolCallRecord struct {
 type ConversationLoop struct {
 	client    *client.ClaudeClient
 	session   *session.Session
-	tools     *tools.Registry
+	tools     types.ToolProvider
 	eventCh   chan<- LoopEvent
 	system    string
 	mode      string // normal, plan, acceptEdits, bypassPermissions
@@ -129,7 +129,7 @@ const (
 func NewConversationLoop(
 	c *client.ClaudeClient,
 	sess *session.Session,
-	registry *tools.Registry,
+	toolProvider types.ToolProvider,
 	systemPrompt string,
 	userID string,
 	sb *sandbox.Sandbox,
@@ -151,7 +151,7 @@ func NewConversationLoop(
 	return &ConversationLoop{
 		client:         c,
 		session:        sess,
-		tools:          registry,
+		tools:          toolProvider,
 		system:         systemPrompt,
 		eventCh:        eventCh,
 		mode:           "normal",
@@ -446,6 +446,8 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 	toolCtx = context.WithValue(toolCtx, types.SessionIDKey, l.session.ID)
 	toolCtx = context.WithValue(toolCtx, types.SandboxKey, l.sandbox)
 	toolCtx = context.WithValue(toolCtx, types.FileTimeKey, l.fileTime)
+	toolCtx = context.WithValue(toolCtx, types.EventChKey, l.eventCh)
+	toolCtx = context.WithValue(toolCtx, types.ToolProviderKey, l.tools)
 
 	for _, tc := range calls {
 		log.Printf("[Tool] Executing: name=%s, id=%s, workDir=%s", tc.Name, tc.ID, workDir)

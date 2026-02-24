@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"strings"
+
 	"github.com/QuantumNous/new-api/coworker/internal/permissions"
 )
 
@@ -91,6 +93,7 @@ var (
 				{Permission: "read", Pattern: "*", Action: permissions.BehaviorAllow},
 				{Permission: "webfetch", Pattern: "*", Action: permissions.BehaviorAllow},
 				{Permission: "websearch", Pattern: "*", Action: permissions.BehaviorAllow},
+				{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
 			},
 		),
 		Prompt: `You are a file search specialist. You excel at thoroughly navigating and exploring codebases.
@@ -154,6 +157,7 @@ Rules:
 			permissions.Ruleset{
 				{Permission: "todoread", Pattern: "*", Action: permissions.BehaviorDeny},
 				{Permission: "todowrite", Pattern: "*", Action: permissions.BehaviorDeny},
+				{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
 			},
 		),
 		Prompt:   "",
@@ -251,6 +255,31 @@ func (r *Registry) GetDescriptions() string {
 	return desc
 }
 
+// ListSubagents 列出可用于 Task 工具的子代理（subagent/all 模式，非 hidden）
+func (r *Registry) ListSubagents() []*AgentType {
+	var result []*AgentType
+	for _, t := range r.types {
+		if (t.Mode == ModeSubagent || t.Mode == ModeAll) && !t.Hidden {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
+// Unregister 注销代理类型
+func (r *Registry) Unregister(name string) {
+	delete(r.types, name)
+}
+
+// UnregisterNonNative 清理所有非内置代理
+func (r *Registry) UnregisterNonNative() {
+	for name, t := range r.types {
+		if !t.Native {
+			delete(r.types, name)
+		}
+	}
+}
+
 // IsToolAllowed 检查工具是否被允许（工具列表 + 权限规则集双重检查）
 func (t *AgentType) IsToolAllowed(toolName string) bool {
 	// 1. 先检查工具列表
@@ -271,7 +300,7 @@ func (t *AgentType) IsToolAllowed(toolName string) bool {
 
 	// 2. 再检查权限规则集（如果有）
 	if len(t.Permission) > 0 {
-		rule := permissions.Evaluate(toolName, "*", t.Permission)
+		rule := permissions.Evaluate(strings.ToLower(toolName), "*", t.Permission)
 		return rule.Action != permissions.BehaviorDeny
 	}
 
@@ -284,7 +313,7 @@ func (t *AgentType) CheckPermission(permission, pattern string) permissions.Chec
 	if len(t.Permission) == 0 {
 		return permissions.BehaviorAllow
 	}
-	rule := permissions.Evaluate(permission, pattern, t.Permission)
+	rule := permissions.Evaluate(strings.ToLower(permission), pattern, t.Permission)
 	return rule.Action
 }
 

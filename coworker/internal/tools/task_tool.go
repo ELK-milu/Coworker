@@ -4,69 +4,88 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/coworker/internal/agent"
+	"github.com/QuantumNous/new-api/coworker/internal/store"
 	"github.com/QuantumNous/new-api/coworker/pkg/types"
 )
 
-// TaskTool 子代理任务工具
-// 参考 learn-claude-code v3 设计：分而治之，上下文隔离
+// TaskTool 子代理任务工具 — 渐进式披露 + Resume + 反递归
+// 参考 OpenCode tool/task.ts + Claude Code Task tool:
+//   - Description() 动态列出 <available_agents>（仅 name + description）
+//   - Execute() 按需启动独立子会话
 type TaskTool struct {
 	agentRegistry *agent.Registry
-	// 子代理执行器回调（由外部注入）
-	executor SubagentExecutor
+	store         *store.Manager
+	executor      SubagentExecutor
+
+	mu           sync.RWMutex
+	userID       string
+	cachedDesc   string
+	cachedAgents []*agent.AgentType
 }
 
 // SubagentExecutor 子代理执行器接口
 type SubagentExecutor interface {
 	// Execute 执行子代理任务
-	// 返回子代理的最终输出文本
-	Execute(ctx context.Context, agentType *agent.AgentType, prompt string) (string, error)
+	// resumeSessionID 非空时恢复已有子会话
+	// 返回子代理输出文本和子会话 ID
+	Execute(ctx context.Context, agentType *agent.AgentType, prompt string, resumeSessionID string) (result string, sessionID string, err error)
 }
 
 // TaskInput Task 工具输入
 type TaskInput struct {
-	Description string `json:"description"` // 短任务名（3-5 词）
-	Prompt      string `json:"prompt"`      // 详细指令
-	AgentType   string `json:"agent_type"`  // 代理类型
+	Description  string `json:"description"`            // 短任务名（3-5 词）
+	Prompt       string `json:"prompt"`                 // 详细指令
+	SubagentType string `json:"subagent_type"`          // 子代理类型
+	TaskID       string `json:"task_id,omitempty"`       // 可选：恢复已有子会话
 }
 
 // NewTaskTool 创建 Task 工具
-func NewTaskTool() *TaskTool {
-	return &TaskTool{
+func NewTaskTool(storeMgr *store.Manager) *TaskTool {
+	t := &TaskTool{
 		agentRegistry: agent.DefaultRegistry,
+		store:         storeMgr,
 	}
+	t.rebuildCache("")
+	return t
 }
 
 // SetExecutor 设置子代理执行器
 func (t *TaskTool) SetExecutor(executor SubagentExecutor) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.executor = executor
+}
+
+// RefreshForUser 刷新当前用户的可用子代理列表（每次对话前调用）
+func (t *TaskTool) RefreshForUser(userID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.userID = userID
+	t.rebuildCache(userID)
 }
 
 func (t *TaskTool) Name() string { return "Task" }
 
+// Description 动态返回包含 <available_agents> 的描述
 func (t *TaskTool) Description() string {
-	desc := `Spawn a subagent for a focused subtask with ISOLATED context.
-
-Subagents run in their own context - they don't see parent's history.
-Use this to keep the main conversation clean and focused.
-
-Agent types:
-` + t.agentRegistry.GetDescriptions() + `
-Example uses:
-- Task(explore): "Find all files using the auth module"
-- Task(plan): "Design a migration strategy for the database"
-- Task(code): "Implement the user registration form"`
-
-	return desc
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.cachedDesc
 }
 
 func (t *TaskTool) InputSchema() map[string]interface{} {
-	agentTypes := t.agentRegistry.List()
-	typeNames := make([]string, 0, len(agentTypes))
-	for _, at := range agentTypes {
-		typeNames = append(typeNames, at.Name)
+	t.mu.RLock()
+	agents := t.cachedAgents
+	t.mu.RUnlock()
+
+	typeNames := make([]string, 0, len(agents))
+	for _, ag := range agents {
+		typeNames = append(typeNames, ag.Name)
 	}
 
 	return map[string]interface{}{
@@ -74,19 +93,23 @@ func (t *TaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"description": map[string]interface{}{
 				"type":        "string",
-				"description": "Short task name (3-5 words) for progress display",
+				"description": "A short (3-5 word) description of the task",
 			},
 			"prompt": map[string]interface{}{
 				"type":        "string",
-				"description": "Detailed instructions for the subagent",
+				"description": "The task for the agent to perform",
 			},
-			"agent_type": map[string]interface{}{
+			"subagent_type": map[string]interface{}{
 				"type":        "string",
 				"enum":        typeNames,
-				"description": "Type of agent to spawn",
+				"description": "The type of specialized agent to use for this task",
+			},
+			"task_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: resume a previous subagent session by its task_id",
 			},
 		},
-		"required": []string{"description", "prompt", "agent_type"},
+		"required": []string{"description", "prompt", "subagent_type"},
 	}
 }
 
@@ -102,18 +125,28 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		}, nil
 	}
 
-	// 获取代理类型
-	agentType := t.agentRegistry.Get(in.AgentType)
+	// 获取代理类型（仅 subagent/all 模式）
+	agentType := t.agentRegistry.Get(in.SubagentType)
 	if agentType == nil {
 		return &types.ToolResult{
 			Success:   false,
-			Error:     fmt.Sprintf("unknown agent type: %s", in.AgentType),
+			Error:     fmt.Sprintf("unknown subagent type: %s. Use one from the available_agents list.", in.SubagentType),
+			ElapsedMs: time.Since(startTime).Milliseconds(),
+		}, nil
+	}
+	if agentType.Mode != agent.ModeSubagent && agentType.Mode != agent.ModeAll {
+		return &types.ToolResult{
+			Success:   false,
+			Error:     fmt.Sprintf("agent %q is not available as a subagent (mode=%s)", in.SubagentType, agentType.Mode),
 			ElapsedMs: time.Since(startTime).Milliseconds(),
 		}, nil
 	}
 
-	// 检查是否有执行器
-	if t.executor == nil {
+	t.mu.RLock()
+	executor := t.executor
+	t.mu.RUnlock()
+
+	if executor == nil {
 		return &types.ToolResult{
 			Success:   false,
 			Error:     "subagent executor not configured",
@@ -122,7 +155,7 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 	}
 
 	// 执行子代理
-	result, err := t.executor.Execute(ctx, agentType, in.Prompt)
+	result, sessionID, err := executor.Execute(ctx, agentType, in.Prompt, in.TaskID)
 	if err != nil {
 		return &types.ToolResult{
 			Success:   false,
@@ -131,13 +164,52 @@ func (t *TaskTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		}, nil
 	}
 
+	// 格式化输出（含 task_id 供 resume）
+	output := fmt.Sprintf("task_id: %s\n<task_result>\n%s\n</task_result>", sessionID, result)
+
 	return &types.ToolResult{
 		Success:   true,
-		Output:    result,
+		Output:    output,
 		ElapsedMs: time.Since(startTime).Milliseconds(),
 		Metadata: map[string]interface{}{
-			"agent_type":  in.AgentType,
-			"description": in.Description,
+			"subagent_type": in.SubagentType,
+			"description":   in.Description,
+			"task_id":       sessionID,
 		},
 	}, nil
+}
+
+// rebuildCache 重建缓存（调用方需持有写锁）
+func (t *TaskTool) rebuildCache(userID string) {
+	// 收集：内置子代理
+	agents := t.agentRegistry.ListSubagents()
+	t.cachedAgents = agents
+
+	if len(agents) == 0 {
+		t.cachedDesc = "Launch a subagent to handle a focused subtask with isolated context. No agents are currently available."
+		return
+	}
+
+	// 构建 description（类似 SkillsTool 的渐进式披露）
+	var lines []string
+	lines = append(lines,
+		"Launch a new agent to handle complex, multi-step tasks autonomously.",
+		"",
+		"Each agent runs in an independent session with its own context.",
+		"Use this to keep the main conversation clean and delegate focused work.",
+		"",
+		"You can resume a previous subagent session by passing its task_id.",
+		"",
+		"<available_agents>",
+	)
+	for _, ag := range agents {
+		lines = append(lines,
+			"  <agent>",
+			fmt.Sprintf("    <name>%s</name>", ag.Name),
+			fmt.Sprintf("    <description>%s</description>", ag.Description),
+			"  </agent>",
+		)
+	}
+	lines = append(lines, "</available_agents>")
+	t.cachedDesc = strings.Join(lines, "\n")
 }

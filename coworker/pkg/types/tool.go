@@ -23,6 +23,10 @@ const (
 	FileTimeKey ContextKey = "filetime"
 	// MetadataCallbackKey 元数据回调函数的 context key
 	MetadataCallbackKey ContextKey = "metadata_callback"
+	// EventChKey 事件通道的 context key（用于子代理转发）
+	EventChKey ContextKey = "event_ch"
+	// ToolProviderKey 工具提供者的 context key（用于子代理继承 MCP 工具）
+	ToolProviderKey ContextKey = "tool_provider"
 )
 
 // MetadataCallback 元数据回调函数类型
@@ -92,6 +96,14 @@ type Tool interface {
 	Description() string
 	InputSchema() map[string]interface{}
 	Execute(ctx context.Context, input json.RawMessage) (*ToolResult, error)
+}
+
+// ToolProvider 工具提供者接口（抽象工具注册表）
+// *tools.Registry 和 *tools.ToolOverlay 均满足此接口
+type ToolProvider interface {
+	Get(name string) (Tool, bool)
+	GetDefinitions() []ToolDefinition
+	Execute(ctx context.Context, name string, input json.RawMessage) (*ToolResult, error)
 }
 
 // WebSearchTool Server Tool 定义
