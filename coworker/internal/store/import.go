@@ -20,19 +20,24 @@ func ImportFromGithub(repoURL string, storeDir string) ([]StoreItem, error) {
 	}
 
 	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
+	repoIdent := owner + "/" + repo
 
-	// 1. 尝试 .claude-plugin/plugin.json
-	if items, err := tryPluginJSON(owner, repo, ghURL, storeDir); err == nil && len(items) > 0 {
+	// 优先级: marketplace.json > plugin.json > root SKILL.md
+	// 1. 尝试 .claude-plugin/marketplace.json（信息最丰富，含显式 skill 路径）
+	if items, err := tryMarketplaceJSON(owner, repo, ghURL, storeDir); err == nil && len(items) > 0 {
+		fillDefaultAuthor(items, repoIdent)
 		return items, nil
 	}
 
-	// 2. 尝试 .claude-plugin/marketplace.json
-	if items, err := tryMarketplaceJSON(owner, repo, ghURL, storeDir); err == nil && len(items) > 0 {
+	// 2. 尝试 .claude-plugin/plugin.json
+	if items, err := tryPluginJSON(owner, repo, ghURL, storeDir); err == nil && len(items) > 0 {
+		fillDefaultAuthor(items, repoIdent)
 		return items, nil
 	}
 
 	// 3. 尝试根目录 SKILL.md / skill.md
 	if items, err := tryRootSkill(owner, repo, ghURL, storeDir); err == nil && len(items) > 0 {
+		fillDefaultAuthor(items, repoIdent)
 		return items, nil
 	}
 
@@ -123,22 +128,58 @@ func tryMarketplaceJSON(owner, repo, ghURL, storeDir string) ([]StoreItem, error
 
 	var allItems []StoreItem
 	for _, p := range mp.Plugins {
-		localPath, ok := p.Source.(string)
-		if !ok {
-			continue
+		if len(p.Skills) > 0 {
+			// 使用显式 skill 路径
+			more := scanSkillPaths(owner, repo, p.Skills, ghURL, storeDir)
+			allItems = append(allItems, more...)
+		} else {
+			// 回退：从 Source 目录扫描
+			localPath, ok := p.Source.(string)
+			if !ok {
+				continue
+			}
+			localPath = strings.TrimPrefix(localPath, "./")
+			skillsPath := "skills"
+			if localPath != "" {
+				skillsPath = localPath + "/skills"
+			}
+			items, err := scanSkillsDir(owner, repo, skillsPath, "", ghURL, storeDir)
+			if err != nil {
+				continue
+			}
+			allItems = append(allItems, items...)
 		}
-		localPath = strings.TrimPrefix(localPath, "./")
-		skillsPath := localPath + "/skills"
-		items, err := scanSkillsDir(owner, repo, skillsPath, p.Name, ghURL, storeDir)
-		if err != nil {
-			continue
-		}
-		allItems = append(allItems, items...)
 	}
 	if len(allItems) == 0 {
 		return nil, fmt.Errorf("no skills found in marketplace plugins")
 	}
 	return allItems, nil
+}
+
+// scanSkillPaths 根据显式路径列表逐个获取 skill（用于 ImportFromGithub）
+func scanSkillPaths(owner, repo string, paths []string, ghURL, storeDir string) []StoreItem {
+	var items []StoreItem
+	for _, p := range paths {
+		p = strings.TrimPrefix(p, "./")
+		dirName := filepath.Base(p)
+		for _, fname := range []string{"SKILL.md", "skill.md"} {
+			content, err := ghRawGet(owner, repo, p+"/"+fname)
+			if err != nil {
+				continue
+			}
+			item := parseSkillMD(content, dirName, ghURL)
+			if storeDir != "" {
+				localDir := sanitizeDirName(item.Name)
+				destDir := filepath.Join(storeDir, localDir)
+				if err := downloadSkillDir(owner, repo, p, destDir); err == nil {
+					item.LocalDir = localDir
+				}
+			}
+			items = append(items, item)
+			break
+		}
+	}
+	return items
 }
 
 func tryRootSkill(owner, repo, ghURL, storeDir string) ([]StoreItem, error) {
@@ -296,6 +337,15 @@ func downloadSkillDir(owner, repo, remotePath, localDir string) error {
 	return nil
 }
 
+// fillDefaultAuthor 为没有 Author 的 StoreItem 填充默认值（owner/repo 格式）
+func fillDefaultAuthor(items []StoreItem, defaultAuthor string) {
+	for i := range items {
+		if items[i].Author == "" {
+			items[i].Author = defaultAuthor
+		}
+	}
+}
+
 // sanitizeDirName 将 skill 名称转为安全的目录名
 func sanitizeDirName(name string) string {
 	name = strings.TrimSpace(name)
@@ -316,10 +366,12 @@ func ImportAgentsFromGithub(repoURL string) ([]StoreItem, error) {
 	}
 
 	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
+	repoIdent := owner + "/" + repo
 
 	// 尝试根目录 agents/
 	items := scanAgentsToStoreItems(owner, repo, "agents", ghURL)
 	if len(items) > 0 {
+		fillDefaultAuthor(items, repoIdent)
 		return items, nil
 	}
 
@@ -399,19 +451,23 @@ func ImportPluginFromGithub(repoURL string, pluginsDir string) ([]StoreItem, err
 	}
 
 	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
+	repoIdent := owner + "/" + repo
 
 	// 1. 尝试 marketplace.json → 多个插件
 	if items, err := tryMarketplacePlugins(owner, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
+		fillDefaultAuthor(items, repoIdent)
 		return items, nil
 	}
 
 	// 2. 尝试 plugin.json → 单个插件
 	if items, err := trySinglePlugin(owner, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
+		fillDefaultAuthor(items, repoIdent)
 		return items, nil
 	}
 
 	// 3. 尝试根目录直接扫描 agents/ + skills/ + commands/
 	if items, err := tryRootPlugin(owner, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
+		fillDefaultAuthor(items, repoIdent)
 		return items, nil
 	}
 
@@ -436,7 +492,7 @@ func tryMarketplacePlugins(owner, repo, ghURL, pluginsDir string) ([]StoreItem, 
 		}
 		localPath = strings.TrimPrefix(localPath, "./")
 
-		item := buildPluginItem(owner, repo, localPath, p.Name, p.Description, ghURL, pluginsDir)
+		item := buildPluginItem(owner, repo, localPath, p.Name, p.Description, ghURL, pluginsDir, p.Skills)
 		if item != nil {
 			allItems = append(allItems, *item)
 		}
@@ -466,7 +522,7 @@ func trySinglePlugin(owner, repo, ghURL, pluginsDir string) ([]StoreItem, error)
 		desc = "Imported plugin from GitHub"
 	}
 
-	item := buildPluginItem(owner, repo, "", name, desc, ghURL, pluginsDir)
+	item := buildPluginItem(owner, repo, "", name, desc, ghURL, pluginsDir, nil)
 	if item == nil {
 		return nil, fmt.Errorf("no sub-items found in plugin")
 	}
@@ -477,14 +533,14 @@ func trySinglePlugin(owner, repo, ghURL, pluginsDir string) ([]StoreItem, error)
 }
 
 func tryRootPlugin(owner, repo, ghURL, pluginsDir string) ([]StoreItem, error) {
-	item := buildPluginItem(owner, repo, "", repo, "Imported plugin from GitHub", ghURL, pluginsDir)
+	item := buildPluginItem(owner, repo, "", repo, "Imported plugin from GitHub", ghURL, pluginsDir, nil)
 	if item == nil {
 		return nil, fmt.Errorf("no sub-items found in root")
 	}
 	return []StoreItem{*item}, nil
 }
 
-func buildPluginItem(owner, repo, remotePath, name, desc, ghURL, pluginsDir string) *StoreItem {
+func buildPluginItem(owner, repo, remotePath, name, desc, ghURL, pluginsDir string, skillPaths []string) *StoreItem {
 	var subItems []SubItem
 
 	agentDir := "agents"
@@ -500,8 +556,13 @@ func buildPluginItem(owner, repo, remotePath, name, desc, ghURL, pluginsDir stri
 	agentSubs := scanAgentsMD(owner, repo, agentDir)
 	subItems = append(subItems, agentSubs...)
 
-	// 扫描 skills/
-	skillSubs := scanSkillsMD(owner, repo, skillDir)
+	// 扫描 skills/：优先使用显式路径列表
+	var skillSubs []SubItem
+	if len(skillPaths) > 0 {
+		skillSubs = scanSkillPathsMD(owner, repo, skillPaths)
+	} else {
+		skillSubs = scanSkillsMD(owner, repo, skillDir)
+	}
 	subItems = append(subItems, skillSubs...)
 
 	// 扫描 commands/
@@ -588,6 +649,43 @@ func scanAgentsMD(owner, repo, dirPath string) []SubItem {
 			Model:       model,
 			Tools:       tools,
 		})
+	}
+	return subs
+}
+
+// scanSkillPathsMD 根据显式路径列表逐个获取 skill（用于 plugin 导入，返回 SubItem）
+func scanSkillPathsMD(owner, repo string, paths []string) []SubItem {
+	var subs []SubItem
+	for _, p := range paths {
+		p = strings.TrimPrefix(p, "./")
+		dirName := filepath.Base(p)
+		for _, fname := range []string{"SKILL.md", "skill.md"} {
+			content, err := ghRawGet(owner, repo, p+"/"+fname)
+			if err != nil {
+				continue
+			}
+			skillName := dirName
+			description := "Imported from GitHub"
+			if strings.HasPrefix(content, "---") {
+				parts := strings.SplitN(content[3:], "---", 2)
+				if len(parts) == 2 {
+					if n := extractYAMLField(parts[0], "name"); n != "" {
+						skillName = n
+					}
+					if d := extractYAMLField(parts[0], "description"); d != "" {
+						description = d
+					}
+				}
+			}
+			subs = append(subs, SubItem{
+				Type:        SubTypeSkill,
+				Name:        skillName,
+				Description: description,
+				Content:     content,
+				LocalDir:    "skills/" + dirName,
+			})
+			break
+		}
 	}
 	return subs
 }

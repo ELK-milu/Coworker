@@ -78,5 +78,6 @@ type MarketplacePlugin struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	Version     string      `json:"version"`
-	Source      interface{} `json:"source"` // string 或 { "source": "url", "url": "..." }
+	Source      interface{} `json:"source"`   // string 或 { "source": "url", "url": "..." }
+	Skills      []string    `json:"skills"`   // 显式 skill 路径列表（如 ["./skills/pdf", "./skills/docx"]）
 }
