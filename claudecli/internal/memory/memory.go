@@ -5,13 +5,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/model"
 	"github.com/google/uuid"
 )
 
@@ -45,8 +48,9 @@ func (m *Memory) CalculateWeight() float64 {
 // Manager 记忆管理器
 type Manager struct {
 	baseDir  string
-	memories map[string]map[string]*Memory // userID -> memoryID -> Memory
-	tagIndex map[string]map[string][]string // userID -> tag -> memoryIDs
+	useDB    bool                              // 是否使用数据库持久化
+	memories map[string]map[string]*Memory     // userID -> memoryID -> Memory (L1 cache)
+	tagIndex map[string]map[string][]string    // userID -> tag -> memoryIDs
 	mu       sync.RWMutex
 }
 
@@ -56,6 +60,70 @@ func NewManager(baseDir string) *Manager {
 		baseDir:  baseDir,
 		memories: make(map[string]map[string]*Memory),
 		tagIndex: make(map[string]map[string][]string),
+	}
+}
+
+// SetUseDB 设置是否使用数据库持久化
+func (m *Manager) SetUseDB(useDB bool) {
+	m.useDB = useDB
+}
+
+// parseUserID 将 string userID 转为 int（供 DB 查询）
+// 非数字 userID 返回 0, false
+func parseUserID(userID string) (int, bool) {
+	id, err := strconv.Atoi(userID)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// memoryToDBModel 将内部 Memory 转为 DB 模型
+func memoryToDBModel(mem *Memory) *model.CoworkerMemory {
+	dbUserID, _ := parseUserID(mem.UserID)
+	tagsJSON, _ := json.Marshal(mem.Tags)
+	metadataJSON, _ := json.Marshal(mem.Metadata)
+	return &model.CoworkerMemory{
+		ID:          mem.ID,
+		UserID:      dbUserID,
+		Tags:        string(tagsJSON),
+		Content:     mem.Content,
+		Summary:     mem.Summary,
+		Source:      mem.Source,
+		SessionID:   mem.SessionID,
+		WindowID:    mem.WindowID,
+		ContentHash: ContentHash(mem.Content),
+		Weight:      mem.Weight,
+		AccessCnt:   mem.AccessCnt,
+		Metadata:    string(metadataJSON),
+		CreatedAt:   mem.CreatedAt,
+		UpdatedAt:   mem.UpdatedAt,
+		LastAccess:  mem.LastAccess,
+	}
+}
+
+// dbModelToMemory 将 DB 模型转为内部 Memory
+func dbModelToMemory(dbMem *model.CoworkerMemory) *Memory {
+	var tags []string
+	json.Unmarshal([]byte(dbMem.Tags), &tags)
+	var metadata map[string]interface{}
+	json.Unmarshal([]byte(dbMem.Metadata), &metadata)
+
+	return &Memory{
+		ID:         dbMem.ID,
+		UserID:     strconv.Itoa(dbMem.UserID),
+		Tags:       tags,
+		Content:    dbMem.Content,
+		Summary:    dbMem.Summary,
+		Source:     dbMem.Source,
+		SessionID:  dbMem.SessionID,
+		WindowID:   dbMem.WindowID,
+		Weight:     dbMem.Weight,
+		AccessCnt:  dbMem.AccessCnt,
+		Metadata:   metadata,
+		CreatedAt:  dbMem.CreatedAt,
+		UpdatedAt:  dbMem.UpdatedAt,
+		LastAccess: dbMem.LastAccess,
 	}
 }
 
@@ -95,6 +163,17 @@ func (m *Manager) Create(userID string, mem *Memory) (*Memory, error) {
 	}
 
 	// 持久化
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMem := memoryToDBModel(mem)
+			dbMem.UserID = dbUserID
+			if err := model.CreateCoworkerMemory(dbMem); err != nil {
+				log.Printf("[Memory] DB create failed, falling back to file: %v", err)
+				return mem, m.saveMemory(userID, mem)
+			}
+			return mem, nil
+		}
+	}
 	if err := m.saveMemory(userID, mem); err != nil {
 		return nil, err
 	}
@@ -105,11 +184,21 @@ func (m *Manager) Create(userID string, mem *Memory) (*Memory, error) {
 // Get 获取记忆
 func (m *Manager) Get(userID, memoryID string) (*Memory, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	if userMems, ok := m.memories[userID]; ok {
 		if mem, ok := userMems[memoryID]; ok {
+			m.mu.RUnlock()
 			return mem, nil
+		}
+	}
+	m.mu.RUnlock()
+
+	// DB fallback
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMem, err := model.GetCoworkerMemory(memoryID, dbUserID)
+			if err == nil {
+				return dbModelToMemory(dbMem), nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("memory not found: %s", memoryID)
@@ -128,8 +217,19 @@ func (m *Manager) GetByID(userID, memoryID string) *Memory {
 	return nil
 }
 
-// ReadFromDisk 直接从磁盘读取记忆（不依赖内存缓存）
+// ReadFromDisk 直接从存储读取记忆（不依赖内存缓存）
 func (m *Manager) ReadFromDisk(userID, memoryID string) *Memory {
+	// DB 路径
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMem, err := model.GetCoworkerMemory(memoryID, dbUserID)
+			if err == nil {
+				return dbModelToMemory(dbMem)
+			}
+		}
+	}
+
+	// 文件路径
 	path := filepath.Join(m.GetMemoriesDir(userID), memoryID+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -142,8 +242,8 @@ func (m *Manager) ReadFromDisk(userID, memoryID string) *Memory {
 	return &mem
 }
 
-// UpsertByID 按 ID 创建或覆盖记忆（直接读写磁盘）
-// 若 ID 对应的文件存在则覆盖内容，不存在则创建
+// UpsertByID 按 ID 创建或覆盖记忆
+// 若 ID 对应的记录存在则覆盖内容，不存在则创建
 func (m *Manager) UpsertByID(userID string, mem *Memory) (*Memory, bool, error) {
 	now := time.Now().Unix()
 
@@ -164,9 +264,15 @@ func (m *Manager) UpsertByID(userID string, mem *Memory) (*Memory, bool, error) 
 		existing.UpdatedAt = now
 		existing.LastAccess = now
 
-		if err := m.saveMemory(userID, existing); err != nil {
-			return nil, false, err
+		// 持久化
+		if m.useDB {
+			if dbUserID, ok := parseUserID(userID); ok {
+				dbMem := memoryToDBModel(existing)
+				dbMem.UserID = dbUserID
+				model.UpsertCoworkerMemory(dbMem)
+			}
 		}
+		m.saveMemory(userID, existing)
 
 		// 同步到内存缓存（如果已加载）
 		m.mu.Lock()
@@ -184,9 +290,15 @@ func (m *Manager) UpsertByID(userID string, mem *Memory) (*Memory, bool, error) 
 	mem.UpdatedAt = now
 	mem.LastAccess = now
 
-	if err := m.saveMemory(userID, mem); err != nil {
-		return nil, false, err
+	// 持久化
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMem := memoryToDBModel(mem)
+			dbMem.UserID = dbUserID
+			model.CreateCoworkerMemory(dbMem)
+		}
 	}
+	m.saveMemory(userID, mem)
 
 	// 同步到内存缓存
 	m.mu.Lock()
@@ -206,7 +318,23 @@ func (m *Manager) Update(userID, memoryID string, updates map[string]interface{}
 
 	mem, ok := m.memories[userID][memoryID]
 	if !ok {
-		return nil, fmt.Errorf("memory not found: %s", memoryID)
+		// DB fallback: 从 DB 加载到内存再更新
+		if m.useDB {
+			if dbUserID, okID := parseUserID(userID); okID {
+				dbMem, err := model.GetCoworkerMemory(memoryID, dbUserID)
+				if err == nil {
+					mem = dbModelToMemory(dbMem)
+					if m.memories[userID] == nil {
+						m.memories[userID] = make(map[string]*Memory)
+					}
+					m.memories[userID][memoryID] = mem
+					ok = true
+				}
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("memory not found: %s", memoryID)
+		}
 	}
 
 	// 应用更新
@@ -220,6 +348,9 @@ func (m *Manager) Update(userID, memoryID string, updates map[string]interface{}
 		// 更新标签索引
 		m.removeFromTagIndex(userID, mem)
 		mem.Tags = tags
+		if m.tagIndex[userID] == nil {
+			m.tagIndex[userID] = make(map[string][]string)
+		}
 		for _, tag := range tags {
 			m.tagIndex[userID][tag] = append(m.tagIndex[userID][tag], mem.ID)
 		}
@@ -231,6 +362,17 @@ func (m *Manager) Update(userID, memoryID string, updates map[string]interface{}
 	mem.UpdatedAt = time.Now().Unix()
 
 	// 持久化
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMem := memoryToDBModel(mem)
+			dbMem.UserID = dbUserID
+			if err := model.UpdateCoworkerMemory(dbMem); err != nil {
+				log.Printf("[Memory] DB update failed, falling back to file: %v", err)
+				return mem, m.saveMemory(userID, mem)
+			}
+			return mem, nil
+		}
+	}
 	if err := m.saveMemory(userID, mem); err != nil {
 		return nil, err
 	}
@@ -243,16 +385,20 @@ func (m *Manager) Delete(userID, memoryID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	mem, ok := m.memories[userID][memoryID]
-	if !ok {
-		return fmt.Errorf("memory not found: %s", memoryID)
+	if mem, ok := m.memories[userID][memoryID]; ok {
+		m.removeFromTagIndex(userID, mem)
+		delete(m.memories[userID], memoryID)
 	}
 
-	// 从标签索引中移除
-	m.removeFromTagIndex(userID, mem)
-
-	// 从内存中删除
-	delete(m.memories[userID], memoryID)
+	// DB 删除
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			if err := model.DeleteCoworkerMemory(memoryID, dbUserID); err != nil {
+				log.Printf("[Memory] DB delete failed: %v", err)
+			}
+			return nil
+		}
+	}
 
 	// 删除文件
 	return m.deleteMemoryFile(userID, memoryID)
@@ -260,6 +406,20 @@ func (m *Manager) Delete(userID, memoryID string) error {
 
 // List 列出用户所有记忆
 func (m *Manager) List(userID string) []*Memory {
+	// DB 路径
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMems, err := model.ListCoworkerMemories(dbUserID)
+			if err == nil && len(dbMems) > 0 {
+				result := make([]*Memory, 0, len(dbMems))
+				for _, dbMem := range dbMems {
+					result = append(result, dbModelToMemory(dbMem))
+				}
+				return result
+			}
+		}
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -280,6 +440,14 @@ func (m *Manager) RecordAccess(userID, memoryID string) {
 	if mem, ok := m.memories[userID][memoryID]; ok {
 		mem.AccessCnt++
 		mem.LastAccess = time.Now().Unix()
+		if m.useDB {
+			if dbUserID, ok := parseUserID(userID); ok {
+				dbMem := memoryToDBModel(mem)
+				dbMem.UserID = dbUserID
+				model.UpdateCoworkerMemory(dbMem)
+				return
+			}
+		}
 		m.saveMemory(userID, mem)
 	}
 }
@@ -304,7 +472,7 @@ func (m *Manager) GetMemoriesDir(userID string) string {
 	return filepath.Join(m.baseDir, userID, ".claude", "memories")
 }
 
-// saveMemory 保存单条记忆
+// saveMemory 保存单条记忆（写文件；useDB 时也保持文件备份）
 func (m *Manager) saveMemory(userID string, mem *Memory) error {
 	dir := m.GetMemoriesDir(userID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -326,11 +494,36 @@ func (m *Manager) deleteMemoryFile(userID, memoryID string) error {
 	return os.Remove(path)
 }
 
-// LoadUserMemories 加载用户所有记忆
+// LoadUserMemories 加载用户所有记忆到内存缓存
 func (m *Manager) LoadUserMemories(userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// DB 路径：从 DB 加载到内存缓存 + BM25 索引
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMems, err := model.ListCoworkerMemories(dbUserID)
+			if err == nil {
+				if m.memories[userID] == nil {
+					m.memories[userID] = make(map[string]*Memory)
+				}
+				if m.tagIndex[userID] == nil {
+					m.tagIndex[userID] = make(map[string][]string)
+				}
+				for _, dbMem := range dbMems {
+					mem := dbModelToMemory(dbMem)
+					m.memories[userID][mem.ID] = mem
+					for _, tag := range mem.Tags {
+						m.tagIndex[userID][tag] = append(m.tagIndex[userID][tag], mem.ID)
+					}
+				}
+				return nil
+			}
+			log.Printf("[Memory] DB load failed, falling back to file: %v", err)
+		}
+	}
+
+	// 文件路径
 	dir := m.GetMemoriesDir(userID)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -556,6 +749,13 @@ func (m *Manager) mergeMemory(userID string, existing, newMem *Memory) (*Memory,
 	}
 
 	// 持久化
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMem := memoryToDBModel(existing)
+			dbMem.UserID = dbUserID
+			model.UpsertCoworkerMemory(dbMem)
+		}
+	}
 	if err := m.saveMemory(userID, existing); err != nil {
 		return nil, err
 	}
@@ -563,11 +763,20 @@ func (m *Manager) mergeMemory(userID string, existing, newMem *Memory) (*Memory,
 	return existing, nil
 }
 
-// FindByWindowID 根据窗口 ID 查找记忆（直接读磁盘，不依赖内存缓存）
-// 优先按 windowID 作为文件名查找，兼容旧数据时扫描目录
+// FindByWindowID 根据窗口 ID 查找记忆
 func (m *Manager) FindByWindowID(userID, windowID string) *Memory {
 	if windowID == "" {
 		return nil
+	}
+
+	// DB 路径
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMem, err := model.FindCoworkerMemoryByWindowID(dbUserID, windowID)
+			if err == nil {
+				return dbModelToMemory(dbMem)
+			}
+		}
 	}
 
 	dir := m.GetMemoriesDir(userID)
@@ -602,7 +811,7 @@ func (m *Manager) FindByWindowID(userID, windowID string) *Memory {
 	return nil
 }
 
-// UpsertByWindowID 按窗口 ID 创建或覆盖记忆（直接读写磁盘）
+// UpsertByWindowID 按窗口 ID 创建或覆盖记忆
 // 同一个窗口只维护一条记忆，windowID 即为文件名
 func (m *Manager) UpsertByWindowID(userID string, mem *Memory) (*Memory, bool, error) {
 	existing := m.FindByWindowID(userID, mem.WindowID)
@@ -621,9 +830,15 @@ func (m *Manager) UpsertByWindowID(userID string, mem *Memory) (*Memory, bool, e
 		existing.UpdatedAt = now
 		existing.LastAccess = now
 
-		if err := m.saveMemory(userID, existing); err != nil {
-			return nil, false, err
+		// 持久化
+		if m.useDB {
+			if dbUserID, ok := parseUserID(userID); ok {
+				dbMem := memoryToDBModel(existing)
+				dbMem.UserID = dbUserID
+				model.UpsertCoworkerMemory(dbMem)
+			}
 		}
+		m.saveMemory(userID, existing)
 
 		// 同步到内存缓存（如果已加载）
 		m.mu.Lock()
@@ -635,7 +850,7 @@ func (m *Manager) UpsertByWindowID(userID string, mem *Memory) (*Memory, bool, e
 		return existing, false, nil
 	}
 
-	// 新窗口：用 windowID 作为 memoryID，直接写磁盘
+	// 新窗口：用 windowID 作为 memoryID，直接写
 	mem.ID = mem.WindowID
 	mem.UserID = userID
 	mem.CreatedAt = now
@@ -645,9 +860,15 @@ func (m *Manager) UpsertByWindowID(userID string, mem *Memory) (*Memory, bool, e
 		mem.Source = "extracted"
 	}
 
-	if err := m.saveMemory(userID, mem); err != nil {
-		return nil, false, err
+	// 持久化
+	if m.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			dbMem := memoryToDBModel(mem)
+			dbMem.UserID = dbUserID
+			model.CreateCoworkerMemory(dbMem)
+		}
 	}
+	m.saveMemory(userID, mem)
 
 	// 同步到内存缓存（如果已加载）
 	m.mu.Lock()

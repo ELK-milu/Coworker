@@ -268,6 +268,11 @@ func migrateDB() error {
 		&TwoFA{},
 		&TwoFABackupCode{},
 		&Checkin{},
+		// Coworker 数据持久化模型
+		&CoworkerMemory{},
+		&CoworkerUserProfile{},
+		&CoworkerJob{},
+		&CoworkerStoreItem{},
 	)
 	if err != nil {
 		return err
@@ -302,6 +307,11 @@ func migrateDBFast() error {
 		{&TwoFA{}, "TwoFA"},
 		{&TwoFABackupCode{}, "TwoFABackupCode"},
 		{&Checkin{}, "Checkin"},
+		// Coworker 数据持久化模型
+		{&CoworkerMemory{}, "CoworkerMemory"},
+		{&CoworkerUserProfile{}, "CoworkerUserProfile"},
+		{&CoworkerJob{}, "CoworkerJob"},
+		{&CoworkerStoreItem{}, "CoworkerStoreItem"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

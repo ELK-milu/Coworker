@@ -4,15 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/QuantumNous/new-api/model"
 )
 
 // Manager 用户工作空间管理器
 type Manager struct {
 	baseDir string
+	useDB   bool
 	mu      sync.RWMutex
 }
 
@@ -24,6 +29,11 @@ func NewManager(baseDir string) *Manager {
 	return &Manager{
 		baseDir: baseDir,
 	}
+}
+
+// SetUseDB 设置是否使用数据库持久化
+func (m *Manager) SetUseDB(useDB bool) {
+	m.useDB = useDB
 }
 
 // GetUserWorkspace 获取用户工作空间路径
@@ -423,6 +433,18 @@ type UserInfo struct {
 
 // LoadUserInfo 加载用户信息
 func (m *Manager) LoadUserInfo(userID string) (*UserInfo, error) {
+	// DB 路径
+	if m.useDB {
+		if dbUserID, err := strconv.Atoi(userID); err == nil {
+			dbProfile, err := model.GetCoworkerUserProfile(dbUserID)
+			if err == nil {
+				return dbProfileToUserInfo(dbProfile), nil
+			}
+			// DB 未找到，尝试文件降级
+		}
+	}
+
+	// 文件路径
 	infoPath := filepath.Join(m.GetUserClaudeDir(userID), "userinfo.json")
 
 	// 确保用户目录存在
@@ -450,6 +472,19 @@ func (m *Manager) LoadUserInfo(userID string) (*UserInfo, error) {
 
 // SaveUserInfo 保存用户信息
 func (m *Manager) SaveUserInfo(userID string, info *UserInfo) error {
+	// DB 路径
+	if m.useDB {
+		if dbUserID, err := strconv.Atoi(userID); err == nil {
+			dbProfile := userInfoToDBProfile(dbUserID, info)
+			if err := model.UpsertCoworkerUserProfile(dbProfile); err != nil {
+				log.Printf("[Workspace] DB save failed, falling back to file: %v", err)
+			} else {
+				return nil
+			}
+		}
+	}
+
+	// 文件路径
 	// 确保用户目录存在
 	if err := m.EnsureUserWorkspace(userID); err != nil {
 		return err
@@ -462,4 +497,69 @@ func (m *Manager) SaveUserInfo(userID string, info *UserInfo) error {
 
 	infoPath := filepath.Join(m.GetUserClaudeDir(userID), "userinfo.json")
 	return os.WriteFile(infoPath, content, 0644)
+}
+
+// dbProfileToUserInfo 将 DB 模型转为 UserInfo
+func dbProfileToUserInfo(p *model.CoworkerUserProfile) *UserInfo {
+	var installedItems []UserStoreItem
+	json.Unmarshal([]byte(p.InstalledItems), &installedItems)
+
+	return &UserInfo{
+		UserName:         p.UserName,
+		CoworkerName:     p.CoworkerName,
+		Phone:            p.Phone,
+		Email:            p.Email,
+		ApiTokenKey:      p.ApiTokenKey,
+		ApiTokenName:     p.ApiTokenName,
+		SelectedModel:    p.SelectedModel,
+		Group:            p.Group,
+		AssistantAvatar:  p.AssistantAvatar,
+		InstalledItems:   installedItems,
+		Temperature:      p.Temperature,
+		TopP:             p.TopP,
+		FrequencyPenalty: p.FrequencyPenalty,
+		PresencePenalty:  p.PresencePenalty,
+	}
+}
+
+// userInfoToDBProfile 将 UserInfo 转为 DB 模型（保留已有的 Profile 字段）
+func userInfoToDBProfile(dbUserID int, info *UserInfo) *model.CoworkerUserProfile {
+	installedJSON, _ := json.Marshal(info.InstalledItems)
+
+	// 先读取已有的 DB profile 以保留 Profile 字段
+	existing, _ := model.GetCoworkerUserProfile(dbUserID)
+
+	p := &model.CoworkerUserProfile{
+		UserID:           dbUserID,
+		UserName:         info.UserName,
+		CoworkerName:     info.CoworkerName,
+		Phone:            info.Phone,
+		Email:            info.Email,
+		ApiTokenKey:      info.ApiTokenKey,
+		ApiTokenName:     info.ApiTokenName,
+		SelectedModel:    info.SelectedModel,
+		Group:            info.Group,
+		AssistantAvatar:  info.AssistantAvatar,
+		InstalledItems:   string(installedJSON),
+		Temperature:      info.Temperature,
+		TopP:             info.TopP,
+		FrequencyPenalty: info.FrequencyPenalty,
+		PresencePenalty:  info.PresencePenalty,
+	}
+
+	// 保留已有的 Profile 字段
+	if existing != nil {
+		p.ID = existing.ID
+		p.Languages = existing.Languages
+		p.Frameworks = existing.Frameworks
+		p.CodingStyle = existing.CodingStyle
+		p.ResponseStyle = existing.ResponseStyle
+		p.UILanguage = existing.UILanguage
+		p.CurrentProjects = existing.CurrentProjects
+		p.TotalSessions = existing.TotalSessions
+		p.TotalMessages = existing.TotalMessages
+		p.TopTools = existing.TopTools
+	}
+
+	return p
 }

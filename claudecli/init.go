@@ -23,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/claudecli/internal/tools"
 	"github.com/QuantumNous/new-api/claudecli/internal/variable"
 	"github.com/QuantumNous/new-api/claudecli/internal/workspace"
+	"github.com/QuantumNous/new-api/model"
 )
 
 // Module claudecli 模块实例
@@ -128,6 +129,23 @@ func Init() *Module {
 
 	// 创建用户画像管理器
 	profileManager := profile.NewManager(cfg.Security.WorkingDir)
+
+	// 数据持久化：检查并执行 JSON → DB 迁移，启用 DB 模式
+	if model.DB != nil {
+		if !model.IsCoworkerMigrationDone() {
+			log.Println("[ClaudeCLI] Starting JSON → DB migration...")
+			if err := model.MigrateCoworkerDataFromFiles(cfg.Security.WorkingDir); err != nil {
+				log.Printf("[ClaudeCLI] WARNING: Migration failed: %v", err)
+			}
+		}
+		// 启用 DB 持久化
+		workspaceManager.SetUseDB(true)
+		memoryManager.SetUseDB(true)
+		profileManager.SetUseDB(true)
+		jobManager.SetUseDB(true)
+		storeManager.SetUseDB(true)
+		log.Println("[ClaudeCLI] Database persistence enabled for all managers")
+	}
 
 	// 创建 nsjail 沙箱池（如果启用）
 	var sandboxPool *sandbox.SandboxPool

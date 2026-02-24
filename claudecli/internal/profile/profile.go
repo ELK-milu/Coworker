@@ -2,11 +2,15 @@ package profile
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/new-api/model"
 )
 
 // UserProfile 用户画像
@@ -47,6 +51,7 @@ type ProjectContext struct {
 // Manager 用户画像管理器
 type Manager struct {
 	baseDir  string
+	useDB    bool
 	profiles map[string]*UserProfile
 	mu       sync.RWMutex
 }
@@ -59,6 +64,113 @@ func NewManager(baseDir string) *Manager {
 	}
 }
 
+// SetUseDB 设置是否使用数据库持久化
+func (m *Manager) SetUseDB(useDB bool) {
+	m.useDB = useDB
+}
+
+// parseProfileUserID 将 string UserID 转为 int（用于 DB）
+func parseProfileUserID(userID string) (int, bool) {
+	id, err := strconv.Atoi(userID)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// dbModelToProfile 将 DB 模型转为 UserProfile
+func dbModelToProfile(dbProfile *model.CoworkerUserProfile, userID string) *UserProfile {
+	var languages []string
+	json.Unmarshal([]byte(dbProfile.Languages), &languages)
+	if languages == nil {
+		languages = []string{}
+	}
+
+	var frameworks []string
+	json.Unmarshal([]byte(dbProfile.Frameworks), &frameworks)
+	if frameworks == nil {
+		frameworks = []string{}
+	}
+
+	var codingStyle map[string]string
+	json.Unmarshal([]byte(dbProfile.CodingStyle), &codingStyle)
+	if codingStyle == nil {
+		codingStyle = make(map[string]string)
+	}
+
+	var projects []ProjectContext
+	json.Unmarshal([]byte(dbProfile.CurrentProjects), &projects)
+	if projects == nil {
+		projects = []ProjectContext{}
+	}
+
+	var topTools map[string]int
+	json.Unmarshal([]byte(dbProfile.TopTools), &topTools)
+	if topTools == nil {
+		topTools = make(map[string]int)
+	}
+
+	return &UserProfile{
+		UserID:          userID,
+		Languages:       languages,
+		Frameworks:      frameworks,
+		CodingStyle:     codingStyle,
+		ResponseStyle:   dbProfile.ResponseStyle,
+		Language:        dbProfile.UILanguage,
+		CurrentProjects: projects,
+		TotalSessions:   dbProfile.TotalSessions,
+		TotalMessages:   dbProfile.TotalMessages,
+		TopTools:        topTools,
+		CreatedAt:       dbProfile.CreatedAt,
+		UpdatedAt:       dbProfile.UpdatedAt,
+	}
+}
+
+// saveProfileToDB 保存 Profile 字段到 DB（保留 UserInfo 字段）
+func (m *Manager) saveProfileToDB(userID string, p *UserProfile) error {
+	dbUserID, ok := parseProfileUserID(userID)
+	if !ok {
+		return nil // 非数字 userID，跳过 DB
+	}
+
+	languagesJSON, _ := json.Marshal(p.Languages)
+	frameworksJSON, _ := json.Marshal(p.Frameworks)
+	codingStyleJSON, _ := json.Marshal(p.CodingStyle)
+	projectsJSON, _ := json.Marshal(p.CurrentProjects)
+	topToolsJSON, _ := json.Marshal(p.TopTools)
+
+	// 读取已有的 DB profile 以保留 UserInfo 字段
+	existing, _ := model.GetCoworkerUserProfile(dbUserID)
+	if existing == nil {
+		// 不存在，创建新记录（仅 Profile 字段）
+		return model.UpsertCoworkerUserProfile(&model.CoworkerUserProfile{
+			UserID:          dbUserID,
+			Languages:       string(languagesJSON),
+			Frameworks:      string(frameworksJSON),
+			CodingStyle:     string(codingStyleJSON),
+			ResponseStyle:   p.ResponseStyle,
+			UILanguage:      p.Language,
+			CurrentProjects: string(projectsJSON),
+			TotalSessions:   p.TotalSessions,
+			TotalMessages:   p.TotalMessages,
+			TopTools:        string(topToolsJSON),
+		})
+	}
+
+	// 已存在，只更新 Profile 字段
+	existing.Languages = string(languagesJSON)
+	existing.Frameworks = string(frameworksJSON)
+	existing.CodingStyle = string(codingStyleJSON)
+	existing.ResponseStyle = p.ResponseStyle
+	existing.UILanguage = p.Language
+	existing.CurrentProjects = string(projectsJSON)
+	existing.TotalSessions = p.TotalSessions
+	existing.TotalMessages = p.TotalMessages
+	existing.TopTools = string(topToolsJSON)
+
+	return model.UpdateCoworkerUserProfile(existing)
+}
+
 // Get 获取用户画像
 func (m *Manager) Get(userID string) (*UserProfile, error) {
 	m.mu.RLock()
@@ -67,6 +179,20 @@ func (m *Manager) Get(userID string) (*UserProfile, error) {
 		return p, nil
 	}
 	m.mu.RUnlock()
+
+	// DB 路径
+	if m.useDB {
+		if dbUserID, ok := parseProfileUserID(userID); ok {
+			dbProfile, err := model.GetCoworkerUserProfile(dbUserID)
+			if err == nil {
+				p := dbModelToProfile(dbProfile, userID)
+				m.mu.Lock()
+				m.profiles[userID] = p
+				m.mu.Unlock()
+				return p, nil
+			}
+		}
+	}
 
 	// 尝试从文件加载
 	return m.Load(userID)
@@ -126,7 +252,16 @@ func (m *Manager) Update(userID string, updates map[string]interface{}) error {
 	p.UpdatedAt = time.Now().Unix()
 	m.profiles[userID] = p
 
-	return m.save(userID, p)
+	// DB 路径
+	if m.useDB {
+		if err := m.saveProfileToDB(userID, p); err != nil {
+			log.Printf("[Profile] DB save failed, falling back to file: %v", err)
+		} else {
+			return nil
+		}
+	}
+
+	return m.saveToFile(userID, p)
 }
 
 // RecordToolUsage 记录工具使用
@@ -142,7 +277,14 @@ func (m *Manager) RecordToolUsage(userID, toolName string) {
 	p.TopTools[toolName]++
 	p.UpdatedAt = time.Now().Unix()
 
-	m.save(userID, p)
+	if m.useDB {
+		if err := m.saveProfileToDB(userID, p); err != nil {
+			log.Printf("[Profile] DB save failed for tool usage: %v", err)
+		}
+		return
+	}
+
+	m.saveToFile(userID, p)
 }
 
 // RecordSession 记录会话
@@ -155,7 +297,17 @@ func (m *Manager) RecordSession(userID string) {
 	p.TotalSessions++
 	p.UpdatedAt = time.Now().Unix()
 
-	m.save(userID, p)
+	// DB 路径（使用原子递增）
+	if m.useDB {
+		if dbUserID, ok := parseProfileUserID(userID); ok {
+			if err := model.IncrementCoworkerUserProfileSessions(dbUserID); err != nil {
+				log.Printf("[Profile] DB increment sessions failed: %v", err)
+			}
+		}
+		return
+	}
+
+	m.saveToFile(userID, p)
 }
 
 // RecordMessage 记录消息
@@ -168,7 +320,17 @@ func (m *Manager) RecordMessage(userID string) {
 	p.TotalMessages++
 	p.UpdatedAt = time.Now().Unix()
 
-	m.save(userID, p)
+	// DB 路径（使用原子递增）
+	if m.useDB {
+		if dbUserID, ok := parseProfileUserID(userID); ok {
+			if err := model.IncrementCoworkerUserProfileMessages(dbUserID); err != nil {
+				log.Printf("[Profile] DB increment messages failed: %v", err)
+			}
+		}
+		return
+	}
+
+	m.saveToFile(userID, p)
 }
 
 // AddProject 添加项目
@@ -183,7 +345,7 @@ func (m *Manager) AddProject(userID string, project ProjectContext) {
 		if proj.Path == project.Path {
 			p.CurrentProjects[i] = project
 			p.CurrentProjects[i].LastAccess = time.Now().Unix()
-			m.save(userID, p)
+			m.persistProfile(userID, p)
 			return
 		}
 	}
@@ -198,7 +360,19 @@ func (m *Manager) AddProject(userID string, project ProjectContext) {
 	}
 
 	p.UpdatedAt = time.Now().Unix()
-	m.save(userID, p)
+	m.persistProfile(userID, p)
+}
+
+// persistProfile 持久化 Profile（选择 DB 或文件）
+func (m *Manager) persistProfile(userID string, p *UserProfile) {
+	if m.useDB {
+		if err := m.saveProfileToDB(userID, p); err != nil {
+			log.Printf("[Profile] DB save failed, falling back to file: %v", err)
+			m.saveToFile(userID, p)
+		}
+		return
+	}
+	m.saveToFile(userID, p)
 }
 
 // getProfilePath 获取画像文件路径
@@ -226,17 +400,25 @@ func (m *Manager) Load(userID string) (*UserProfile, error) {
 	return &p, nil
 }
 
-// Save 保存画像到文件
+// Save 保存画像
 func (m *Manager) Save(userID string, p *UserProfile) error {
 	m.mu.Lock()
 	m.profiles[userID] = p
 	m.mu.Unlock()
 
-	return m.save(userID, p)
+	if m.useDB {
+		if err := m.saveProfileToDB(userID, p); err != nil {
+			log.Printf("[Profile] DB save failed, falling back to file: %v", err)
+		} else {
+			return nil
+		}
+	}
+
+	return m.saveToFile(userID, p)
 }
 
-// save 内部保存方法（不加锁）
-func (m *Manager) save(userID string, p *UserProfile) error {
+// saveToFile 保存画像到文件（内部方法，不加锁）
+func (m *Manager) saveToFile(userID string, p *UserProfile) error {
 	path := m.getProfilePath(userID)
 	dir := filepath.Dir(path)
 

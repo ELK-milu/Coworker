@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/claudecli/internal/embedding"
+	"github.com/QuantumNous/new-api/model"
 )
 
 // Retriever 记忆检索器
@@ -62,6 +63,7 @@ type ScoredMemory struct {
 // Retrieve 混合检索
 // 优先使用 Milvus 原生 HybridSearch (BM25 + Vector + RRF)
 // 降级方案: 应用层 BM25 + Vector + Rerank
+// DB 路径: 使用 SQL 全文搜索作为补充
 func (r *Retriever) Retrieve(userID, query string, limit int) []*Memory {
 	ctx := context.Background()
 
@@ -73,8 +75,33 @@ func (r *Retriever) Retrieve(userID, query string, limit int) []*Memory {
 		}
 	}
 
-	// 降级方案: 应用层混合检索
-	return r.retrieveWithAppLevel(ctx, userID, query, limit)
+	// 应用层混合检索
+	results := r.retrieveWithAppLevel(ctx, userID, query, limit)
+	if len(results) > 0 {
+		return results
+	}
+
+	// DB 全文搜索降级（当内存缓存为空时）
+	if r.manager.useDB {
+		if dbUserID, ok := parseUserID(userID); ok {
+			return r.retrieveFromDB(dbUserID, query, limit)
+		}
+	}
+
+	return nil
+}
+
+// retrieveFromDB 从数据库全文搜索
+func (r *Retriever) retrieveFromDB(dbUserID int, query string, limit int) []*Memory {
+	dbMems, err := model.SearchCoworkerMemories(dbUserID, query, limit)
+	if err != nil || len(dbMems) == 0 {
+		return nil
+	}
+	result := make([]*Memory, 0, len(dbMems))
+	for _, dbMem := range dbMems {
+		result = append(result, dbModelToMemory(dbMem))
+	}
+	return result
 }
 
 // candidate 候选记忆

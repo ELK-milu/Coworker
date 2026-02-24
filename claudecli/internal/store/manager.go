@@ -4,17 +4,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/new-api/model"
 )
 
 // Manager 技能商店管理器
 type Manager struct {
 	dataDir string
+	useDB   bool
 	mu      sync.RWMutex
 	items   []StoreItem
 }
@@ -24,6 +29,57 @@ func NewManager(baseDir string) *Manager {
 	m := &Manager{dataDir: filepath.Join(baseDir, "store")}
 	m.load()
 	return m
+}
+
+// SetUseDB 设置是否使用数据库持久化
+func (m *Manager) SetUseDB(useDB bool) {
+	m.useDB = useDB
+	if useDB {
+		// 从 DB 重新加载
+		m.loadFromDB()
+	}
+}
+
+// storeItemToDBModel 将 StoreItem 转为 DB 模型
+func storeItemToDBModel(item StoreItem) *model.CoworkerStoreItem {
+	configJSON, _ := json.Marshal(item.ConfigSchema)
+	return &model.CoworkerStoreItem{
+		ID:           item.ID,
+		Name:         item.Name,
+		Description:  item.Description,
+		Type:         string(item.Type),
+		Icon:         item.Icon,
+		Author:       item.Author,
+		GithubURL:    item.GithubURL,
+		Content:      item.Content,
+		LocalDir:     item.LocalDir,
+		ServerURL:    item.ServerURL,
+		ConfigSchema: string(configJSON),
+		CreatedAt:    item.CreatedAt.Unix(),
+		UpdatedAt:    item.UpdatedAt.Unix(),
+	}
+}
+
+// dbModelToStoreItem 将 DB 模型转为 StoreItem
+func dbModelToStoreItem(dbItem *model.CoworkerStoreItem) StoreItem {
+	var configSchema []ConfigField
+	json.Unmarshal([]byte(dbItem.ConfigSchema), &configSchema)
+
+	return StoreItem{
+		ID:           dbItem.ID,
+		Name:         dbItem.Name,
+		Description:  dbItem.Description,
+		Type:         ItemType(dbItem.Type),
+		Icon:         dbItem.Icon,
+		Author:       dbItem.Author,
+		GithubURL:    dbItem.GithubURL,
+		Content:      dbItem.Content,
+		LocalDir:     dbItem.LocalDir,
+		ServerURL:    dbItem.ServerURL,
+		ConfigSchema: configSchema,
+		CreatedAt:    time.Unix(dbItem.CreatedAt, 0),
+		UpdatedAt:    time.Unix(dbItem.UpdatedAt, 0),
+	}
 }
 
 func (m *Manager) filePath() string {
@@ -37,6 +93,23 @@ func (m *Manager) load() {
 		return
 	}
 	json.Unmarshal(data, &m.items)
+}
+
+// loadFromDB 从数据库加载所有条目到内存
+func (m *Manager) loadFromDB() {
+	dbItems, err := model.ListCoworkerStoreItems()
+	if err != nil {
+		log.Printf("[Store] DB load failed: %v", err)
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.items = make([]StoreItem, 0, len(dbItems))
+	for _, dbItem := range dbItems {
+		m.items = append(m.items, dbModelToStoreItem(dbItem))
+	}
 }
 
 func (m *Manager) save() error {
@@ -70,6 +143,16 @@ func (m *Manager) Create(item StoreItem) (StoreItem, error) {
 	item.CreatedAt = time.Now()
 	item.UpdatedAt = time.Now()
 	m.items = append(m.items, item)
+
+	// DB 路径
+	if m.useDB {
+		dbItem := storeItemToDBModel(item)
+		if err := model.CreateCoworkerStoreItem(dbItem); err != nil {
+			log.Printf("[Store] DB create failed: %v", err)
+		}
+		return item, nil
+	}
+
 	return item, m.save()
 }
 
@@ -88,6 +171,16 @@ func (m *Manager) Update(id string, item StoreItem) (StoreItem, error) {
 			item.CreatedAt = s.CreatedAt
 			item.UpdatedAt = time.Now()
 			m.items[i] = item
+
+			// DB 路径
+			if m.useDB {
+				dbItem := storeItemToDBModel(item)
+				if err := model.UpdateCoworkerStoreItem(dbItem); err != nil {
+					log.Printf("[Store] DB update failed: %v", err)
+				}
+				return item, nil
+			}
+
 			return item, m.save()
 		}
 	}
@@ -106,6 +199,15 @@ func (m *Manager) Delete(id string) error {
 				os.RemoveAll(skillDir)
 			}
 			m.items = append(m.items[:i], m.items[i+1:]...)
+
+			// DB 路径
+			if m.useDB {
+				if err := model.DeleteCoworkerStoreItem(id); err != nil {
+					log.Printf("[Store] DB delete failed: %v", err)
+				}
+				return nil
+			}
+
 			return m.save()
 		}
 	}
@@ -131,8 +233,8 @@ func (m *Manager) CopySkillsToWorkspace(userID, workspaceDir string) error {
 
 	// 收集需要复制的 skill
 	type skillCopy struct {
-		srcDir  string
-		name    string
+		srcDir string
+		name   string
 	}
 	var toCopy []skillCopy
 
@@ -217,15 +319,30 @@ func (m *Manager) Import(repoURL string) ([]StoreItem, error) {
 		m.items = append(m.items, item)
 		added = append(added, item)
 		existing[item.Name] = true
+
+		// DB 路径
+		if m.useDB {
+			dbItem := storeItemToDBModel(item)
+			if err := model.CreateCoworkerStoreItem(dbItem); err != nil {
+				log.Printf("[Store] DB create failed for import item %s: %v", item.Name, err)
+			}
+		}
+
 		time.Sleep(time.Millisecond) // 确保 ID 唯一
 	}
 
-	if len(added) > 0 {
+	if len(added) > 0 && !m.useDB {
 		if err := m.save(); err != nil {
 			return nil, err
 		}
 	}
 	return added, nil
+}
+
+// installedItemRef 用户已安装条目引用（DB JSON 格式）
+type installedItemRef struct {
+	ItemID  string `json:"item_id"`
+	Enabled bool   `json:"enabled"`
 }
 
 // UserInstalled 用户已安装的技能 ID 列表
@@ -239,6 +356,27 @@ func (m *Manager) userInstalledPath(userID string) string {
 
 // LoadUserInstalled 加载用户已安装的技能 ID 列表
 func (m *Manager) LoadUserInstalled(userID string) []string {
+	// DB 路径
+	if m.useDB {
+		if dbUserID, err := strconv.Atoi(userID); err == nil {
+			dbProfile, err := model.GetCoworkerUserProfile(dbUserID)
+			if err == nil && dbProfile.InstalledItems != "" {
+				var refs []installedItemRef
+				if err := json.Unmarshal([]byte(dbProfile.InstalledItems), &refs); err == nil {
+					ids := make([]string, 0, len(refs))
+					for _, ref := range refs {
+						if ref.Enabled {
+							ids = append(ids, ref.ItemID)
+						}
+					}
+					return ids
+				}
+			}
+		}
+		return []string{}
+	}
+
+	// 文件路径
 	data, err := os.ReadFile(m.userInstalledPath(userID))
 	if err != nil {
 		return []string{}
@@ -252,6 +390,31 @@ func (m *Manager) LoadUserInstalled(userID string) []string {
 
 // SaveUserInstalled 保存用户已安装的技能 ID 列表
 func (m *Manager) SaveUserInstalled(userID string, itemIDs []string) error {
+	// DB 路径
+	if m.useDB {
+		if dbUserID, err := strconv.Atoi(userID); err == nil {
+			// 转换为 installedItemRef 格式
+			refs := make([]installedItemRef, 0, len(itemIDs))
+			for _, id := range itemIDs {
+				refs = append(refs, installedItemRef{ItemID: id, Enabled: true})
+			}
+			refsJSON, _ := json.Marshal(refs)
+
+			// 读取已有 profile，更新 InstalledItems 字段
+			existing, _ := model.GetCoworkerUserProfile(dbUserID)
+			if existing == nil {
+				// 创建新 profile（仅 InstalledItems）
+				return model.UpsertCoworkerUserProfile(&model.CoworkerUserProfile{
+					UserID:         dbUserID,
+					InstalledItems: string(refsJSON),
+				})
+			}
+			existing.InstalledItems = string(refsJSON)
+			return model.UpdateCoworkerUserProfile(existing)
+		}
+	}
+
+	// 文件路径
 	p := m.userInstalledPath(userID)
 	os.MkdirAll(filepath.Dir(p), 0755)
 	data, err := json.MarshalIndent(UserInstalled{ItemIDs: itemIDs}, "", "  ")
@@ -271,6 +434,16 @@ func (m *Manager) GetByID(id string) *StoreItem {
 			return &cp
 		}
 	}
+
+	// DB 降级（缓存未命中）
+	if m.useDB {
+		dbItem, err := model.GetCoworkerStoreItem(id)
+		if err == nil {
+			item := dbModelToStoreItem(dbItem)
+			return &item
+		}
+	}
+
 	return nil
 }
 

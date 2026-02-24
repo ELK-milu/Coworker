@@ -3,11 +3,15 @@ package job
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/new-api/model"
 )
 
 // Status Job 状态
@@ -61,6 +65,7 @@ type Job struct {
 // Manager Job 管理器
 type Manager struct {
 	baseDir   string
+	useDB     bool
 	jobs      map[string]map[string]*Job // userID -> jobID -> Job
 	scheduler *Scheduler
 	mu        sync.RWMutex
@@ -74,6 +79,11 @@ func NewManager(baseDir string) *Manager {
 	}
 	m.scheduler = NewScheduler(m)
 	return m
+}
+
+// SetUseDB 设置是否使用数据库持久化
+func (m *Manager) SetUseDB(useDB bool) {
+	m.useDB = useDB
 }
 
 // SetExecutor 设置 Job 执行器
@@ -122,6 +132,78 @@ func (m *Manager) RunNow(userID, jobID string) error {
 // Stop 停止调度器
 func (m *Manager) Stop() {
 	m.scheduler.Stop()
+}
+
+// parseJobUserID 将 string UserID 转为 int（用于 DB）
+func parseJobUserID(userID string) (int, bool) {
+	id, err := strconv.Atoi(userID)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// jobToDBModel 将 Job 转为 DB 模型
+func jobToDBModel(j *Job) *model.CoworkerJob {
+	dbUserID, _ := parseJobUserID(j.UserID)
+	weekdaysJSON, _ := json.Marshal(j.Weekdays)
+	metadataJSON, _ := json.Marshal(j.Metadata)
+
+	return &model.CoworkerJob{
+		ID:              j.ID,
+		UserID:          dbUserID,
+		Name:            j.Name,
+		Command:         j.Command,
+		Enabled:         j.Enabled,
+		LastRun:         j.LastRun,
+		NextRun:         j.NextRun,
+		Status:          string(j.Status),
+		LastError:       j.LastError,
+		SortOrder:       j.Order,
+		ScheduleType:    string(j.ScheduleType),
+		Time:            j.Time,
+		Weekdays:        string(weekdaysJSON),
+		IntervalMinutes: j.IntervalMinutes,
+		RunAt:           j.RunAt,
+		CronExpr:        j.CronExpr,
+		Metadata:        string(metadataJSON),
+		CreatedAt:       j.CreatedAt,
+		UpdatedAt:       j.UpdatedAt,
+	}
+}
+
+// dbModelToJob 将 DB 模型转为 Job
+func dbModelToJob(dbJob *model.CoworkerJob) *Job {
+	var weekdays []int
+	json.Unmarshal([]byte(dbJob.Weekdays), &weekdays)
+
+	var metadata map[string]interface{}
+	json.Unmarshal([]byte(dbJob.Metadata), &metadata)
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+
+	return &Job{
+		ID:              dbJob.ID,
+		UserID:          strconv.Itoa(dbJob.UserID),
+		Name:            dbJob.Name,
+		Command:         dbJob.Command,
+		Enabled:         dbJob.Enabled,
+		LastRun:         dbJob.LastRun,
+		NextRun:         dbJob.NextRun,
+		Status:          Status(dbJob.Status),
+		LastError:       dbJob.LastError,
+		Order:           dbJob.SortOrder,
+		ScheduleType:    ScheduleType(dbJob.ScheduleType),
+		Time:            dbJob.Time,
+		Weekdays:        weekdays,
+		IntervalMinutes: dbJob.IntervalMinutes,
+		RunAt:           dbJob.RunAt,
+		CronExpr:        dbJob.CronExpr,
+		Metadata:        metadata,
+		CreatedAt:       dbJob.CreatedAt,
+		UpdatedAt:       dbJob.UpdatedAt,
+	}
 }
 
 // getJobDir 获取 Job 存储目录
@@ -189,16 +271,29 @@ func (m *Manager) CreateWithSchedule(
 	}
 	m.jobs[userID][jobID] = job
 
-	// 保存到文件
-	if err := m.saveJob(job); err != nil {
-		return nil, err
+	// 持久化（新建用 create，非 save/update）
+	if m.useDB {
+		if err := m.createJobInDB(job); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := m.saveJob(job); err != nil {
+			return nil, err
+		}
 	}
 
 	return job, nil
 }
 
-// saveJob 保存 Job 到文件
+// saveJob 保存 Job（DB 或文件）
 func (m *Manager) saveJob(job *Job) error {
+	// DB 路径
+	if m.useDB {
+		dbJob := jobToDBModel(job)
+		return model.UpdateCoworkerJob(dbJob)
+	}
+
+	// 文件路径
 	jobDir := m.getJobDir(job.UserID)
 	if err := os.MkdirAll(jobDir, 0755); err != nil {
 		return err
@@ -213,17 +308,24 @@ func (m *Manager) saveJob(job *Job) error {
 	return os.WriteFile(jobFile, data, 0644)
 }
 
+// createJobInDB 在 DB 中创建 Job（用于新建）
+func (m *Manager) createJobInDB(job *Job) error {
+	dbJob := jobToDBModel(job)
+	return model.CreateCoworkerJob(dbJob)
+}
+
 // Get 获取 Job
 func (m *Manager) Get(userID, jobID string) *Job {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if m.jobs[userID] == nil {
-		// 尝试从文件加载
+		// 尝试加载
 		m.mu.RUnlock()
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		m.loadUserJobs(userID)
+		m.mu.Unlock()
+		m.mu.RLock()
 	}
 
 	if m.jobs[userID] == nil {
@@ -298,7 +400,7 @@ func (m *Manager) Update(userID, jobID string, updates map[string]interface{}) (
 
 	job.UpdatedAt = time.Now().UnixMilli()
 
-	// 保存到文件
+	// 持久化
 	if err := m.saveJob(job); err != nil {
 		return nil, err
 	}
@@ -315,6 +417,14 @@ func (m *Manager) Delete(userID, jobID string) error {
 		delete(m.jobs[userID], jobID)
 	}
 
+	// DB 路径
+	if m.useDB {
+		if dbUserID, ok := parseJobUserID(userID); ok {
+			return model.DeleteCoworkerJob(jobID, dbUserID)
+		}
+	}
+
+	// 文件路径
 	jobFile := filepath.Join(m.getJobDir(userID), jobID+".json")
 	if _, err := os.Stat(jobFile); err == nil {
 		return os.Remove(jobFile)
@@ -354,12 +464,29 @@ func (m *Manager) listJobsLocked(userID string) []*Job {
 	return jobs
 }
 
-// loadUserJobs 从文件加载用户的所有 Jobs
+// loadUserJobs 从文件/DB 加载用户的所有 Jobs
 func (m *Manager) loadUserJobs(userID string) {
 	if m.jobs[userID] != nil {
 		return
 	}
 
+	// DB 路径
+	if m.useDB {
+		if dbUserID, ok := parseJobUserID(userID); ok {
+			dbJobs, err := model.ListCoworkerJobs(dbUserID)
+			if err == nil {
+				m.jobs[userID] = make(map[string]*Job)
+				for _, dbJob := range dbJobs {
+					j := dbModelToJob(dbJob)
+					m.jobs[userID][j.ID] = j
+				}
+				return
+			}
+			log.Printf("[Job] DB load failed for user %s, falling back to file: %v", userID, err)
+		}
+	}
+
+	// 文件路径
 	jobDir := m.getJobDir(userID)
 	entries, err := os.ReadDir(jobDir)
 	if err != nil {
@@ -454,11 +581,35 @@ func (m *Manager) MarkCompleted(userID, jobID string, err error) {
 
 // GetDueJobs 获取所有到期需要执行的 Jobs
 func (m *Manager) GetDueJobs() []*Job {
+	now := time.Now().UnixMilli()
+
+	// DB 路径：使用 SQL 查询
+	if m.useDB {
+		dbJobs, err := model.GetDueCoworkerJobs(now)
+		if err == nil {
+			jobs := make([]*Job, 0, len(dbJobs))
+			for _, dbJob := range dbJobs {
+				jobs = append(jobs, dbModelToJob(dbJob))
+			}
+			// 同步到内存缓存
+			m.mu.Lock()
+			for _, j := range jobs {
+				if m.jobs[j.UserID] == nil {
+					m.jobs[j.UserID] = make(map[string]*Job)
+				}
+				m.jobs[j.UserID][j.ID] = j
+			}
+			m.mu.Unlock()
+			return jobs
+		}
+		log.Printf("[Job] DB GetDueJobs failed, falling back to memory: %v", err)
+	}
+
+	// 内存路径
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	var dueJobs []*Job
-	now := time.Now().UnixMilli()
 
 	for _, userJobs := range m.jobs {
 		for _, job := range userJobs {
