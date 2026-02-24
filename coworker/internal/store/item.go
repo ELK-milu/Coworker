@@ -45,6 +45,8 @@ type StoreItem struct {
 	ID           string        `json:"id"`
 	Name         string        `json:"name"`
 	Description  string        `json:"description"`
+	DisplayName  string        `json:"display_name,omitempty"`
+	DisplayDesc  string        `json:"display_desc,omitempty"`
 	Type         ItemType      `json:"type"`
 	Icon         string        `json:"icon,omitempty"`
 	Author       string        `json:"author,omitempty"`

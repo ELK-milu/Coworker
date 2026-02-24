@@ -5,6 +5,8 @@ type CoworkerStoreItem struct {
 	ID           string `json:"id" gorm:"primaryKey;type:varchar(32)"`
 	Name         string `json:"name" gorm:"type:varchar(128);not null;uniqueIndex"`
 	Description  string `json:"description" gorm:"type:text"`
+	DisplayName  string `json:"display_name" gorm:"type:varchar(256)"`
+	DisplayDesc  string `json:"display_desc" gorm:"type:text"`
 	Type         string `json:"type" gorm:"type:varchar(16)"`          // skill|agent|mcp
 	Icon         string `json:"icon" gorm:"type:text"`                 // base64 or icon name
 	Author       string `json:"author" gorm:"type:varchar(64)"`

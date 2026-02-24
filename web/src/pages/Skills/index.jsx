@@ -47,11 +47,11 @@ function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, a
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <SkillIcon icon={item.icon} type={item.type} size={28} />
-            <Text strong>{item.name}</Text>
+            <Text strong>{item.display_name || item.name}</Text>
             <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
             {item.author && <Text type="tertiary" size="small">by {item.author}</Text>}
           </div>
-          <Text type="secondary" size="small">{item.description}</Text>
+          <Text type="secondary" size="small">{item.display_desc || item.description}</Text>
           {item.type === 'plugin' && item.sub_items && item.sub_items.length > 0 && (
             <div style={{ marginTop: 4, display: 'flex', gap: 8 }}>
               {countByType('agent') > 0 && <Tag size="small" color="purple">{countByType('agent')} Agents</Tag>}
@@ -148,6 +148,14 @@ function EditModal({ visible, item, onClose, onSave }) {
         <div>
           <Text size="small" style={{ display: 'block', marginBottom: 4 }}>描述</Text>
           <TextArea value={form.description || ''} onChange={v => setForm(f => ({ ...f, description: v }))} />
+        </div>
+        <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>显示名称</Text>
+          <Input value={form.display_name || ''} onChange={v => setForm(f => ({ ...f, display_name: v }))} placeholder="留空则使用名称字段" />
+        </div>
+        <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>显示描述</Text>
+          <TextArea value={form.display_desc || ''} onChange={v => setForm(f => ({ ...f, display_desc: v }))} placeholder="留空则使用描述字段" />
         </div>
         <div>
           <Text size="small" style={{ display: 'block', marginBottom: 4 }}>图标</Text>
@@ -323,7 +331,7 @@ export default function Skills() {
     const data = await apiFetch('/user', { method: 'PUT', body: JSON.stringify({ user_id: userId, item_ids: newInstalled }) });
     if (data.success) {
       setInstalled(newInstalled);
-      Toast.success(`已安装 ${item.name}`);
+      Toast.success(`已安装 ${item.display_name || item.name}`);
     } else {
       Toast.error(data.error || '安装失败');
     }

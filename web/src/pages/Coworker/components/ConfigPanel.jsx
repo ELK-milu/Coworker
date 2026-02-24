@@ -559,7 +559,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                         ? <img src={item.icon} alt="icon" style={{ width: 20, height: 20, borderRadius: 3, objectFit: 'cover' }} />
                         : <span style={{ fontSize: 14 }}>{item.icon || DEFAULT_ICONS[item.type] || '✨'}</span>
                       }
-                      <Text size="small" ellipsis={{ showTooltip: true }} style={{ flex: 1 }}>{item.name}</Text>
+                      <Text size="small" ellipsis={{ showTooltip: true }} style={{ flex: 1 }}>{item.display_name || item.name}</Text>
                       <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
                     </div>
                     <Button
