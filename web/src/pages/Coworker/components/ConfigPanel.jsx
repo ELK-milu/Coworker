@@ -54,6 +54,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
 
   const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP', plugin: '插件' };
   const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green', plugin: 'orange' };
+  const DEFAULT_ICONS = { skill: '✨', agent: '🤖', mcp: '🔔', plugin: '🔌' };
 
   const loadStoreData = useCallback(async () => {
     try {
@@ -556,7 +557,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
                       {item.icon && item.icon.startsWith('data:image/')
                         ? <img src={item.icon} alt="icon" style={{ width: 20, height: 20, borderRadius: 3, objectFit: 'cover' }} />
-                        : <span style={{ fontSize: 14 }}>{item.icon || '✨'}</span>
+                        : <span style={{ fontSize: 14 }}>{item.icon || DEFAULT_ICONS[item.type] || '✨'}</span>
                       }
                       <Text size="small" ellipsis={{ showTooltip: true }} style={{ flex: 1 }}>{item.name}</Text>
                       <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>

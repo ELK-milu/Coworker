@@ -1135,7 +1135,7 @@ func (h *RESTHandler) ImportStoreItems(c *gin.Context) {
 	}
 	var req struct {
 		RepoURL    string `json:"repo_url"`
-		ImportType string `json:"import_type"` // "skill"(默认) 或 "plugin"
+		ImportType string `json:"import_type"` // "skill"(默认) 或 "agent" 或 "plugin"
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.RepoURL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "repo_url is required"})
@@ -1144,9 +1144,12 @@ func (h *RESTHandler) ImportStoreItems(c *gin.Context) {
 
 	var items []store.StoreItem
 	var err error
-	if req.ImportType == "plugin" {
+	switch req.ImportType {
+	case "plugin":
 		items, err = h.store.ImportPlugin(req.RepoURL)
-	} else {
+	case "agent":
+		items, err = h.store.ImportAgents(req.RepoURL)
+	default:
 		items, err = h.store.Import(req.RepoURL)
 	}
 	if err != nil {

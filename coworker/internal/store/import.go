@@ -302,6 +302,79 @@ func sanitizeDirName(name string) string {
 	return name
 }
 
+// --- Agent Import ---
+
+// ImportAgentsFromGithub 从 GitHub 导入独立 agents（遍历 agents/ 目录中的 .md 文件）
+func ImportAgentsFromGithub(repoURL string) ([]StoreItem, error) {
+	owner, repo := parseRepo(repoURL)
+	if owner == "" || repo == "" {
+		return nil, fmt.Errorf("invalid repo: %s", repoURL)
+	}
+
+	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
+
+	// 尝试根目录 agents/
+	items := scanAgentsToStoreItems(owner, repo, "agents", ghURL)
+	if len(items) > 0 {
+		return items, nil
+	}
+
+	return nil, fmt.Errorf("no agents/ directory found in %s/%s", owner, repo)
+}
+
+// scanAgentsToStoreItems 扫描 agents/ 目录，每个 .md 文件创建独立的 TypeAgent StoreItem
+func scanAgentsToStoreItems(owner, repo, dirPath, ghURL string) []StoreItem {
+	apiPath := fmt.Sprintf("%s/%s/contents/%s", owner, repo, dirPath)
+	data, err := ghAPIGet(apiPath)
+	if err != nil {
+		return nil
+	}
+
+	var entries []struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil
+	}
+
+	var items []StoreItem
+	for _, e := range entries {
+		if e.Type != "file" || !strings.HasSuffix(strings.ToLower(e.Name), ".md") {
+			continue
+		}
+		content, err := ghRawGet(owner, repo, dirPath+"/"+e.Name)
+		if err != nil {
+			continue
+		}
+		agentName := strings.TrimSuffix(e.Name, filepath.Ext(e.Name))
+		description := "Agent: " + agentName
+
+		// 解析 YAML frontmatter
+		if strings.HasPrefix(content, "---") {
+			parts := strings.SplitN(content[3:], "---", 2)
+			if len(parts) == 2 {
+				fm := parts[0]
+				if n := extractYAMLField(fm, "name"); n != "" {
+					agentName = n
+				}
+				if d := extractYAMLField(fm, "description"); d != "" {
+					description = d
+				}
+			}
+		}
+
+		items = append(items, StoreItem{
+			Name:        agentName,
+			Description: description,
+			Type:        TypeAgent,
+			GithubURL:   ghURL,
+			Content:     content,
+		})
+	}
+	return items
+}
+
 // --- Plugin Import ---
 
 // ImportPluginFromGithub 从 GitHub 导入插件（完整的 agents + skills + commands）

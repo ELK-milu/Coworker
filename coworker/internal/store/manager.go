@@ -374,6 +374,52 @@ func (m *Manager) Import(repoURL string) ([]StoreItem, error) {
 	return added, nil
 }
 
+// ImportAgents 从 GitHub 导入独立 agents
+func (m *Manager) ImportAgents(repoURL string) ([]StoreItem, error) {
+	parsed, err := ImportAgentsFromGithub(repoURL)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing := make(map[string]bool)
+	for _, item := range m.items {
+		existing[item.Name] = true
+	}
+
+	var added []StoreItem
+	for _, item := range parsed {
+		if existing[item.Name] {
+			continue
+		}
+		item.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+		item.CreatedAt = time.Now()
+		item.UpdatedAt = time.Now()
+		m.items = append(m.items, item)
+		added = append(added, item)
+		existing[item.Name] = true
+
+		// DB 路径
+		if m.useDB {
+			dbItem := storeItemToDBModel(item)
+			if err := model.CreateCoworkerStoreItem(dbItem); err != nil {
+				log.Printf("[Store] DB create failed for import agent %s: %v", item.Name, err)
+			}
+		}
+
+		time.Sleep(time.Millisecond) // 确保 ID 唯一
+	}
+
+	if len(added) > 0 && !m.useDB {
+		if err := m.save(); err != nil {
+			return nil, err
+		}
+	}
+	return added, nil
+}
+
 // ImportPlugin 从 GitHub 导入插件（完整的 agents + skills + commands）
 func (m *Manager) ImportPlugin(repoURL string) ([]StoreItem, error) {
 	pluginsDir := filepath.Join(m.dataDir, "plugins")

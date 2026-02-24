@@ -9,6 +9,7 @@ const { Text, Title } = Typography;
 
 const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP', plugin: '插件' };
 const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green', plugin: 'orange' };
+const DEFAULT_ICONS = { skill: '✨', agent: '🤖', mcp: '🔔', plugin: '🔌' };
 
 const API_BASE = '/coworker/store';
 
@@ -24,11 +25,11 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-function SkillIcon({ icon, size = 28 }) {
+function SkillIcon({ icon, type, size = 28 }) {
   if (icon && icon.startsWith('data:image/')) {
     return <img src={icon} alt="icon" style={{ width: size, height: size, borderRadius: 4, objectFit: 'cover' }} />;
   }
-  return <span style={{ fontSize: size * 0.64 }}>{icon || '✨'}</span>;
+  return <span style={{ fontSize: size * 0.64 }}>{icon || DEFAULT_ICONS[type] || '✨'}</span>;
 }
 
 function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, admin }) {
@@ -45,7 +46,7 @@ function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, a
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <SkillIcon icon={item.icon} size={28} />
+            <SkillIcon icon={item.icon} type={item.type} size={28} />
             <Text strong>{item.name}</Text>
             <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
             {item.author && <Text type="tertiary" size="small">by {item.author}</Text>}
@@ -159,7 +160,7 @@ function EditModal({ visible, item, onClose, onSave }) {
                 overflow: 'hidden', background: 'var(--semi-color-fill-0)',
               }}
             >
-              <SkillIcon icon={form.icon} size={36} />
+              <SkillIcon icon={form.icon} type={form.type} size={36} />
             </div>
             <Button size="small" onClick={() => iconInputRef.current?.click()}>上传图片</Button>
             {form.icon && (
@@ -246,6 +247,7 @@ function ImportModal({ visible, onClose, onDone }) {
           onChange={setImportType}
           optionList={[
             { label: '技能 (Skill)', value: 'skill' },
+            { label: 'Agent', value: 'agent' },
             { label: '插件 (Plugin)', value: 'plugin' },
           ]}
           style={{ width: '100%' }}
@@ -262,6 +264,8 @@ function ImportModal({ visible, onClose, onDone }) {
       <Text type="tertiary" size="small">
         {importType === 'plugin'
           ? '插件导入：将 agents + skills + commands 作为整体安装，支持 marketplace.json 和 plugin.json'
+          : importType === 'agent'
+          ? 'Agent 导入：遍历 agents/ 目录中的 .md 文件，根据 frontmatter 创建独立 Agent 条目'
           : '技能导入：导入 skills 目录中的独立技能，支持 SKILL.md 格式'
         }
       </Text>
