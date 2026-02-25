@@ -207,6 +207,37 @@ func (t *SkillsTool) rebuildCache(userID string) {
 	t.cachedHint = fmt.Sprintf(" (e.g., %s, ...)", strings.Join(examples, ", "))
 }
 
+// resolveSubItemDir 在 skillDir 中查找 sub_item 的实际目录
+// 尝试三种候选路径（对应三种插件磁盘布局）：
+//  1. {plugin}/{sub.Name}/SKILL.md         — 模式 A（扁平）
+//  2. {plugin}/{sub.LocalDir}/SKILL.md     — 模式 B（skills/ 子目录）
+//  3. {plugin}/SKILL.md                    — 模式 C（根目录即技能）
+func (t *SkillsTool) resolveSubItemDir(pluginDirName string, sub store.SubItem) string {
+	if t.skillDir == "" {
+		return pluginDirName + "/" + sub.Name
+	}
+	candidates := []string{
+		pluginDirName + "/" + sub.Name,
+	}
+	if sub.LocalDir != "" && sub.LocalDir != sub.Name {
+		candidates = append(candidates, pluginDirName+"/"+sub.LocalDir)
+	}
+	for _, c := range candidates {
+		for _, fname := range []string{"SKILL.md", "skill.md"} {
+			if _, err := os.Stat(filepath.Join(t.skillDir, c, fname)); err == nil {
+				return c
+			}
+		}
+	}
+	// 模式 C 回退：插件根目录即技能
+	for _, fname := range []string{"SKILL.md", "skill.md"} {
+		if _, err := os.Stat(filepath.Join(t.skillDir, pluginDirName, fname)); err == nil {
+			return pluginDirName
+		}
+	}
+	return pluginDirName + "/" + sub.Name // 默认
+}
+
 // collectSkills 收集用户已安装的 store 技能
 func (t *SkillsTool) collectSkills(userID string) []skillEntry {
 	if t.store == nil || userID == "" {
@@ -230,7 +261,7 @@ func (t *SkillsTool) collectSkills(userID string) []skillEntry {
 						Name:        sub.Name,
 						Description: sub.Description,
 						Content:     sub.Content,
-						LocalDir:    pluginDirName + "/" + sub.Name,
+						LocalDir:    t.resolveSubItemDir(pluginDirName, sub),
 					})
 					seen[sub.Name] = true
 				}
@@ -279,7 +310,7 @@ func (t *SkillsTool) findSkill(name string) *skillEntry {
 						Name:        sub.Name,
 						Description: sub.Description,
 						Content:     sub.Content,
-						LocalDir:    pluginDirName + "/" + sub.Name,
+						LocalDir:    t.resolveSubItemDir(pluginDirName, sub),
 					}
 				}
 			}
@@ -308,19 +339,35 @@ func (t *SkillsTool) listNames() []string {
 	return names
 }
 
-// listSkillFiles 递归列出目录下的文件（排除 SKILL.md），最多 limit 个
+// listSkillFiles 递归列出目录下的文件（排除 SKILL.md 和非技能资源），最多 limit 个
 func listSkillFiles(dir string, limit int) []string {
+	excludeDirs := map[string]bool{
+		".claude-plugin": true, ".git": true, ".github": true,
+		".cursor-plugin": true, ".codex": true, ".opencode": true,
+		"node_modules": true,
+	}
+	excludeFiles := map[string]bool{
+		"skill.md": true, "readme.md": true, "claude.md": true,
+		"license": true, "license.txt": true, "license.md": true,
+	}
 	var files []string
 	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
+			if excludeDirs[strings.ToLower(d.Name())] {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		name := d.Name()
 		lower := strings.ToLower(name)
-		if lower == "skill.md" {
+		if excludeFiles[lower] {
+			return nil
+		}
+		// 跳过压缩包等大文件
+		if strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz") {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)

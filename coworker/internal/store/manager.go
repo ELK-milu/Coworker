@@ -337,37 +337,8 @@ func (m *Manager) CopySkillsToUserDir(userID, skillDir string) error {
 			}
 			if item.Type == TypePlugin && item.LocalDir != "" {
 				pluginDir := filepath.Join(m.dataDir, "plugins", item.LocalDir)
-				if len(item.SubItems) > 0 {
-					// 通过 sub_items 精确定位，放入 .skill/{plugin.LocalDir}/{sub.Name}/
-					for _, sub := range item.SubItems {
-						if sub.Type != SubTypeSkill {
-							continue
-						}
-						if sub.LocalDir != "" {
-							srcDir := filepath.Join(pluginDir, sub.LocalDir)
-							if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
-								toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir + "/" + sub.Name})
-								continue
-							}
-						}
-						// 回退：直接用 sub.Name
-						srcDir := filepath.Join(pluginDir, sub.Name)
-						if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
-							toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir + "/" + sub.Name})
-						}
-					}
-				} else {
-					// 无 sub_items：扫描 skills/ 子目录
-					pluginSkillsDir := filepath.Join(pluginDir, "skills")
-					if info, err := os.Stat(pluginSkillsDir); err == nil && info.IsDir() {
-						entries, _ := os.ReadDir(pluginSkillsDir)
-						for _, entry := range entries {
-							if entry.IsDir() {
-								srcDir := filepath.Join(pluginSkillsDir, entry.Name())
-								toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir + "/" + entry.Name()})
-							}
-						}
-					}
+				if info, err := os.Stat(pluginDir); err == nil && info.IsDir() {
+					toCopy = append(toCopy, skillCopy{srcDir: pluginDir, name: item.LocalDir})
 				}
 			}
 			break
@@ -721,53 +692,18 @@ func (m *Manager) UninstallItemForUser(userID, itemID, skillDir string) error {
 	return nil
 }
 
-// copyPluginSkills 复制 plugin 的所有 skill 子项到用户 skillDir
-// 插件的所有技能放在 .skill/{plugin.LocalDir}/ 子目录下，保证一个插件占一个顶级目录
+// copyPluginSkills 复制 plugin 的整个目录到用户 skillDir
+// 直接复制 store/plugins/{name}/ → .skill/{name}/，兼容所有三种插件磁盘布局：
+//   - 模式 A（扁平）：{plugin}/{sub-name}/SKILL.md
+//   - 模式 B（skills/ 子目录）：{plugin}/skills/{sub-name}/SKILL.md
+//   - 模式 C（根目录即技能）：{plugin}/SKILL.md
 func (m *Manager) copyPluginSkills(item *StoreItem, skillDir string) {
 	pluginDir := filepath.Join(m.dataDir, "plugins", item.LocalDir)
-
-	// 插件目标目录：.skill/{plugin.LocalDir}/
-	pluginTargetDir := filepath.Join(skillDir, item.LocalDir)
-	os.MkdirAll(pluginTargetDir, 0755)
-
-	if len(item.SubItems) > 0 {
-		for _, sub := range item.SubItems {
-			if sub.Type != SubTypeSkill {
-				continue
-			}
-			var srcDir string
-			if sub.LocalDir != "" {
-				candidate := filepath.Join(pluginDir, sub.LocalDir)
-				if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-					srcDir = candidate
-				}
-			}
-			if srcDir == "" {
-				candidate := filepath.Join(pluginDir, sub.Name)
-				if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-					srcDir = candidate
-				}
-			}
-			if srcDir != "" {
-				dst := filepath.Join(pluginTargetDir, sub.Name)
-				copyDir(srcDir, dst)
-			}
-		}
+	if info, err := os.Stat(pluginDir); err != nil || !info.IsDir() {
 		return
 	}
-
-	// 无 sub_items：扫描 plugins/{localDir}/skills/ 目录
-	pluginSkillsDir := filepath.Join(pluginDir, "skills")
-	if info, err := os.Stat(pluginSkillsDir); err == nil && info.IsDir() {
-		entries, _ := os.ReadDir(pluginSkillsDir)
-		for _, entry := range entries {
-			if entry.IsDir() {
-				srcDir := filepath.Join(pluginSkillsDir, entry.Name())
-				dst := filepath.Join(pluginTargetDir, entry.Name())
-				copyDir(srcDir, dst)
-			}
-		}
-	}
+	dst := filepath.Join(skillDir, item.LocalDir)
+	copyDir(pluginDir, dst)
 }
 
 // removePluginSkills 删除 plugin 在 skillDir 中的整个目录
