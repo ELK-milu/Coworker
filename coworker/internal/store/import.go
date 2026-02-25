@@ -20,8 +20,12 @@ import (
 
 // downloadRepoArchive 下载 GitHub 仓库的 tarball 并解压到临时目录
 // 返回解压后的仓库根目录路径和清理函数
-func downloadRepoArchive(owner, repo string) (repoRoot string, cleanup func(), err error) {
+// ref 为空时下载默认分支，否则下载指定分支/tag
+func downloadRepoArchive(owner, repo, ref string) (repoRoot string, cleanup func(), err error) {
 	archiveURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/tarball", owner, repo)
+	if ref != "" {
+		archiveURL += "/" + ref
+	}
 	req, _ := http.NewRequest("GET", archiveURL, nil)
 	req.Header.Set("User-Agent", "Coworker-Store")
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
@@ -186,39 +190,63 @@ func copyLocalDir(repoDir, remotePath, destDir string) error {
 // ImportFromGithub 从 GitHub 仓库导入 skills/agents
 // storeDir: 技能文件全局存储目录（store/skills/），空字符串表示不下载文件
 func ImportFromGithub(repoURL string, storeDir string) ([]StoreItem, error) {
-	owner, repo := parseRepo(repoURL)
-	if owner == "" || repo == "" {
+	parsed := parseSource(repoURL)
+	if parsed.Owner == "" || parsed.Repo == "" {
 		return nil, fmt.Errorf("invalid repo: %s", repoURL)
 	}
 
+	owner, repo := parsed.Owner, parsed.Repo
 	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 	repoIdent := owner + "/" + repo
 
 	// 一次性下载整个仓库到临时目录（单次 HTTP 请求，避免 API 限流）
-	repoDir, cleanup, err := downloadRepoArchive(owner, repo)
+	// 如果指定了 ref，下载指定分支/tag
+	repoDir, cleanup, err := downloadRepoArchive(owner, repo, parsed.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("download repo: %w", err)
 	}
 	defer cleanup()
 
-	// 优先级: marketplace.json > plugin.json > root SKILL.md
+	// discoverSkills 的搜索起点：如果有 subpath 则从子路径开始
+	searchPath := "."
+	if parsed.Subpath != "" {
+		searchPath = parsed.Subpath
+	}
+
+	// 优先级: marketplace.json > plugin.json > discoverSkills > root SKILL.md
 	// 1. 尝试 .claude-plugin/marketplace.json → 统一为 TypePlugin
 	pluginsDir := filepath.Join(filepath.Dir(storeDir), "plugins")
 	if items, err := importFromMarketplace(repoDir, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
-		fillDefaultAuthor(items, repoIdent)
-		return items, nil
+		if parsed.SkillFilter != "" {
+			items = filterSkillItemsByName(items, parsed.SkillFilter)
+		}
+		if len(items) > 0 {
+			fillDefaultAuthor(items, repoIdent)
+			return items, nil
+		}
 	}
 
 	// 2. 尝试 .claude-plugin/plugin.json
 	if items, err := tryPluginJSON(repoDir, ghURL, storeDir); err == nil && len(items) > 0 {
-		fillDefaultAuthor(items, repoIdent)
-		return items, nil
+		if parsed.SkillFilter != "" {
+			items = filterSkillItemsByName(items, parsed.SkillFilter)
+		}
+		if len(items) > 0 {
+			fillDefaultAuthor(items, repoIdent)
+			return items, nil
+		}
 	}
 
-	// 3. 尝试根目录 SKILL.md / skill.md
-	if items, err := tryRootSkill(repoDir, repo, ghURL, storeDir); err == nil && len(items) > 0 {
-		fillDefaultAuthor(items, repoIdent)
-		return items, nil
+	// 3. discoverSkills 统一发现（模仿 npx skills 的优先级扫描）
+	//    扫描: ./SKILL.md → ./skills/ → 直接子目录 → 递归(max 5)
+	if items, err := tryDiscoverSkills(repoDir, repo, ghURL, storeDir, searchPath); err == nil && len(items) > 0 {
+		if parsed.SkillFilter != "" {
+			items = filterSkillItemsByName(items, parsed.SkillFilter)
+		}
+		if len(items) > 0 {
+			fillDefaultAuthor(items, repoIdent)
+			return items, nil
+		}
 	}
 
 	return nil, fmt.Errorf("no plugin/skill found in %s/%s", owner, repo)
@@ -234,7 +262,7 @@ func ImportAgentsFromGithub(repoURL string) ([]StoreItem, error) {
 	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 	repoIdent := owner + "/" + repo
 
-	repoDir, cleanup, err := downloadRepoArchive(owner, repo)
+	repoDir, cleanup, err := downloadRepoArchive(owner, repo, "")
 	if err != nil {
 		return nil, fmt.Errorf("download repo: %w", err)
 	}
@@ -260,7 +288,7 @@ func ImportPluginFromGithub(repoURL string, pluginsDir string) ([]StoreItem, err
 	ghURL := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
 	repoIdent := owner + "/" + repo
 
-	repoDir, cleanup, err := downloadRepoArchive(owner, repo)
+	repoDir, cleanup, err := downloadRepoArchive(owner, repo, "")
 	if err != nil {
 		return nil, fmt.Errorf("download repo: %w", err)
 	}
@@ -310,6 +338,83 @@ func parseRepo(input string) (string, string) {
 		return parts[0], parts[1]
 	}
 	return "", ""
+}
+
+// ParsedSource GitHub URL 解析结果（增强版，支持分支/子路径/技能过滤）
+type ParsedSource struct {
+	Owner       string // GitHub owner
+	Repo        string // GitHub repo name
+	Ref         string // 分支/tag（从 /tree/xxx 提取）
+	Subpath     string // 子路径（从 /tree/branch/path/to/skill 提取）
+	SkillFilter string // 技能过滤（从 owner/repo@skill-name 提取）
+}
+
+// parseSource 增强版 URL 解析，支持以下格式:
+//   - https://github.com/owner/repo
+//   - github.com/owner/repo/tree/main
+//   - github.com/owner/repo/tree/main/skills/pdf
+//   - owner/repo
+//   - owner/repo/path/to/skill
+//   - owner/repo@find-skills
+func parseSource(input string) ParsedSource {
+	input = strings.TrimSpace(input)
+	input = strings.TrimSuffix(input, "/")
+	input = strings.TrimSuffix(input, ".git")
+
+	var ps ParsedSource
+
+	// 提取 @skillFilter（在任何 URL 处理之前）
+	if idx := strings.LastIndex(input, "@"); idx > 0 {
+		// 确保 @ 不是 URL scheme 的一部分（如 git@github.com）
+		before := input[:idx]
+		if !strings.Contains(before, "://") && !strings.HasPrefix(before, "git@") {
+			ps.SkillFilter = input[idx+1:]
+			input = before
+		}
+	}
+
+	// 移除协议前缀
+	input = strings.TrimPrefix(input, "https://")
+	input = strings.TrimPrefix(input, "http://")
+
+	// 移除 github.com 前缀
+	if strings.HasPrefix(input, "github.com/") {
+		input = strings.TrimPrefix(input, "github.com/")
+	}
+
+	// 此时 input 格式为: owner/repo[/tree/ref[/subpath]] 或 owner/repo[/subpath]
+	parts := strings.SplitN(input, "/", 3)
+	if len(parts) < 2 {
+		return ps
+	}
+
+	ps.Owner = parts[0]
+	ps.Repo = parts[1]
+
+	if len(parts) == 3 {
+		rest := parts[2] // tree/main/skills/pdf 或 path/to/skill
+
+		if strings.HasPrefix(rest, "tree/") {
+			// /tree/ref[/subpath] 格式
+			treeParts := strings.SplitN(rest[5:], "/", 2) // 去掉 "tree/"
+			ps.Ref = treeParts[0]
+			if len(treeParts) == 2 && treeParts[1] != "" {
+				ps.Subpath = treeParts[1]
+			}
+		} else if strings.HasPrefix(rest, "blob/") {
+			// /blob/ref/path 格式（也支持）
+			blobParts := strings.SplitN(rest[5:], "/", 2)
+			ps.Ref = blobParts[0]
+			if len(blobParts) == 2 && blobParts[1] != "" {
+				ps.Subpath = blobParts[1]
+			}
+		} else {
+			// 简写格式 owner/repo/path/to/skill
+			ps.Subpath = rest
+		}
+	}
+
+	return ps
 }
 
 // ═══ Marketplace Import ═════════════════════════════════════════════
@@ -555,26 +660,47 @@ func buildPluginItem(repoDir, remotePath, name, desc, ghURL, pluginsDir string, 
 	}
 }
 
-// ═══ Root Skill Import ══════════════════════════════════════════════
+// ═══ Discover Skills Import ═══════════════════════════════════════
 
-func tryRootSkill(repoDir, repo, ghURL, storeDir string) ([]StoreItem, error) {
-	for _, name := range []string{"SKILL.md", "skill.md"} {
-		content, err := localReadFile(repoDir, name)
-		if err != nil {
-			continue
+// tryDiscoverSkills 使用 discoverSkills 统一发现仓库中的 skills
+// 覆盖: 根 SKILL.md、skills/ 目录、直接子目录、递归搜索
+// searchPath: 搜索起点路径（"." 表示仓库根目录）
+func tryDiscoverSkills(repoDir, repo, ghURL, storeDir, searchPath string) ([]StoreItem, error) {
+	subs := discoverSkills(repoDir, searchPath)
+	if len(subs) == 0 {
+		return nil, fmt.Errorf("no skills discovered")
+	}
+
+	var items []StoreItem
+	for _, sub := range subs {
+		item := StoreItem{
+			Name:        sub.Name,
+			Description: sub.Description,
+			Type:        TypeSkill,
+			GithubURL:   ghURL,
+			Content:     sub.Content,
 		}
-		item := parseSkillMD(content, repo, ghURL)
-		// 复制整个仓库根目录到 store/skills/{name}/
-		if storeDir != "" {
-			localDir := sanitizeDirName(item.Name)
+		// 复制 skill 目录到 store/skills/{name}/
+		if storeDir != "" && sub.LocalDir != "" {
+			localDir := sanitizeDirName(sub.Name)
 			destDir := filepath.Join(storeDir, localDir)
-			if err := copyLocalDir(repoDir, "", destDir); err == nil {
-				item.LocalDir = localDir
+			// sub.LocalDir 格式为 "skills/xxx"，从仓库根找源目录
+			srcRelPath := filepath.Base(sub.LocalDir)
+			// 尝试在常见位置查找源目录
+			for _, candidate := range []string{
+				"skills/" + srcRelPath,    // skills/find-skills/
+				srcRelPath,                // find-skills/
+				sub.LocalDir,              // skills/find-skills (原始值)
+			} {
+				if err := copyLocalDir(repoDir, candidate, destDir); err == nil {
+					item.LocalDir = localDir
+					break
+				}
 			}
 		}
-		return []StoreItem{item}, nil
+		items = append(items, item)
 	}
-	return nil, fmt.Errorf("no root skill.md")
+	return items, nil
 }
 
 // ═══ Unified Discovery (模仿 npx skills 的优先级扫描) ═══════════════
@@ -598,7 +724,7 @@ var skipDirs = map[string]bool{
 //
 // 扫描优先级：
 //  1. searchPath/SKILL.md — searchPath 本身就是一个 skill
-//  2. searchPath/skills/ — 标准 skills 子目录布局
+//  2. 优先级目录 — skills/, skills/.curated, .claude/skills/ 等
 //  3. searchPath/ 直接子目录 — 每个子目录含 SKILL.md
 //  4. 递归搜索 searchPath/ — 最大深度 5，跳过 skipDirs
 func discoverSkills(repoDir, searchPath string) []SubItem {
@@ -607,8 +733,50 @@ func discoverSkills(repoDir, searchPath string) []SubItem {
 		return []SubItem{*sub}
 	}
 
-	// 优先级 2: searchPath/skills/ 标准布局
-	if subs := scanDirForSkills(repoDir, searchPath+"/skills"); len(subs) > 0 {
+	// 优先级 2: 按优先级扫描标准目录（对齐 npx skills v1.4.1 的 prioritySearchDirs）
+	priorityDirs := []string{
+		searchPath + "/skills",
+		searchPath + "/skills/.curated",
+		searchPath + "/skills/.experimental",
+		searchPath + "/skills/.system",
+		searchPath + "/.agent/skills",
+		searchPath + "/.agents/skills",
+		searchPath + "/.claude/skills",
+		searchPath + "/.cline/skills",
+		searchPath + "/.codebuddy/skills",
+		searchPath + "/.codex/skills",
+		searchPath + "/.commandcode/skills",
+		searchPath + "/.continue/skills",
+		searchPath + "/.github/skills",
+		searchPath + "/.goose/skills",
+		searchPath + "/.iflow/skills",
+		searchPath + "/.junie/skills",
+		searchPath + "/.kilocode/skills",
+		searchPath + "/.kiro/skills",
+		searchPath + "/.mux/skills",
+		searchPath + "/.neovate/skills",
+		searchPath + "/.opencode/skills",
+		searchPath + "/.openhands/skills",
+		searchPath + "/.pi/skills",
+		searchPath + "/.qoder/skills",
+		searchPath + "/.roo/skills",
+		searchPath + "/.trae/skills",
+		searchPath + "/.windsurf/skills",
+		searchPath + "/.zencoder/skills",
+	}
+	// 追加 plugin manifest 中声明的 skill 搜索目录
+	priorityDirs = append(priorityDirs, getPluginSkillPaths(repoDir, searchPath)...)
+	seenNames := make(map[string]bool)
+	var subs []SubItem
+	for _, dir := range priorityDirs {
+		for _, sub := range scanDirForSkills(repoDir, dir) {
+			if !seenNames[sub.Name] {
+				subs = append(subs, sub)
+				seenNames[sub.Name] = true
+			}
+		}
+	}
+	if len(subs) > 0 {
 		return subs
 	}
 
@@ -656,12 +824,19 @@ func readSkillAt(repoDir, dirPath string) *SubItem {
 		if strings.HasPrefix(content, "---") {
 			parts := strings.SplitN(content[3:], "---", 2)
 			if len(parts) == 2 {
-				if n := extractYAMLField(parts[0], "name"); n != "" {
-					skillName = n
+				fmName := extractYAMLField(parts[0], "name")
+				fmDesc := extractYAMLField(parts[0], "description")
+				// 验证: name 和 description 都必须非空才视为有效 frontmatter
+				// （对齐 npx skills 的 readSkill 验证逻辑）
+				if fmName != "" && fmDesc != "" {
+					skillName = fmName
+					description = fmDesc
+				} else if fmName != "" {
+					skillName = fmName
+				} else if fmDesc != "" {
+					description = fmDesc
 				}
-				if d := extractYAMLField(parts[0], "description"); d != "" {
-					description = d
-				}
+				// 如果 name 为空，保留 fallback 到目录名（已在上面设置）
 			}
 		}
 
@@ -945,34 +1120,6 @@ func scanCommandsMD(repoDir, dirPath string) []SubItem {
 
 // ═══ Parsing & Utilities ════════════════════════════════════════════
 
-// parseSkillMD 解析 SKILL.md 的 YAML frontmatter
-func parseSkillMD(content, fallbackName, ghURL string) StoreItem {
-	item := StoreItem{
-		Type:      TypeSkill,
-		GithubURL: ghURL,
-		Content:   content,
-	}
-
-	// 解析 YAML frontmatter (--- ... ---)
-	if strings.HasPrefix(content, "---") {
-		parts := strings.SplitN(content[3:], "---", 2)
-		if len(parts) == 2 {
-			fm := parts[0]
-			item.Content = strings.TrimSpace(parts[1])
-			item.Name = extractYAMLField(fm, "name")
-			item.Description = extractYAMLField(fm, "description")
-		}
-	}
-
-	if item.Name == "" {
-		item.Name = fallbackName
-	}
-	if item.Description == "" {
-		item.Description = "Imported from GitHub"
-	}
-	return item
-}
-
 func extractYAMLField(yaml, field string) string {
 	for _, line := range strings.Split(yaml, "\n") {
 		line = strings.TrimSpace(line)
@@ -1003,6 +1150,97 @@ func sanitizeDirName(name string) string {
 	name = strings.ReplaceAll(name, "\\", "-")
 	name = strings.ToLower(name)
 	return name
+}
+
+// filterSkillsByName 按名称过滤 SubItem（大小写不敏感）
+func filterSkillsByName(items []SubItem, name string) []SubItem {
+	target := strings.ToLower(name)
+	var result []SubItem
+	for _, item := range items {
+		if strings.ToLower(item.Name) == target {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// filterSkillItemsByName 按名称过滤 StoreItem（大小写不敏感）
+// 对于 TypePlugin，过滤其 SubItems 中匹配的 skill；对于 TypeSkill，直接按名称匹配
+func filterSkillItemsByName(items []StoreItem, name string) []StoreItem {
+	target := strings.ToLower(name)
+	var result []StoreItem
+	for _, item := range items {
+		if item.Type == TypePlugin {
+			// 过滤 plugin 的子条目
+			var filteredSubs []SubItem
+			for _, sub := range item.SubItems {
+				if sub.Type == SubTypeSkill && strings.ToLower(sub.Name) == target {
+					filteredSubs = append(filteredSubs, sub)
+				}
+			}
+			if len(filteredSubs) > 0 {
+				filtered := item
+				filtered.SubItems = filteredSubs
+				result = append(result, filtered)
+			}
+		} else if strings.ToLower(item.Name) == target {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// getPluginSkillPaths 从 plugin manifest 中提取额外的 skill 搜索目录
+// 扫描 .claude-plugin/marketplace.json 和 .claude-plugin/plugin.json 中声明的 skill 路径
+func getPluginSkillPaths(repoDir, searchPath string) []string {
+	var dirs []string
+	seen := make(map[string]bool)
+
+	addDir := func(skillPath string) {
+		skillPath = strings.TrimPrefix(skillPath, "./")
+		if skillPath == "" {
+			return
+		}
+		// 取 skill 路径的父目录作为搜索目录
+		parent := filepath.ToSlash(filepath.Dir(skillPath))
+		if parent == "." {
+			parent = searchPath
+		} else if searchPath != "." {
+			parent = searchPath + "/" + parent
+		}
+		if !seen[parent] {
+			dirs = append(dirs, parent)
+			seen[parent] = true
+		}
+	}
+
+	// 1. marketplace.json → 每个 plugin 的 skills 数组
+	if raw, err := localReadFile(repoDir, ".claude-plugin/marketplace.json"); err == nil {
+		var mp MarketplaceJSON
+		if json.Unmarshal([]byte(raw), &mp) == nil {
+			for _, p := range mp.Plugins {
+				for _, sp := range p.Skills {
+					addDir(sp)
+				}
+			}
+		}
+	}
+
+	// 2. plugin.json → skills 数组（如果有的话）
+	if raw, err := localReadFile(repoDir, ".claude-plugin/plugin.json"); err == nil {
+		var obj map[string]interface{}
+		if json.Unmarshal([]byte(raw), &obj) == nil {
+			if skills, ok := obj["skills"].([]interface{}); ok {
+				for _, s := range skills {
+					if sp, ok := s.(string); ok {
+						addDir(sp)
+					}
+				}
+			}
+		}
+	}
+
+	return dirs
 }
 
 // ═══ Tool Name Mapping ══════════════════════════════════════════════
