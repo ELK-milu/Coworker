@@ -19,7 +19,7 @@ const ToolCallCard = ({ toolName, toolId, input, result, status, isError, elapse
   const getToolSummary = () => {
     if (!input) return toolName;
     try {
-      const inputObj = JSON.parse(input);
+      const inputObj = typeof input === 'string' ? JSON.parse(input) : input;
       // 根据不同工具类型提取关键信息
       if (inputObj.command) {
         // Bash 工具：显示命令的前50个字符

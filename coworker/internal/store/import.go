@@ -20,15 +20,19 @@ import (
 
 // downloadRepoArchive 下载 GitHub 仓库的 tarball 并解压到临时目录
 // 返回解压后的仓库根目录路径和清理函数
-// ref 为空时下载默认分支，否则下载指定分支/tag
+// ref 为空时下载默认分支（HEAD），否则下载指定分支/tag
+//
+// 使用 codeload.github.com 直接下载，不走 API 端点，不受 API 限流约束。
+// 格式: https://codeload.github.com/{owner}/{repo}/tar.gz/refs/heads/{branch}
+//   或: https://codeload.github.com/{owner}/{repo}/tar.gz/{ref}  (tag/sha)
+// ref 为空时 fallback 到 HEAD（GitHub 会自动解析为默认分支）
 func downloadRepoArchive(owner, repo, ref string) (repoRoot string, cleanup func(), err error) {
-	archiveURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/tarball", owner, repo)
-	if ref != "" {
-		archiveURL += "/" + ref
+	if ref == "" {
+		ref = "HEAD"
 	}
+	archiveURL := fmt.Sprintf("https://codeload.github.com/%s/%s/tar.gz/%s", owner, repo, ref)
 	req, _ := http.NewRequest("GET", archiveURL, nil)
 	req.Header.Set("User-Agent", "Coworker-Store")
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	log.Printf("[Store] downloading repo archive: %s/%s", owner, repo)
 

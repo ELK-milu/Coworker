@@ -373,6 +373,16 @@ func (h *WSHandler) sendJSON(conn *websocket.Conn, v interface{}) error {
 	return conn.WriteJSON(v)
 }
 
+// toolInputToRaw 将 ToolInput (JSON string) 转为 json.RawMessage，
+// 避免 WriteJSON 对已有 JSON 字符串进行双重编码。
+// 如果 input 不是合法 JSON，则 fallback 为普通字符串。
+func toolInputToRaw(input string) interface{} {
+	if len(input) > 0 && json.Valid([]byte(input)) {
+		return json.RawMessage(input)
+	}
+	return input
+}
+
 // sendError 发送错误消息
 func (h *WSHandler) sendError(conn *websocket.Conn, msg string) {
 	h.sendJSON(conn, map[string]interface{}{
@@ -910,16 +920,16 @@ func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, userID st
 		case loop.EventTypeToolStart:
 			payload["name"] = event.ToolName
 			payload["tool_id"] = event.ToolID
-			payload["input"] = event.ToolInput
+			payload["input"] = toolInputToRaw(event.ToolInput)
 		case loop.EventTypeToolInput:
 			log.Printf("[WS] Forwarding tool_input event: tool_id=%s, input_len=%d", event.ToolID, len(event.ToolInput))
 			payload["name"] = event.ToolName
 			payload["tool_id"] = event.ToolID
-			payload["input"] = event.ToolInput
+			payload["input"] = toolInputToRaw(event.ToolInput)
 		case loop.EventTypeToolEnd:
 			payload["name"] = event.ToolName
 			payload["tool_id"] = event.ToolID
-			payload["input"] = event.ToolInput
+			payload["input"] = toolInputToRaw(event.ToolInput)
 			payload["result"] = event.ToolResult
 			payload["is_error"] = event.IsError
 			payload["elapsed_ms"] = event.ElapsedMs
