@@ -130,7 +130,6 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const loadModels = useCallback(async () => {
     setModelLoading(true);
     try {
-      const { API } = await import('../../../helpers/api');
       const res = await API.get('/api/user/models');
       if (res.data?.success) {
         const opts = (res.data.data || []).map(m => ({ label: m, value: m }));
@@ -146,7 +145,6 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   // 加载分组列表
   const loadGroups = useCallback(async () => {
     try {
-      const { API } = await import('../../../helpers/api');
       const res = await API.get('/api/user/self/groups');
       if (res.data?.success) {
         const opts = Object.entries(res.data.data || {}).map(([group, info]) => ({

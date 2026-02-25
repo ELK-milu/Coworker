@@ -15,6 +15,7 @@ import FilePreview from './components/FilePreview';
 import { getUserIdFromLocalStorage } from '../../helpers/utils';
 import { UserContext } from '../../context/User';
 import { stringToColor } from '../../helpers';
+import { API } from '../../helpers/api';
 import './styles.css';
 
 const { Title, Text } = Typography;
@@ -146,7 +147,6 @@ const Coworker = () => {
   // 从 /api/log/self/ 获取本轮实际计费数据（done 事件后调用）
   const fetchTurnBillingFromLogs = useCallback(async (model, startTime) => {
     try {
-      const { API } = await import('../../helpers/api');
       const res = await API.get(`/api/log/self/?start_timestamp=${startTime}&model_name=${encodeURIComponent(model)}&p=1&page_size=50`);
       const items = res.data?.data?.items || res.data?.data || [];
       if (!Array.isArray(items) || items.length === 0) return null;
@@ -176,7 +176,6 @@ const Coworker = () => {
   useEffect(() => {
     (async () => {
       try {
-        const { API } = await import('../../helpers/api');
         const res = await API.get('/coworker/ratio_config');
         if (res.data?.data) {
           setRatioConfig(res.data.data);

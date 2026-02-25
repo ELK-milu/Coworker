@@ -21,17 +21,17 @@ const ToolCallCard = ({ toolName, toolId, input, result, status, isError, elapse
     try {
       const inputObj = typeof input === 'string' ? JSON.parse(input) : input;
       // 根据不同工具类型提取关键信息
-      if (inputObj.command) {
+      if (typeof inputObj.command === 'string') {
         // Bash 工具：显示命令的前50个字符
         const cmd = inputObj.command.split('\n')[0].substring(0, 50);
         return `${toolName}(${cmd}${inputObj.command.length > 50 ? '...' : ''})`;
       }
-      if (inputObj.file_path) {
+      if (typeof inputObj.file_path === 'string') {
         // Read/Write/Edit 工具：显示文件路径
         const fileName = inputObj.file_path.split(/[/\\]/).pop();
         return `${toolName}(${fileName})`;
       }
-      if (inputObj.pattern) {
+      if (typeof inputObj.pattern === 'string') {
         // Glob/Grep 工具：显示模式
         return `${toolName}(${inputObj.pattern})`;
       }
@@ -74,11 +74,13 @@ const ToolCallCard = ({ toolName, toolId, input, result, status, isError, elapse
   // 格式化输出内容
   const formatContent = (content, maxLines = 20) => {
     if (!content) return '';
-    const lines = content.split('\n');
+    // toolInputToRaw 使得 input 可能是 JS 对象而非字符串
+    const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+    const lines = text.split('\n');
     if (lines.length > maxLines) {
       return lines.slice(0, maxLines).join('\n') + `\n... (${lines.length - maxLines} more lines)`;
     }
-    return content;
+    return text;
   };
 
   return (
