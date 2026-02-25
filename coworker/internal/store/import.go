@@ -373,30 +373,23 @@ func buildMarketplacePluginItem(repoDir, repo, ghURL, pluginsDir string, mp *Mar
 	// 3. 构建 SubItems
 	var subItems []SubItem
 
-	// skills: 有显式 Skills 数组 → scanSkillPathsMD；否则 → 三层降级扫描
+	// skills: 有显式 Skills 数组 → scanSkillPathsMD；否则 → discoverSkills 统一发现
 	if len(p.Skills) > 0 {
 		subItems = append(subItems, scanSkillPathsMD(repoDir, p.Skills)...)
-	} else if sourcePath != "" {
-		// 降级1: sourcePath/skills/ （标准布局）
-		if subs := scanSkillsMD(repoDir, sourcePath+"/skills"); len(subs) > 0 {
-			subItems = append(subItems, subs...)
-		} else if subs := scanSkillsMD(repoDir, sourcePath); len(subs) > 0 {
-			// 降级2: sourcePath/ 本身包含 skill 子目录（如 marketing-skill/content-creator/SKILL.md）
-			subItems = append(subItems, subs...)
-		} else {
-			// 降级3: sourcePath/ 本身就是一个 skill（直接含 SKILL.md）
-			subItems = append(subItems, tryReadSingleSkill(repoDir, sourcePath)...)
-		}
 	} else {
-		subItems = append(subItems, scanSkillsMD(repoDir, "skills")...)
+		searchPath := sourcePath
+		if searchPath == "" {
+			searchPath = "."
+		}
+		subItems = append(subItems, discoverSkills(repoDir, searchPath)...)
 	}
 
-	// agents: sourcePath/agents/ → 降级到根 agents/
-	agentDir := "agents"
-	if sourcePath != "" {
-		agentDir = sourcePath + "/agents"
+	// agents: 使用 discoverAgents 统一发现
+	agentSearchPath := sourcePath
+	if agentSearchPath == "" {
+		agentSearchPath = "."
 	}
-	subItems = append(subItems, scanAgentsMD(repoDir, agentDir)...)
+	subItems = append(subItems, discoverAgents(repoDir, agentSearchPath)...)
 
 	// commands: sourcePath/commands/ → 降级到根 commands/
 	cmdDir := "commands"
@@ -518,29 +511,26 @@ func tryRootPlugin(repoDir, repo, ghURL, pluginsDir string) ([]StoreItem, error)
 func buildPluginItem(repoDir, remotePath, name, desc, ghURL, pluginsDir string, skillPaths []string) *StoreItem {
 	var subItems []SubItem
 
-	agentDir := "agents"
-	skillDir := "skills"
+	searchPath := remotePath
+	if searchPath == "" {
+		searchPath = "."
+	}
+
+	// 扫描 agents — 使用 discoverAgents 统一发现
+	subItems = append(subItems, discoverAgents(repoDir, searchPath)...)
+
+	// 扫描 skills：优先使用显式路径列表，否则 discoverSkills 统一发现
+	if len(skillPaths) > 0 {
+		subItems = append(subItems, scanSkillPathsMD(repoDir, skillPaths)...)
+	} else {
+		subItems = append(subItems, discoverSkills(repoDir, searchPath)...)
+	}
+
+	// 扫描 commands（保持原有逻辑）
 	cmdDir := "commands"
 	if remotePath != "" {
-		agentDir = remotePath + "/agents"
-		skillDir = remotePath + "/skills"
 		cmdDir = remotePath + "/commands"
 	}
-
-	// 扫描 agents/
-	agentSubs := scanAgentsMD(repoDir, agentDir)
-	subItems = append(subItems, agentSubs...)
-
-	// 扫描 skills/：优先使用显式路径列表
-	var skillSubs []SubItem
-	if len(skillPaths) > 0 {
-		skillSubs = scanSkillPathsMD(repoDir, skillPaths)
-	} else {
-		skillSubs = scanSkillsMD(repoDir, skillDir)
-	}
-	subItems = append(subItems, skillSubs...)
-
-	// 扫描 commands/
 	cmdSubs := scanCommandsMD(repoDir, cmdDir)
 	subItems = append(subItems, cmdSubs...)
 
@@ -587,48 +577,107 @@ func tryRootSkill(repoDir, repo, ghURL, storeDir string) ([]StoreItem, error) {
 	return nil, fmt.Errorf("no root skill.md")
 }
 
-// ═══ Directory Scanning ═════════════════════════════════════════════
+// ═══ Unified Discovery (模仿 npx skills 的优先级扫描) ═══════════════
 
-// scanSkillsDir 扫描 skills/ 目录下的子目录
-func scanSkillsDir(repoDir, dirPath, author, ghURL, storeDir string) ([]StoreItem, error) {
-	entries, err := localListDir(repoDir, dirPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var items []StoreItem
-	for _, e := range entries {
-		if !e.IsDir {
-			continue
-		}
-		// 尝试 SKILL.md 或 skill.md
-		for _, fname := range []string{"SKILL.md", "skill.md"} {
-			content, err := localReadFile(repoDir, dirPath+"/"+e.Name+"/"+fname)
-			if err != nil {
-				continue
-			}
-			item := parseSkillMD(content, e.Name, ghURL)
-			if author != "" {
-				item.Author = author
-			}
-			// 复制整个 skill 子目录到 store/skills/{name}/
-			if storeDir != "" {
-				localDir := sanitizeDirName(item.Name)
-				destDir := filepath.Join(storeDir, localDir)
-				remotePath := dirPath + "/" + e.Name
-				if err := copyLocalDir(repoDir, remotePath, destDir); err == nil {
-					item.LocalDir = localDir
-				}
-			}
-			items = append(items, item)
-			break
-		}
-	}
-	return items, nil
+// skipDirs 在递归搜索时跳过的目录名
+var skipDirs = map[string]bool{
+	"node_modules": true,
+	".git":         true,
+	"dist":         true,
+	"build":        true,
+	".next":        true,
+	".cache":       true,
+	"vendor":       true,
+	"__pycache__":  true,
+	".venv":        true,
+	".claude":      true,
 }
 
-// scanSkillsMD 扫描 skills/ 目录下的子目录（每个含 SKILL.md）
-func scanSkillsMD(repoDir, dirPath string) []SubItem {
+// discoverSkills 统一 skill 发现函数，模仿 npx skills 的优先级扫描逻辑
+// 返回找到的所有 skill SubItem
+//
+// 扫描优先级：
+//  1. searchPath/SKILL.md — searchPath 本身就是一个 skill
+//  2. searchPath/skills/ — 标准 skills 子目录布局
+//  3. searchPath/ 直接子目录 — 每个子目录含 SKILL.md
+//  4. 递归搜索 searchPath/ — 最大深度 5，跳过 skipDirs
+func discoverSkills(repoDir, searchPath string) []SubItem {
+	// 优先级 1: searchPath 本身就是一个 skill（直接含 SKILL.md）
+	if sub := readSkillAt(repoDir, searchPath); sub != nil {
+		return []SubItem{*sub}
+	}
+
+	// 优先级 2: searchPath/skills/ 标准布局
+	if subs := scanDirForSkills(repoDir, searchPath+"/skills"); len(subs) > 0 {
+		return subs
+	}
+
+	// 优先级 3: searchPath/ 直接子目录（每个子目录含 SKILL.md）
+	if subs := scanDirForSkills(repoDir, searchPath); len(subs) > 0 {
+		return subs
+	}
+
+	// 优先级 4: 递归搜索（max depth 5）
+	var results []SubItem
+	findSkillsRecursive(repoDir, searchPath, 0, 5, &results)
+	return results
+}
+
+// discoverAgents 统一 agent 发现函数
+// 扫描优先级：
+//  1. searchPath/agents/ — 标准 agents 子目录
+//  2. 递归搜索 searchPath/ — 在子目录中查找 agents/ 目录，最大深度 5
+func discoverAgents(repoDir, searchPath string) []SubItem {
+	// 优先级 1: searchPath/agents/ 标准布局
+	if subs := scanAgentsMD(repoDir, searchPath+"/agents"); len(subs) > 0 {
+		return subs
+	}
+
+	// 优先级 2: 递归搜索
+	var results []SubItem
+	findAgentsRecursive(repoDir, searchPath, 0, 5, &results)
+	return results
+}
+
+// readSkillAt 尝试从指定路径直接读取 SKILL.md，返回单个 SubItem
+func readSkillAt(repoDir, dirPath string) *SubItem {
+	for _, fname := range []string{"SKILL.md", "skill.md"} {
+		content, err := localReadFile(repoDir, dirPath+"/"+fname)
+		if err != nil {
+			continue
+		}
+		dirBase := filepath.Base(dirPath)
+		if dirBase == "." || dirBase == "" {
+			dirBase = "root"
+		}
+		skillName := dirBase
+		description := "Skill: " + skillName
+
+		if strings.HasPrefix(content, "---") {
+			parts := strings.SplitN(content[3:], "---", 2)
+			if len(parts) == 2 {
+				if n := extractYAMLField(parts[0], "name"); n != "" {
+					skillName = n
+				}
+				if d := extractYAMLField(parts[0], "description"); d != "" {
+					description = d
+				}
+			}
+		}
+
+		return &SubItem{
+			Type:        SubTypeSkill,
+			Name:        skillName,
+			Description: description,
+			Content:     content,
+			LocalDir:    "skills/" + dirBase,
+		}
+	}
+	return nil
+}
+
+// scanDirForSkills 扫描目录的直接子目录，每个子目录如果含 SKILL.md 则作为一个 skill
+func scanDirForSkills(repoDir, dirPath string) []SubItem {
 	entries, err := localListDir(repoDir, dirPath)
 	if err != nil {
 		return nil
@@ -639,39 +688,98 @@ func scanSkillsMD(repoDir, dirPath string) []SubItem {
 		if !e.IsDir {
 			continue
 		}
-		// 尝试 SKILL.md 或 skill.md
-		for _, fname := range []string{"SKILL.md", "skill.md"} {
-			content, err := localReadFile(repoDir, dirPath+"/"+e.Name+"/"+fname)
-			if err != nil {
-				continue
-			}
-			skillName := e.Name
-			description := "Skill: " + skillName
-
-			if strings.HasPrefix(content, "---") {
-				parts := strings.SplitN(content[3:], "---", 2)
-				if len(parts) == 2 {
-					fm := parts[0]
-					if n := extractYAMLField(fm, "name"); n != "" {
-						skillName = n
-					}
-					if d := extractYAMLField(fm, "description"); d != "" {
-						description = d
-					}
-				}
-			}
-
-			subs = append(subs, SubItem{
-				Type:        SubTypeSkill,
-				Name:        skillName,
-				Description: description,
-				Content:     content,
-				LocalDir:    "skills/" + e.Name,
-			})
-			break
+		if sub := readSkillAt(repoDir, dirPath+"/"+e.Name); sub != nil {
+			subs = append(subs, *sub)
 		}
 	}
 	return subs
+}
+
+// findSkillsRecursive 递归搜索含 SKILL.md 的目录，最大深度 maxDepth
+func findSkillsRecursive(repoDir, dirPath string, depth, maxDepth int, results *[]SubItem) {
+	if depth >= maxDepth {
+		return
+	}
+	entries, err := localListDir(repoDir, dirPath)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir {
+			continue
+		}
+		if skipDirs[e.Name] {
+			continue
+		}
+		subPath := dirPath + "/" + e.Name
+		if sub := readSkillAt(repoDir, subPath); sub != nil {
+			*results = append(*results, *sub)
+		} else {
+			findSkillsRecursive(repoDir, subPath, depth+1, maxDepth, results)
+		}
+	}
+}
+
+// findAgentsRecursive 递归搜索名为 "agents" 的目录，在其中扫描 .md agent 文件
+func findAgentsRecursive(repoDir, dirPath string, depth, maxDepth int, results *[]SubItem) {
+	if depth >= maxDepth {
+		return
+	}
+	entries, err := localListDir(repoDir, dirPath)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir {
+			continue
+		}
+		if skipDirs[e.Name] {
+			continue
+		}
+		subPath := dirPath + "/" + e.Name
+		// 找到 agents 目录，扫描其中的 .md 文件
+		if e.Name == "agents" {
+			if subs := scanAgentsMD(repoDir, subPath); len(subs) > 0 {
+				*results = append(*results, subs...)
+			}
+		} else {
+			findAgentsRecursive(repoDir, subPath, depth+1, maxDepth, results)
+		}
+	}
+}
+
+// ═══ Directory Scanning ═════════════════════════════════════════════
+
+// scanSkillsDir 扫描指定目录的 skills，返回独立的 StoreItem（用于 ImportFromGithub 的 plugin.json 导入路径）
+func scanSkillsDir(repoDir, dirPath, author, ghURL, storeDir string) ([]StoreItem, error) {
+	subs := discoverSkills(repoDir, dirPath)
+	if len(subs) == 0 {
+		return nil, fmt.Errorf("no skills found in %s", dirPath)
+	}
+
+	var items []StoreItem
+	for _, sub := range subs {
+		item := StoreItem{
+			Name:        sub.Name,
+			Description: sub.Description,
+			Type:        TypeSkill,
+			GithubURL:   ghURL,
+			Content:     sub.Content,
+			Author:      author,
+		}
+		// 复制整个 skill 目录到 store/skills/{name}/
+		if storeDir != "" && sub.LocalDir != "" {
+			localDir := sanitizeDirName(sub.Name)
+			destDir := filepath.Join(storeDir, localDir)
+			// sub.LocalDir 格式为 "skills/xxx"，取最后部分找源目录
+			srcRelPath := dirPath + "/" + filepath.Base(sub.LocalDir)
+			if err := copyLocalDir(repoDir, srcRelPath, destDir); err == nil {
+				item.LocalDir = localDir
+			}
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 // scanSkillPathsMD 根据显式路径列表逐个获取 skill（用于 plugin 导入，返回 SubItem）
@@ -679,33 +787,8 @@ func scanSkillPathsMD(repoDir string, paths []string) []SubItem {
 	var subs []SubItem
 	for _, p := range paths {
 		p = strings.TrimPrefix(p, "./")
-		dirName := filepath.Base(p)
-		for _, fname := range []string{"SKILL.md", "skill.md"} {
-			content, err := localReadFile(repoDir, p+"/"+fname)
-			if err != nil {
-				continue
-			}
-			skillName := dirName
-			description := "Imported from GitHub"
-			if strings.HasPrefix(content, "---") {
-				parts := strings.SplitN(content[3:], "---", 2)
-				if len(parts) == 2 {
-					if n := extractYAMLField(parts[0], "name"); n != "" {
-						skillName = n
-					}
-					if d := extractYAMLField(parts[0], "description"); d != "" {
-						description = d
-					}
-				}
-			}
-			subs = append(subs, SubItem{
-				Type:        SubTypeSkill,
-				Name:        skillName,
-				Description: description,
-				Content:     content,
-				LocalDir:    "skills/" + dirName,
-			})
-			break
+		if sub := readSkillAt(repoDir, p); sub != nil {
+			subs = append(subs, *sub)
 		}
 	}
 	return subs
@@ -858,39 +941,6 @@ func scanCommandsMD(repoDir, dirPath string) []SubItem {
 		})
 	}
 	return subs
-}
-
-// tryReadSingleSkill 尝试从 sourcePath/ 直接读取 SKILL.md（sourcePath 本身就是一个 skill）
-func tryReadSingleSkill(repoDir, sourcePath string) []SubItem {
-	for _, fname := range []string{"SKILL.md", "skill.md"} {
-		content, err := localReadFile(repoDir, sourcePath+"/"+fname)
-		if err != nil {
-			continue
-		}
-		skillName := filepath.Base(sourcePath)
-		description := "Skill: " + skillName
-
-		if strings.HasPrefix(content, "---") {
-			parts := strings.SplitN(content[3:], "---", 2)
-			if len(parts) == 2 {
-				if n := extractYAMLField(parts[0], "name"); n != "" {
-					skillName = n
-				}
-				if d := extractYAMLField(parts[0], "description"); d != "" {
-					description = d
-				}
-			}
-		}
-
-		return []SubItem{{
-			Type:        SubTypeSkill,
-			Name:        skillName,
-			Description: description,
-			Content:     content,
-			LocalDir:    "skills/" + filepath.Base(sourcePath),
-		}}
-	}
-	return nil
 }
 
 // ═══ Parsing & Utilities ════════════════════════════════════════════
