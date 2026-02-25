@@ -47,7 +47,7 @@ func NewNsjailExecutor(config NsjailConfig) *NsjailExecutor {
 // Exec 在 nsjail 沙箱中执行命令
 // workspacePath: 后端容器中的路径 (如 /app/userdata/user123/workspace)
 // 会转换为 nsjail 容器中的路径 (如 /userdata/user123/workspace)
-func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string, timeout time.Duration) (*CommandResult, error) {
+func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string, timeout time.Duration, extraMounts []Mount) (*CommandResult, error) {
 	if timeout <= 0 {
 		timeout = e.config.ExecTimeout
 	}
@@ -67,13 +67,26 @@ func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string
 			"--bindmount /tmp:/tmp "+
 			"--bindmount /dev/null:/dev/null "+
 			"--bindmount /dev/zero:/dev/zero:ro "+
-			"--bindmount /dev/urandom:/dev/urandom:ro "+
-			"--cwd /workspace "+
+			"--bindmount /dev/urandom:/dev/urandom:ro ",
+		nsjailPath,
+	)
+
+	// 追加额外挂载
+	for _, m := range extraMounts {
+		mountRealPath := convertToNsjailPath(m.RealPath)
+		mode := "rw"
+		if m.ReadOnly {
+			mode = "ro"
+		}
+		nsjailCmd += fmt.Sprintf("--bindmount %s:%s:%s ", mountRealPath, m.VirtualPath, mode)
+	}
+
+	nsjailCmd += fmt.Sprintf(
+		"--cwd /workspace "+
 			"--time_limit %d "+
 			"--rlimit_as %d "+
 			"--disable_proc "+
 			"-- /bin/bash -c %q",
-		nsjailPath,
 		int(timeout.Seconds()),
 		e.config.MemoryMB,
 		command,

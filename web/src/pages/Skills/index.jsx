@@ -327,10 +327,9 @@ export default function Skills() {
   };
 
   const handleInstall = async (item) => {
-    const newInstalled = [...new Set([...installed, item.id])];
-    const data = await apiFetch('/user', { method: 'PUT', body: JSON.stringify({ user_id: userId, item_ids: newInstalled }) });
+    const data = await apiFetch(`/user/install/${item.id}`, { method: 'POST', body: JSON.stringify({ user_id: userId }) });
     if (data.success) {
-      setInstalled(newInstalled);
+      setInstalled(prev => [...new Set([...prev, item.id])]);
       Toast.success(`已安装 ${item.display_name || item.name}`);
     } else {
       Toast.error(data.error || '安装失败');
@@ -338,10 +337,9 @@ export default function Skills() {
   };
 
   const handleUninstall = async (itemId) => {
-    const newInstalled = installed.filter(id => id !== itemId);
-    const data = await apiFetch('/user', { method: 'PUT', body: JSON.stringify({ user_id: userId, item_ids: newInstalled }) });
+    const data = await apiFetch(`/user/uninstall/${itemId}?user_id=${userId}`, { method: 'DELETE' });
     if (data.success) {
-      setInstalled(newInstalled);
+      setInstalled(prev => prev.filter(id => id !== itemId));
       Toast.success('已卸载');
     } else {
       Toast.error(data.error || '卸载失败');

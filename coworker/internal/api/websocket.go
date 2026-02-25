@@ -463,15 +463,20 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	}
 
 	// 渐进式披露：刷新 SkillsTool 的可用技能列表（动态 description）
-	// 复制用户已安装的 skill 到 workspace/.skills/
+	// 复制用户已安装的 skill 到 userdata/{uid}/.skill/
+	userSkillDir := h.workspace.GetUserSkillDir(chat.UserID)
 	if h.store != nil {
-		if err := h.store.CopySkillsToWorkspace(chat.UserID, userWorkDir); err != nil {
-			log.Printf("[WS] Failed to copy skills to workspace: %v", err)
+		if err := h.store.CopySkillsToUserDir(chat.UserID, userSkillDir); err != nil {
+			log.Printf("[WS] Failed to copy skills to user dir: %v", err)
 		}
 	}
+
+	// 将 .skill 目录作为只读挂载添加到沙箱
+	sb.AddMount("/.skill", userSkillDir, true)
+
 	if skillTool, ok := h.tools.Get("Skills"); ok {
 		if inner, ok := tools.UnwrapAs[*tools.SkillsTool](skillTool); ok {
-			inner.RefreshForUser(chat.UserID, userWorkDir)
+			inner.RefreshForUser(chat.UserID, userSkillDir)
 		}
 	}
 

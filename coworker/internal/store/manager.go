@@ -246,6 +246,7 @@ func (m *Manager) PluginDir(item *StoreItem) string {
 }
 
 // CopySkillsToWorkspace 将用户已安装的 skill 复制到 workspace/.skills/
+// Deprecated: 使用 CopySkillsToUserDir 替代
 func (m *Manager) CopySkillsToWorkspace(userID, workspaceDir string) error {
 	ids := m.LoadUserInstalled(userID)
 	if len(ids) == 0 {
@@ -301,6 +302,89 @@ func (m *Manager) CopySkillsToWorkspace(userID, workspaceDir string) error {
 
 	for _, sc := range toCopy {
 		dst := filepath.Join(targetBase, sc.name)
+		if err := copyDir(sc.srcDir, dst); err != nil {
+			return fmt.Errorf("copy skill %s: %w", sc.name, err)
+		}
+	}
+	return nil
+}
+
+// CopySkillsToUserDir 将用户已安装的 skill 复制到独立的 skillDir（如 userdata/{uid}/.skill/）
+func (m *Manager) CopySkillsToUserDir(userID, skillDir string) error {
+	ids := m.LoadUserInstalled(userID)
+	if len(ids) == 0 {
+		return nil
+	}
+
+	// 收集需要复制的 skill
+	type skillCopy struct {
+		srcDir string
+		name   string
+	}
+	var toCopy []skillCopy
+
+	m.mu.RLock()
+	for _, id := range ids {
+		for _, item := range m.items {
+			if item.ID != id {
+				continue
+			}
+			if item.Type == TypeSkill && item.LocalDir != "" {
+				srcDir := filepath.Join(m.dataDir, "skills", item.LocalDir)
+				if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+					toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir})
+				}
+			}
+			if item.Type == TypePlugin && item.LocalDir != "" {
+				pluginDir := filepath.Join(m.dataDir, "plugins", item.LocalDir)
+				if len(item.SubItems) > 0 {
+					// 通过 sub_items 精确定位，放入 .skill/{plugin.LocalDir}/{sub.Name}/
+					for _, sub := range item.SubItems {
+						if sub.Type != SubTypeSkill {
+							continue
+						}
+						if sub.LocalDir != "" {
+							srcDir := filepath.Join(pluginDir, sub.LocalDir)
+							if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+								toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir + "/" + sub.Name})
+								continue
+							}
+						}
+						// 回退：直接用 sub.Name
+						srcDir := filepath.Join(pluginDir, sub.Name)
+						if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+							toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir + "/" + sub.Name})
+						}
+					}
+				} else {
+					// 无 sub_items：扫描 skills/ 子目录
+					pluginSkillsDir := filepath.Join(pluginDir, "skills")
+					if info, err := os.Stat(pluginSkillsDir); err == nil && info.IsDir() {
+						entries, _ := os.ReadDir(pluginSkillsDir)
+						for _, entry := range entries {
+							if entry.IsDir() {
+								srcDir := filepath.Join(pluginSkillsDir, entry.Name())
+								toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir + "/" + entry.Name()})
+							}
+						}
+					}
+				}
+			}
+			break
+		}
+	}
+	m.mu.RUnlock()
+
+	if len(toCopy) == 0 {
+		return nil
+	}
+
+	// 清空目标目录再复制（保证一致性）
+	os.RemoveAll(skillDir)
+	os.MkdirAll(skillDir, 0755)
+
+	for _, sc := range toCopy {
+		dst := filepath.Join(skillDir, sc.name)
 		if err := copyDir(sc.srcDir, dst); err != nil {
 			return fmt.Errorf("copy skill %s: %w", sc.name, err)
 		}
@@ -554,6 +638,247 @@ func (m *Manager) SaveUserInstalled(userID string, itemIDs []string) error {
 		return err
 	}
 	return os.WriteFile(p, data, 0644)
+}
+
+// InstallItemForUser 为用户安装单个条目（添加到已安装列表 + 复制技能文件）
+func (m *Manager) InstallItemForUser(userID, itemID, skillDir string) error {
+	// 加载当前已安装列表
+	ids := m.LoadUserInstalled(userID)
+
+	// 检查是否已安装（去重）
+	for _, id := range ids {
+		if id == itemID {
+			return nil // 已安装，无需重复
+		}
+	}
+
+	// 追加并保存
+	ids = append(ids, itemID)
+	if err := m.SaveUserInstalled(userID, ids); err != nil {
+		return fmt.Errorf("save installed list: %w", err)
+	}
+
+	// 获取条目信息
+	item := m.GetByID(itemID)
+	if item == nil {
+		return fmt.Errorf("item not found: %s", itemID)
+	}
+
+	// 确保目标目录存在
+	os.MkdirAll(skillDir, 0755)
+
+	// 复制技能文件
+	if item.Type == TypeSkill && item.LocalDir != "" {
+		srcDir := filepath.Join(m.dataDir, "skills", item.LocalDir)
+		if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+			dst := filepath.Join(skillDir, item.LocalDir)
+			if err := copyDir(srcDir, dst); err != nil {
+				return fmt.Errorf("copy skill %s: %w", item.LocalDir, err)
+			}
+		}
+	}
+
+	if item.Type == TypePlugin && item.LocalDir != "" {
+		m.copyPluginSkills(item, skillDir)
+	}
+
+	return nil
+}
+
+// UninstallItemForUser 为用户卸载单个条目（从已安装列表移除 + 删除技能文件）
+func (m *Manager) UninstallItemForUser(userID, itemID, skillDir string) error {
+	// 加载当前已安装列表
+	ids := m.LoadUserInstalled(userID)
+
+	// 过滤掉 itemID
+	newIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != itemID {
+			newIDs = append(newIDs, id)
+		}
+	}
+
+	if err := m.SaveUserInstalled(userID, newIDs); err != nil {
+		return fmt.Errorf("save installed list: %w", err)
+	}
+
+	// 获取条目信息
+	item := m.GetByID(itemID)
+	if item == nil {
+		// 条目已不存在（可能被管理员删除），列表已更新即可
+		return nil
+	}
+
+	// 删除技能文件
+	if item.Type == TypeSkill && item.LocalDir != "" {
+		os.RemoveAll(filepath.Join(skillDir, item.LocalDir))
+	}
+
+	if item.Type == TypePlugin && item.LocalDir != "" {
+		m.removePluginSkills(item, skillDir)
+	}
+
+	return nil
+}
+
+// copyPluginSkills 复制 plugin 的所有 skill 子项到用户 skillDir
+// 插件的所有技能放在 .skill/{plugin.LocalDir}/ 子目录下，保证一个插件占一个顶级目录
+func (m *Manager) copyPluginSkills(item *StoreItem, skillDir string) {
+	pluginDir := filepath.Join(m.dataDir, "plugins", item.LocalDir)
+
+	// 插件目标目录：.skill/{plugin.LocalDir}/
+	pluginTargetDir := filepath.Join(skillDir, item.LocalDir)
+	os.MkdirAll(pluginTargetDir, 0755)
+
+	if len(item.SubItems) > 0 {
+		for _, sub := range item.SubItems {
+			if sub.Type != SubTypeSkill {
+				continue
+			}
+			var srcDir string
+			if sub.LocalDir != "" {
+				candidate := filepath.Join(pluginDir, sub.LocalDir)
+				if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+					srcDir = candidate
+				}
+			}
+			if srcDir == "" {
+				candidate := filepath.Join(pluginDir, sub.Name)
+				if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+					srcDir = candidate
+				}
+			}
+			if srcDir != "" {
+				dst := filepath.Join(pluginTargetDir, sub.Name)
+				copyDir(srcDir, dst)
+			}
+		}
+		return
+	}
+
+	// 无 sub_items：扫描 plugins/{localDir}/skills/ 目录
+	pluginSkillsDir := filepath.Join(pluginDir, "skills")
+	if info, err := os.Stat(pluginSkillsDir); err == nil && info.IsDir() {
+		entries, _ := os.ReadDir(pluginSkillsDir)
+		for _, entry := range entries {
+			if entry.IsDir() {
+				srcDir := filepath.Join(pluginSkillsDir, entry.Name())
+				dst := filepath.Join(pluginTargetDir, entry.Name())
+				copyDir(srcDir, dst)
+			}
+		}
+	}
+}
+
+// removePluginSkills 删除 plugin 在 skillDir 中的整个目录
+func (m *Manager) removePluginSkills(item *StoreItem, skillDir string) {
+	dirName := item.LocalDir
+	if dirName == "" {
+		dirName = item.Name
+	}
+	os.RemoveAll(filepath.Join(skillDir, dirName))
+}
+
+// RemoveItemFromAllUsers 从所有用户的已安装列表中移除指定 item（管理员删除时调用）
+func (m *Manager) RemoveItemFromAllUsers(itemID string) error {
+	if m.useDB {
+		return m.removeItemFromAllUsersDB(itemID)
+	}
+	return m.removeItemFromAllUsersFile(itemID)
+}
+
+// removeItemFromAllUsersDB 数据库模式：查询所有用户画像，过滤掉指定 item
+func (m *Manager) removeItemFromAllUsersDB(itemID string) error {
+	profiles, err := model.ListAllCoworkerUserProfiles()
+	if err != nil {
+		return fmt.Errorf("list profiles: %w", err)
+	}
+
+	for _, profile := range profiles {
+		if profile.InstalledItems == "" {
+			continue
+		}
+
+		var refs []installedItemRef
+		if err := json.Unmarshal([]byte(profile.InstalledItems), &refs); err != nil {
+			continue
+		}
+
+		// 检查是否包含该 item
+		found := false
+		newRefs := make([]installedItemRef, 0, len(refs))
+		for _, ref := range refs {
+			if ref.ItemID == itemID {
+				found = true
+				continue
+			}
+			newRefs = append(newRefs, ref)
+		}
+
+		if !found {
+			continue
+		}
+
+		// 更新该用户的已安装列表
+		refsJSON, _ := json.Marshal(newRefs)
+		profile.InstalledItems = string(refsJSON)
+		if err := model.UpdateCoworkerUserProfile(profile); err != nil {
+			log.Printf("[Store] RemoveItemFromAllUsers: update user %d failed: %v", profile.UserID, err)
+		}
+	}
+
+	return nil
+}
+
+// removeItemFromAllUsersFile 文件模式：扫描 installed/*.json，逐个过滤
+func (m *Manager) removeItemFromAllUsersFile(itemID string) error {
+	installedDir := filepath.Join(m.dataDir, "installed")
+	entries, err := os.ReadDir(installedDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		filePath := filepath.Join(installedDir, entry.Name())
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		var u UserInstalled
+		if err := json.Unmarshal(data, &u); err != nil {
+			continue
+		}
+
+		// 检查是否包含该 item
+		found := false
+		newIDs := make([]string, 0, len(u.ItemIDs))
+		for _, id := range u.ItemIDs {
+			if id == itemID {
+				found = true
+				continue
+			}
+			newIDs = append(newIDs, id)
+		}
+
+		if !found {
+			continue
+		}
+
+		// 更新文件
+		u.ItemIDs = newIDs
+		newData, _ := json.MarshalIndent(u, "", "  ")
+		os.WriteFile(filePath, newData, 0644)
+	}
+
+	return nil
 }
 
 // GetByID 根据 ID 获取条目

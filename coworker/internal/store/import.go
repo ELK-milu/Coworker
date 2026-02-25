@@ -517,18 +517,20 @@ func buildMarketplacePluginItem(repoDir, repo, ghURL, pluginsDir string, mp *Mar
 	// 5. 复制文件到目标目录
 	localDir := sanitizeDirName(name)
 	if pluginsDir != "" {
+		destDir := filepath.Join(pluginsDir, localDir)
 		if len(p.Skills) > 0 && (sourcePath == "" || sourcePath == ".") {
 			// anthropics/skills 模式: source="./" + 显式 skills 数组 → 逐个复制 skill 目录
 			for _, sp := range p.Skills {
 				sp = strings.TrimPrefix(sp, "./")
 				skillName := filepath.Base(sp)
-				destDir := filepath.Join(pluginsDir, localDir, "skills", skillName)
-				copyLocalDir(repoDir, sp, destDir)
+				copyLocalDir(repoDir, sp, filepath.Join(destDir, "skills", skillName))
 			}
 		} else if sourcePath != "" {
 			// wshobson/agents 模式: source 指向子目录 → 复制整个 source 目录
-			destDir := filepath.Join(pluginsDir, localDir)
 			copyLocalDir(repoDir, sourcePath, destDir)
+		} else {
+			// source="./" 且无显式 skills 数组（如 obra/superpowers）→ 复制整个仓库根目录
+			copyLocalDir(repoDir, "", destDir)
 		}
 	}
 
@@ -849,7 +851,7 @@ func readSkillAt(repoDir, dirPath string) *SubItem {
 			Name:        skillName,
 			Description: description,
 			Content:     content,
-			LocalDir:    "skills/" + dirBase,
+			LocalDir:    strings.TrimPrefix(dirPath, "./"),
 		}
 	}
 	return nil

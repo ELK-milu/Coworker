@@ -1120,6 +1120,13 @@ func (h *RESTHandler) DeleteStoreItem(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
+
+	// 级联清理：从所有用户的已安装列表中移除该 item
+	if err := h.store.RemoveItemFromAllUsers(id); err != nil {
+		// 不阻塞删除，仅记录警告
+		c.JSON(http.StatusOK, gin.H{"success": false, "warning": "cascade cleanup failed: " + err.Error()})
+	}
+
 	if err := h.store.Delete(id); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1173,7 +1180,7 @@ func (h *RESTHandler) GetUserStore(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"installed": h.store.LoadUserInstalled(userID)})
 }
 
-// SaveUserStore 保存用户已安装的商店条目（只存 item_id 列表）
+// SaveUserStore 保存用户已安装的商店条目（批量替换，内部通过 diff 调用单项安装/卸载）
 func (h *RESTHandler) SaveUserStore(c *gin.Context) {
 	var req struct {
 		UserID  string   `json:"user_id"`
@@ -1191,9 +1198,105 @@ func (h *RESTHandler) SaveUserStore(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
 		return
 	}
-	if err := h.store.SaveUserInstalled(req.UserID, req.ItemIDs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
+	var skillDir string
+	if h.workspace != nil {
+		skillDir = h.workspace.GetUserSkillDir(req.UserID)
+	}
+
+	// diff：计算需要安装和卸载的 item
+	oldIDs := h.store.LoadUserInstalled(req.UserID)
+	oldSet := make(map[string]bool, len(oldIDs))
+	for _, id := range oldIDs {
+		oldSet[id] = true
+	}
+	newSet := make(map[string]bool, len(req.ItemIDs))
+	for _, id := range req.ItemIDs {
+		newSet[id] = true
+	}
+
+	// 卸载：旧列表中有但新列表中没有的
+	for _, id := range oldIDs {
+		if !newSet[id] {
+			h.store.UninstallItemForUser(req.UserID, id, skillDir)
+		}
+	}
+
+	// 安装：新列表中有但旧列表中没有的
+	for _, id := range req.ItemIDs {
+		if !oldSet[id] {
+			h.store.InstallItemForUser(req.UserID, id, skillDir)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// InstallStoreItem 用户安装单个商店条目
+func (h *RESTHandler) InstallStoreItem(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
 		return
 	}
+
+	id := c.Param("id")
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	var skillDir string
+	if h.workspace != nil {
+		skillDir = h.workspace.GetUserSkillDir(req.UserID)
+	}
+
+	if err := h.store.InstallItemForUser(req.UserID, id, skillDir); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// UninstallStoreItem 用户卸载单个商店条目
+func (h *RESTHandler) UninstallStoreItem(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+
+	id := c.Param("id")
+	// 支持 query param 或 body 传递 user_id
+	userID := c.Query("user_id")
+	if userID == "" {
+		var req struct {
+			UserID string `json:"user_id"`
+		}
+		if err := c.ShouldBindJSON(&req); err == nil {
+			userID = req.UserID
+		}
+	}
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	var skillDir string
+	if h.workspace != nil {
+		skillDir = h.workspace.GetUserSkillDir(userID)
+	}
+
+	if err := h.store.UninstallItemForUser(userID, id, skillDir); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }

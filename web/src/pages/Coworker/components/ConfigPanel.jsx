@@ -72,18 +72,35 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   }, [userId]);
 
   const handleUninstall = async (itemId) => {
-    const newInstalled = installedItems.filter(id => id !== itemId);
     try {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
-      await fetch('/coworker/store/user', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
-        body: JSON.stringify({ user_id: userId, item_ids: newInstalled }),
+      const res = await fetch(`/coworker/store/user/uninstall/${itemId}?user_id=${userId}`, {
+        method: 'DELETE',
+        headers: { ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
       });
-      setInstalledItems(newInstalled);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || '卸载失败');
+      setInstalledItems(prev => prev.filter(id => id !== itemId));
       Toast.success('已卸载');
     } catch (e) {
       Toast.error('卸载失败: ' + e.message);
+    }
+  };
+
+  const handleInstall = async (itemId) => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const res = await fetch(`/coworker/store/user/install/${itemId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || '安装失败');
+      setInstalledItems(prev => [...prev, itemId]);
+      Toast.success('已安装');
+    } catch (e) {
+      Toast.error('安装失败: ' + e.message);
     }
   };
 

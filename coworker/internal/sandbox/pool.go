@@ -88,7 +88,7 @@ func (p *SandboxPool) Start(ctx context.Context) error {
 }
 
 // Exec 在 nsjail 沙箱中执行命令
-func (p *SandboxPool) Exec(ctx context.Context, workspacePath, command string, timeout time.Duration) (*CommandResult, error) {
+func (p *SandboxPool) Exec(ctx context.Context, workspacePath, command string, timeout time.Duration, extraMounts []Mount) (*CommandResult, error) {
 	if !p.started {
 		return nil, ErrPoolClosed
 	}
@@ -116,7 +116,7 @@ func (p *SandboxPool) Exec(ctx context.Context, workspacePath, command string, t
 
 	// 执行命令
 	startTime := time.Now()
-	result, err := p.executor.Exec(ctx, workspacePath, command, timeout)
+	result, err := p.executor.Exec(ctx, workspacePath, command, timeout, extraMounts)
 	execMs := time.Since(startTime).Milliseconds()
 
 	// 统计

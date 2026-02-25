@@ -31,7 +31,7 @@ type SkillsTool struct {
 
 	mu           sync.RWMutex
 	userID       string       // 当前用户 ID
-	workspaceDir string       // 当前用户 workspace 路径
+	skillDir     string       // 当前用户 .skill 目录真实路径
 	cachedDesc   string       // 缓存的动态 description
 	cachedHint   string       // 缓存的 name 示例（用于 InputSchema）
 	cachedSkills []skillEntry // 缓存的可用技能列表
@@ -44,12 +44,12 @@ func NewSkillsTool(storeMgr *store.Manager) *SkillsTool {
 }
 
 // RefreshForUser 刷新当前用户的可用技能列表（每次对话前调用）
-// 参考 OpenCode tool/skill.ts: Tool.define("skill", async (ctx) => { ... })
-func (t *SkillsTool) RefreshForUser(userID string, workspaceDir string) {
+// skillDir 是用户 .skill 目录的真实路径（如 userdata/{uid}/.skill）
+func (t *SkillsTool) RefreshForUser(userID string, skillDir string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.userID = userID
-	t.workspaceDir = workspaceDir
+	t.skillDir = skillDir
 	t.rebuildCache(userID)
 }
 
@@ -124,18 +124,18 @@ func (t *SkillsTool) Execute(ctx context.Context, input json.RawMessage) (*types
 
 	// 如果有本地目录，添加 base directory 和文件列表
 	if entry.LocalDir != "" {
-		skillBasePath := "/workspace/.skills/" + entry.LocalDir + "/"
+		skillBasePath := "/.skill/" + entry.LocalDir + "/"
 		lines = append(lines,
 			"",
 			fmt.Sprintf("Base directory for this skill: %s", skillBasePath),
 			"Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.",
 		)
-		// 扫描 workspace 中的 skill 文件
+		// 扫描 skillDir 中的 skill 文件
 		t.mu.RLock()
-		wsDir := t.workspaceDir
+		sDir := t.skillDir
 		t.mu.RUnlock()
-		if wsDir != "" {
-			realSkillDir := filepath.Join(wsDir, ".skills", entry.LocalDir)
+		if sDir != "" {
+			realSkillDir := filepath.Join(sDir, entry.LocalDir)
 			files := listSkillFiles(realSkillDir, 10)
 			if len(files) > 0 {
 				lines = append(lines, "", "<skill_files>")
@@ -220,13 +220,17 @@ func (t *SkillsTool) collectSkills(userID string) []skillEntry {
 			continue
 		}
 		if item.Type == store.TypePlugin {
+			pluginDirName := item.LocalDir
+			if pluginDirName == "" {
+				pluginDirName = item.Name
+			}
 			for _, sub := range item.SubItems {
 				if (sub.Type == store.SubTypeSkill || sub.Type == store.SubTypeCommand) && !seen[sub.Name] {
 					entries = append(entries, skillEntry{
 						Name:        sub.Name,
 						Description: sub.Description,
 						Content:     sub.Content,
-						LocalDir:    sub.LocalDir,
+						LocalDir:    pluginDirName + "/" + sub.Name,
 					})
 					seen[sub.Name] = true
 				}
@@ -265,13 +269,17 @@ func (t *SkillsTool) findSkill(name string) *skillEntry {
 			continue
 		}
 		if item.Type == store.TypePlugin {
+			pluginDirName := item.LocalDir
+			if pluginDirName == "" {
+				pluginDirName = item.Name
+			}
 			for _, sub := range item.SubItems {
 				if (sub.Type == store.SubTypeSkill || sub.Type == store.SubTypeCommand) && sub.Name == name && sub.Content != "" {
 					return &skillEntry{
 						Name:        sub.Name,
 						Description: sub.Description,
 						Content:     sub.Content,
-						LocalDir:    sub.LocalDir,
+						LocalDir:    pluginDirName + "/" + sub.Name,
 					}
 				}
 			}

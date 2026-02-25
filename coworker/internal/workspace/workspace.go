@@ -56,6 +56,11 @@ func (m *Manager) GetUserSessionsDir(userID string) string {
 	return filepath.Join(m.baseDir, userID, ".coworker", "sessions")
 }
 
+// GetUserSkillDir 获取用户的 .skill 目录（用于只读挂载到沙箱）
+func (m *Manager) GetUserSkillDir(userID string) string {
+	return filepath.Join(m.baseDir, userID, ".skill")
+}
+
 // EnsureUserWorkspace 确保用户工作空间存在
 func (m *Manager) EnsureUserWorkspace(userID string) error {
 	m.mu.Lock()
@@ -66,6 +71,7 @@ func (m *Manager) EnsureUserWorkspace(userID string) error {
 		m.GetUserWorkDir(userID),
 		m.GetUserCoworkerDir(userID),
 		m.GetUserSessionsDir(userID),
+		m.GetUserSkillDir(userID),
 	}
 
 	for _, dir := range dirs {

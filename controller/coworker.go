@@ -247,3 +247,9 @@ func (ctrl *CoworkerController) GetUserStore(c *gin.Context) {
 func (ctrl *CoworkerController) SaveUserStore(c *gin.Context) {
 	ctrl.module.RESTHandler.SaveUserStore(c)
 }
+func (ctrl *CoworkerController) InstallStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.InstallStoreItem(c)
+}
+func (ctrl *CoworkerController) UninstallStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.UninstallStoreItem(c)
+}

@@ -16,11 +16,19 @@ var (
 	ErrSandboxNotInit     = errors.New("sandbox not initialized")
 )
 
+// Mount 额外挂载点
+type Mount struct {
+	RealPath    string // 宿主机上的真实路径
+	VirtualPath string // 沙箱内的虚拟路径（如 /.skill）
+	ReadOnly    bool   // 是否只读
+}
+
 // Sandbox 沙箱，用于隔离用户工作空间
 type Sandbox struct {
-	userID      string // 用户 ID
-	realBase    string // 真实路径基础: /app/userdata/{user_id}/workspace
-	virtualBase string // 虚拟路径基础: /workspace
+	userID      string  // 用户 ID
+	realBase    string  // 真实路径基础: /app/userdata/{user_id}/workspace
+	virtualBase string  // 虚拟路径基础: /workspace
+	extraMounts []Mount // 额外挂载点
 }
 
 // NewSandbox 创建新的沙箱实例
@@ -45,6 +53,20 @@ func (s *Sandbox) GetRealWorkingDir() string {
 // GetVirtualWorkingDir 获取虚拟工作目录
 func (s *Sandbox) GetVirtualWorkingDir() string {
 	return s.virtualBase
+}
+
+// AddMount 添加额外挂载点（如 /.skill → userdata/{uid}/.skill）
+func (s *Sandbox) AddMount(virtualPath, realPath string, readOnly bool) {
+	s.extraMounts = append(s.extraMounts, Mount{
+		RealPath:    filepath.Clean(realPath),
+		VirtualPath: virtualPath,
+		ReadOnly:    readOnly,
+	})
+}
+
+// ExtraMounts 返回额外挂载点列表
+func (s *Sandbox) ExtraMounts() []Mount {
+	return s.extraMounts
 }
 
 // ToReal 将虚拟路径转换为真实路径（带安全验证）
@@ -73,6 +95,8 @@ func (s *Sandbox) ToReal(virtualPath string) (string, error) {
 		} else {
 			realPath = filepath.Join(s.realBase, relPath)
 		}
+	} else if s.matchExtraMount(normalizedPath, &realPath) {
+		// 额外挂载路径匹配成功，realPath 已被赋值
 	} else if strings.HasPrefix(normalizedPath, "/") {
 		// 其他绝对路径（如 /etc/passwd）- 拒绝
 		return "", ErrPathOutsideSandbox
@@ -81,8 +105,8 @@ func (s *Sandbox) ToReal(virtualPath string) (string, error) {
 		realPath = filepath.Join(s.realBase, normalizedPath)
 	}
 
-	// 最终验证：确保路径在沙箱内
-	if err := s.validate(realPath); err != nil {
+	// 最终验证：确保路径在沙箱内（主工作区或额外挂载）
+	if err := s.validateAll(realPath); err != nil {
 		return "", err
 	}
 
@@ -96,9 +120,24 @@ func (s *Sandbox) ToVirtual(realPath string) string {
 	}
 
 	cleanPath := filepath.Clean(realPath)
+
+	// 先检查额外挂载（优先级高于主工作区，避免子目录误匹配）
+	for _, m := range s.extraMounts {
+		cleanMount := filepath.Clean(m.RealPath)
+		if strings.HasPrefix(cleanPath, cleanMount) {
+			relPath := strings.TrimPrefix(cleanPath, cleanMount)
+			relPath = strings.TrimPrefix(relPath, "/")
+			relPath = strings.TrimPrefix(relPath, "\\")
+			if relPath == "" {
+				return m.VirtualPath
+			}
+			return filepath.ToSlash(filepath.Join(m.VirtualPath, relPath))
+		}
+	}
+
 	cleanBase := filepath.Clean(s.realBase)
 
-	// 检查是否在沙箱内
+	// 检查是否在主工作区内
 	if strings.HasPrefix(cleanPath, cleanBase) {
 		relPath := strings.TrimPrefix(cleanPath, cleanBase)
 		relPath = strings.TrimPrefix(relPath, "/")
@@ -126,6 +165,42 @@ func (s *Sandbox) validate(realPath string) error {
 	// 额外检查：确保不是通过符号链接逃逸
 	// 注意：这里只做基本检查，生产环境可能需要更严格的检查
 	return nil
+}
+
+// validateAll 验证路径是否在主工作区或任何额外挂载内
+func (s *Sandbox) validateAll(realPath string) error {
+	cleanPath := filepath.Clean(realPath)
+
+	// 检查主工作区
+	if strings.HasPrefix(cleanPath, filepath.Clean(s.realBase)) {
+		return nil
+	}
+
+	// 检查额外挂载
+	for _, m := range s.extraMounts {
+		if strings.HasPrefix(cleanPath, filepath.Clean(m.RealPath)) {
+			return nil
+		}
+	}
+
+	return ErrPathOutsideSandbox
+}
+
+// matchExtraMount 匹配额外挂载路径，匹配成功时设置 realPath 并返回 true
+func (s *Sandbox) matchExtraMount(normalizedPath string, realPath *string) bool {
+	for _, m := range s.extraMounts {
+		if strings.HasPrefix(normalizedPath, m.VirtualPath) {
+			relPath := strings.TrimPrefix(normalizedPath, m.VirtualPath)
+			relPath = strings.TrimPrefix(relPath, "/")
+			if relPath == "" {
+				*realPath = m.RealPath
+			} else {
+				*realPath = filepath.Join(m.RealPath, relPath)
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // containsTraversal 检查路径是否包含遍历攻击
@@ -170,6 +245,11 @@ func (s *Sandbox) VirtualizeOutput(output string) string {
 		return output
 	}
 
-	// 替换真实路径为虚拟路径
+	// 替换额外挂载的真实路径为虚拟路径
+	for _, m := range s.extraMounts {
+		output = strings.ReplaceAll(output, m.RealPath, m.VirtualPath)
+	}
+
+	// 替换主工作区路径
 	return strings.ReplaceAll(output, s.realBase, s.virtualBase)
 }

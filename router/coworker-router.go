@@ -75,6 +75,8 @@ func SetCoworkerRouter(router *gin.Engine) {
 		coworkerGroup.POST("/store/import", coworkerCtrl.ImportStoreItems)
 		coworkerGroup.GET("/store/user", coworkerCtrl.GetUserStore)
 		coworkerGroup.PUT("/store/user", coworkerCtrl.SaveUserStore)
+		coworkerGroup.POST("/store/user/install/:id", coworkerCtrl.InstallStoreItem)
+		coworkerGroup.DELETE("/store/user/uninstall/:id", coworkerCtrl.UninstallStoreItem)
 
 		// WebSocket 连接
 		coworkerGroup.GET("/ws", coworkerCtrl.HandleWebSocket)

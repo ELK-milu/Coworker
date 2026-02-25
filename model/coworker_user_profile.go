@@ -83,3 +83,10 @@ func IncrementCoworkerUserProfileMessages(userID int) error {
 	return DB.Model(&CoworkerUserProfile{}).Where("user_id = ?", userID).
 		UpdateColumn("total_messages", DB.Raw("total_messages + 1")).Error
 }
+
+// ListAllCoworkerUserProfiles 列出所有用户画像（用于级联清理）
+func ListAllCoworkerUserProfiles() ([]*CoworkerUserProfile, error) {
+	var profiles []*CoworkerUserProfile
+	err := DB.Find(&profiles).Error
+	return profiles, err
+}

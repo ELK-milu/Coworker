@@ -101,8 +101,11 @@ func (t *BashTool) executeInNsjail(ctx context.Context, in BashInput) (*types.To
 	// 获取用户工作空间的真实路径
 	workspacePath := sb.GetRealWorkingDir()
 
+	// 获取额外挂载点（如 /.skill）
+	extraMounts := sb.ExtraMounts()
+
 	startTime := time.Now()
-	result, err := t.sandboxPool.Exec(ctx, workspacePath, in.Command, timeout)
+	result, err := t.sandboxPool.Exec(ctx, workspacePath, in.Command, timeout, extraMounts)
 	elapsedMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
