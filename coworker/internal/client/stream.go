@@ -124,27 +124,19 @@ func (c *ClaudeClient) streamMessages(
 
 // CreateSimpleMessage 创建简单消息（非流式，用于标题生成等轻量级任务）
 func (c *ClaudeClient) CreateSimpleMessage(ctx context.Context, prompt string, maxTokens int64) (string, error) {
-	messages := []anthropic.BetaMessageParam{
-		{
-			Role: "user",
-			Content: []anthropic.BetaContentBlockParamUnion{
-				{
-					OfText: &anthropic.BetaTextBlockParam{
-						Type: "text",
-						Text: prompt,
-					},
-				},
-			},
-		},
+	messages := []anthropic.MessageParam{
+		anthropic.NewUserMessage(
+			anthropic.NewTextBlock(prompt),
+		),
 	}
 
-	params := anthropic.BetaMessageNewParams{
+	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(c.model),
 		MaxTokens: maxTokens,
 		Messages:  messages,
 	}
 
-	response, err := c.client.Beta.Messages.New(ctx, params)
+	response, err := c.client.Messages.New(ctx, params)
 	if err != nil {
 		return "", err
 	}

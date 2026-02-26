@@ -637,7 +637,7 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 	// 如果是新会话且还没有标题，异步生成标题
 	// 注意：使用新的 context，因为对话的 ctx 可能已被取消
 	if isNewSession && sess.GetTitle() == "" {
-		go h.generateSessionTitle(context.Background(), sess, msg, cs)
+		go h.generateSessionTitle(context.Background(), sess, msg, cs, userID)
 	}
 	log.Printf("[Perf] runConversation total: %v (session=%s)", time.Since(runStart), sess.ID)
 }
@@ -2034,7 +2034,7 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 
 // generateSessionTitle 异步生成会话标题
 // 参考 OpenCode: ensureTitle() + agent/prompt/title.txt
-func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Session, firstMessage string, cs *connState) {
+func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Session, firstMessage string, cs *connState, userID string) {
 	// 使用 OpenCode 风格的 TitlePrompt 作为系统提示词
 	// 用户消息作为输入，让 AI 生成标题
 	userMsg := firstMessage
@@ -2046,8 +2046,9 @@ func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Sess
 	// 参考 OpenCode: agent/prompt/title.txt
 	titlePromptMsg := prompt.TitlePrompt + "\n\nUser message: " + userMsg
 
-	// 使用轻量级模型生成标题
-	title, err := h.client.CreateSimpleMessage(ctx, titlePromptMsg, 50)
+	// 使用 per-user 客户端（走 relay 代理），而非全局直连客户端
+	userClient := h.getClientForUser(userID)
+	title, err := userClient.CreateSimpleMessage(ctx, titlePromptMsg, 50)
 	if err != nil {
 		log.Printf("[WS] Failed to generate title for session %s: %v", sess.ID, err)
 		// 使用消息前缀作为后备标题
