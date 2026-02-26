@@ -20,7 +20,6 @@ func (c *ClaudeClient) handleBetaStreamEvent(event anthropic.BetaRawMessageStrea
 			}
 		}
 	case "content_block_start":
-		log.Printf("[API] content_block_start: type=%s", event.ContentBlock.Type)
 		if event.ContentBlock.Type == "tool_use" {
 			log.Printf("[API] Tool use start: id=%s, name=%s", event.ContentBlock.ID, event.ContentBlock.Name)
 			eventCh <- StreamEvent{
@@ -29,7 +28,6 @@ func (c *ClaudeClient) handleBetaStreamEvent(event anthropic.BetaRawMessageStrea
 				ToolName: event.ContentBlock.Name,
 			}
 		} else if event.ContentBlock.Type == "thinking" {
-			log.Printf("[API] Thinking block start")
 			eventCh <- StreamEvent{
 				Type: EventThinking,
 				Text: "", // 开始标记
@@ -53,11 +51,10 @@ func (c *ClaudeClient) handleBetaStreamEvent(event anthropic.BetaRawMessageStrea
 			}
 		}
 	case "message_stop":
-		log.Printf("[API] message_stop")
+		// noop
 	case "message_delta":
 		// stop_reason 在 message_delta 事件的 Delta 中
 		if event.Delta.StopReason != "" {
-			log.Printf("[API] message_delta: stop_reason=%s", event.Delta.StopReason)
 			eventCh <- StreamEvent{
 				Type:       EventStop,
 				StopReason: string(event.Delta.StopReason),

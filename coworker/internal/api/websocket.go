@@ -414,6 +414,8 @@ func (h *WSHandler) handleAbort(cs *connState) {
 
 // handleChat 处理聊天消息
 func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
+	chatStart := time.Now()
+
 	var chat ChatPayload
 	if err := json.Unmarshal(payload, &chat); err != nil {
 		cs.sendError("invalid chat payload")
@@ -430,6 +432,7 @@ func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 		sess = h.sessions.Create(chat.UserID)
 		isNewSession = true
 	}
+	log.Printf("[Perf] handleChat session resolve: %v (new=%v)", time.Since(chatStart), isNewSession)
 
 	// P0.4: 会话 Busy 锁 — 防止同一会话并发处理
 	if _, busy := h.busySessions.LoadOrStore(sess.ID, true); busy {
@@ -454,6 +457,7 @@ func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 	}
 
 	// 获取用户工作空间路径
+	t0 := time.Now()
 	userWorkDir := h.workspace.GetUserWorkDir(chat.UserID)
 
 	// 创建用户沙箱
@@ -472,6 +476,8 @@ func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 
 	// 渐进式披露：刷新 SkillsTool 的可用技能列表（动态 description）
 	// 复制用户已安装的 skill 到 userdata/{uid}/.skill/
+	t1 := time.Now()
+	log.Printf("[Perf] handleChat sandbox setup: %v", t1.Sub(t0))
 	userSkillDir := h.workspace.GetUserSkillDir(chat.UserID)
 	if h.store != nil {
 		if err := h.store.CopySkillsToUserDir(chat.UserID, userSkillDir); err != nil {
@@ -501,6 +507,8 @@ func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 	}
 
 	// 创建每用户工具覆盖层（MCP 工具注入）
+	t2 := time.Now()
+	log.Printf("[Perf] handleChat skills+agents refresh: %v", t2.Sub(t1))
 	var toolProvider types.ToolProvider = h.tools
 	if h.userMCP != nil {
 		overlay := tools.NewToolOverlay(h.tools)
@@ -514,7 +522,10 @@ func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 	}
 
 	// 动态构建系统提示词（使用虚拟路径，传入用户消息用于记忆检索）
+	t3 := time.Now()
+	log.Printf("[Perf] handleChat MCP overlay: %v", t3.Sub(t2))
 	systemPrompt := h.buildUserSystemPrompt(chat.UserID, sb, chat.Message)
+	log.Printf("[Perf] handleChat buildSystemPrompt: %v", time.Since(t3))
 
 	// 创建可取消的 context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -551,6 +562,7 @@ func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 	}
 
 	// 启动对话循环（传递沙箱和 Agent）
+	log.Printf("[Perf] handleChat total prep: %v (session=%s, user=%s)", time.Since(chatStart), sess.ID, chat.UserID)
 	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, selectedAgent, eventCh, cs, isNewSession, toolProvider)
 
 	// 异步转发事件到 WebSocket（不阻塞消息读取循环）
@@ -599,13 +611,22 @@ func (h *WSHandler) getClientForUser(userID string) *client.ClaudeClient {
 
 // runConversation 运行对话
 func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, ag *agent.AgentType, eventCh chan loop.LoopEvent, cs *connState, isNewSession bool, toolProvider types.ToolProvider) {
+	runStart := time.Now()
 	defer close(eventCh)
 	// P0.4: 对话结束时释放 Busy 锁
 	defer h.busySessions.Delete(sess.ID)
 
+	t0 := time.Now()
 	userClient := h.getClientForUser(userID)
+	log.Printf("[Perf] runConversation getClientForUser: %v", time.Since(t0))
+
+	t1 := time.Now()
 	l := loop.NewConversationLoop(userClient, sess, toolProvider, systemPrompt, userID, sb, h.fileTime, ag, eventCh)
+	log.Printf("[Perf] runConversation NewConversationLoop: %v", time.Since(t1))
+
+	t2 := time.Now()
 	l.ProcessMessage(ctx, msg)
+	log.Printf("[Perf] runConversation ProcessMessage: %v", time.Since(t2))
 
 	// 对话结束后保存会话
 	if err := h.sessions.Save(sess.ID); err != nil {
@@ -636,6 +657,7 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 	if isNewSession && sess.GetTitle() == "" {
 		go h.generateSessionTitle(context.Background(), sess, msg, cs)
 	}
+	log.Printf("[Perf] runConversation total: %v (session=%s)", time.Since(runStart), sess.ID)
 }
 
 // LoadHistoryPayload 加载历史消息载荷

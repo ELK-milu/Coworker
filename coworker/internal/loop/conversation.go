@@ -200,12 +200,16 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 	l.turnInputTokens = 0
 	l.turnOutputTokens = 0
 
+	loopStart := time.Now()
+	log.Printf("[Perf] runLoop started")
+
 	for {
 		// 检查上下文是否被取消
 		select {
 		case <-ctx.Done():
 			l.sendStatusEvent()
 			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
+			log.Printf("[Perf] runLoop cancelled after %v", time.Since(loopStart))
 			return ctx.Err()
 		default:
 		}
@@ -215,7 +219,6 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		if l.currentStep > l.maxSteps {
 			log.Printf("[Loop] Max steps reached (%d), stopping loop", l.maxSteps)
 			// 注入 OpenCode 风格的 max-steps 提示词（强制文本回复）
-			// 参考 OpenCode: packages/opencode/src/session/prompt/max-steps.txt
 			l.session.AddMessage(types.Message{
 				Role: "user",
 				Content: []interface{}{types.TextBlock{
@@ -237,8 +240,10 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 
 		// 检查上下文是否接近限制，如果是则压缩
 		if l.session.IsContextNearLimit() {
+			compactStart := time.Now()
 			log.Printf("[Loop] Context near limit, compacting...")
 			l.session.CompactContext()
+			log.Printf("[Perf] runLoop compact: %v", time.Since(compactStart))
 		}
 
 		// 发送状态事件（开始处理）
@@ -248,6 +253,8 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		toolDefs := l.getFilteredToolDefinitions()
 
 		// 调用 Claude API
+		log.Printf("[Perf] runLoop step %d: calling API (messages=%d, tools=%d)", l.currentStep, len(l.session.Messages), len(toolDefs))
+		apiStart := time.Now()
 		streamCh, err := l.client.CreateMessageStream(
 			ctx,
 			l.session.Messages,
@@ -255,12 +262,15 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 			l.system,
 		)
 		if err != nil {
+			log.Printf("[Perf] runLoop step %d: API connect error after %v: %v", l.currentStep, time.Since(apiStart), err)
 			l.eventCh <- LoopEvent{Type: EventTypeError, Error: err.Error()}
 			return err
 		}
 
 		// 处理流事件
 		toolCalls, stopReason, err := l.processStream(ctx, streamCh)
+		apiDuration := time.Since(apiStart)
+		log.Printf("[Perf] runLoop step %d: API+stream done in %v (stopReason=%s, toolCalls=%d)", l.currentStep, apiDuration, stopReason, len(toolCalls))
 		if err != nil {
 			return err
 		}
@@ -290,11 +300,11 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 			})
 			continue
 		case types.StopReasonEndTurn:
-			log.Printf("[Loop] Conversation ended: end_turn")
+			log.Printf("[Perf] runLoop completed: end_turn, total %v, steps=%d", time.Since(loopStart), l.currentStep)
 			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
 			return nil
 		default:
-			log.Printf("[Loop] Conversation ended: stopReason=%s, toolCalls=%d", stopReason, len(toolCalls))
+			log.Printf("[Perf] runLoop completed: stopReason=%s, total %v, steps=%d", stopReason, time.Since(loopStart), l.currentStep)
 			l.eventCh <- LoopEvent{Type: EventTypeDone, Done: true}
 			return nil
 		}
@@ -306,15 +316,18 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		}
 
 		// 执行工具调用
+		toolStart := time.Now()
 		if err := l.executeTools(ctx, toolCalls); err != nil {
 			return err
 		}
+		log.Printf("[Perf] runLoop step %d: tools execution: %v", l.currentStep, time.Since(toolStart))
 
-		// P3.1: 工具执行后检测 context overflow（参考 OpenCode SessionCompaction.isOverflow）
-		// OpenCode 在每步结束后检测，而非仅在循环开始前
+		// P3.1: 工具执行后检测 context overflow
 		if l.session.IsContextNearLimit() {
+			compactStart := time.Now()
 			log.Printf("[Loop] Context overflow detected after tool execution (step %d), compacting...", l.currentStep)
 			l.session.CompactContext()
+			log.Printf("[Perf] runLoop post-tool compact: %v", time.Since(compactStart))
 		}
 	}
 }
@@ -451,7 +464,6 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 
 	for _, tc := range calls {
 		log.Printf("[Tool] Executing: name=%s, id=%s, workDir=%s", tc.Name, tc.ID, workDir)
-		log.Printf("[Tool] Input: %s", tc.Input)
 
 		// P0.2: Doom Loop 检测
 		if l.isDoomLoop(tc.Name, tc.Input) {
@@ -495,6 +507,7 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 			ToolInput: tc.Input,
 		}
 
+		toolExecStart := time.Now()
 		result, err := l.tools.Execute(toolCtx, tc.Name, json.RawMessage(tc.Input))
 
 		var toolResult types.ToolResultBlock
@@ -502,7 +515,7 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 		var timedOut bool
 
 		if err != nil {
-			log.Printf("[Tool] %s failed: %v", tc.Name, err)
+			log.Printf("[Perf] Tool %s failed after %v: %v", tc.Name, time.Since(toolExecStart), err)
 			toolResult = types.ToolResultBlock{
 				Type:      "tool_result",
 				ToolUseID: tc.ID,
@@ -510,16 +523,17 @@ func (l *ConversationLoop) executeTools(ctx context.Context, calls []toolCall) e
 				IsError:   true,
 			}
 		} else {
+			toolExecDuration := time.Since(toolExecStart)
 			elapsedMs = result.ElapsedMs
 			timeoutMs = result.TimeoutMs
 			timedOut = result.TimedOut
 
 			if !result.Success {
-				log.Printf("[Tool] %s failed: %s (elapsed: %dms, timedOut: %v)",
-					tc.Name, result.Error, elapsedMs, timedOut)
+				log.Printf("[Perf] Tool %s failed in %v (elapsed: %dms, timedOut: %v): %s",
+					tc.Name, toolExecDuration, elapsedMs, timedOut, result.Error)
 			} else {
-				log.Printf("[Tool] %s success (elapsed: %dms, output length: %d)",
-					tc.Name, elapsedMs, len(result.Output))
+				log.Printf("[Perf] Tool %s success in %v (elapsed: %dms, output: %d bytes)",
+					tc.Name, toolExecDuration, elapsedMs, len(result.Output))
 			}
 
 			// 提取执行环境

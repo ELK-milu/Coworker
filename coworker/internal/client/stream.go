@@ -68,6 +68,7 @@ func (c *ClaudeClient) streamMessages(
 			log.Printf("[API] Stream connection retry %d/%d", attempt, MaxRetries)
 		}
 
+		connectStart := time.Now()
 		stream := c.client.Beta.Messages.NewStreaming(ctx, params)
 		eventStarted := false
 
@@ -76,12 +77,11 @@ func (c *ClaudeClient) streamMessages(
 			event := stream.Current()
 			if !eventStarted {
 				eventStarted = true
-			}
-			if event.Type != "content_block_delta" {
-				log.Printf("[API] Event type: %s", event.Type)
+				log.Printf("[Perf] API time-to-first-event: %v", time.Since(connectStart))
 			}
 			c.handleBetaStreamEvent(event, eventCh)
 		}
+		log.Printf("[Perf] API stream total: %v", time.Since(connectStart))
 
 		streamErr = stream.Err()
 		if streamErr == nil {
