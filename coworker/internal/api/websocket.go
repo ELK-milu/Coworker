@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/coworker/internal/agent"
 	"github.com/QuantumNous/new-api/coworker/internal/client"
@@ -41,6 +42,36 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+// connState 每个 WebSocket 连接独立的状态
+type connState struct {
+	conn     *websocket.Conn
+	mu       sync.Mutex         // 该连接的写锁
+	cancelMu sync.Mutex         // 保护 cancelFunc 读写
+	cancel   context.CancelFunc // 该连接当前对话的 cancel
+	userID   string             // 该连接的当前用户
+	sessionID string            // 该连接的当前会话
+}
+
+func newConnState(conn *websocket.Conn) *connState {
+	return &connState{conn: conn}
+}
+
+func (cs *connState) sendJSON(v interface{}) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	err := cs.conn.WriteJSON(v)
+	cs.conn.SetWriteDeadline(time.Time{})
+	return err
+}
+
+func (cs *connState) sendError(msg string) {
+	cs.sendJSON(map[string]interface{}{
+		"type":    "error",
+		"payload": map[string]string{"error": msg},
+	})
+}
+
 // WSHandler WebSocket 处理器
 type WSHandler struct {
 	client      *client.ClaudeClient
@@ -57,14 +88,8 @@ type WSHandler struct {
 	embedding   *embedding.Client      // Embedding 客户端
 	milvus      *memory.MilvusClient   // Milvus 向量数据库客户端
 	config      *config.Config         // 配置（用于动态构建系统提示词）
-	mu          sync.Mutex
-	cancelFunc  context.CancelFunc
-	connMu      sync.Mutex
 	// P0.4: 会话 Busy 锁 — 防止同一会话并发处理
 	busySessions sync.Map // map[sessionID]bool
-	// 当前连接的会话信息（用于断开时提取记忆）
-	currentUserID    string
-	currentSessionID string
 	// P2.5: 文件修改时间追踪
 	fileTime *tools.FileTime
 	// 事件总线
@@ -185,12 +210,12 @@ func (h *WSHandler) Handle(c *gin.Context) {
 
 // handleConnection 处理连接
 func (h *WSHandler) handleConnection(conn *websocket.Conn) {
+	cs := newConnState(conn)
+
 	// 连接断开时通过 EventBus 通知记忆系统
 	defer func() {
-		h.mu.Lock()
-		userID := h.currentUserID
-		sessionID := h.currentSessionID
-		h.mu.Unlock()
+		userID := cs.userID
+		sessionID := cs.sessionID
 
 		if userID != "" && sessionID != "" {
 			if sess := h.sessions.Get(sessionID); sess != nil {
@@ -225,152 +250,145 @@ func (h *WSHandler) handleConnection(conn *websocket.Conn) {
 
 		var wsMsg WSMessage
 		if err := json.Unmarshal(msg, &wsMsg); err != nil {
-			h.sendError(conn, "invalid message format")
+			cs.sendError("invalid message format")
 			continue
 		}
 
 		switch wsMsg.Type {
 		case "chat":
 			log.Printf("[WS] Processing chat message")
-			h.handleChat(conn, wsMsg.Payload)
+			h.handleChat(cs, wsMsg.Payload)
 		case "abort":
 			log.Printf("[WS] Processing abort message")
-			h.handleAbort()
+			h.handleAbort(cs)
 		case "load_history":
 			log.Printf("[WS] Processing load_history message")
-			h.handleLoadHistory(conn, wsMsg.Payload)
+			h.handleLoadHistory(cs, wsMsg.Payload)
 		case "list_sessions":
 			log.Printf("[WS] Processing list_sessions message")
-			h.handleListSessions(conn, wsMsg.Payload)
+			h.handleListSessions(cs, wsMsg.Payload)
 		case "delete_session":
 			log.Printf("[WS] Processing delete_session message")
-			h.handleDeleteSession(conn, wsMsg.Payload)
+			h.handleDeleteSession(cs, wsMsg.Payload)
 		case "list_files":
 			log.Printf("[WS] Processing list_files message")
-			h.handleListFiles(conn, wsMsg.Payload)
+			h.handleListFiles(cs, wsMsg.Payload)
 		case "workspace_stats":
 			log.Printf("[WS] Processing workspace_stats message")
-			h.handleWorkspaceStats(conn, wsMsg.Payload)
+			h.handleWorkspaceStats(cs, wsMsg.Payload)
 		case "create_folder":
 			log.Printf("[WS] Processing create_folder message")
-			h.handleCreateFolder(conn, wsMsg.Payload)
+			h.handleCreateFolder(cs, wsMsg.Payload)
 		case "delete_file":
 			log.Printf("[WS] Processing delete_file message")
-			h.handleDeleteFile(conn, wsMsg.Payload)
+			h.handleDeleteFile(cs, wsMsg.Payload)
 		case "rename_file":
 			log.Printf("[WS] Processing rename_file message")
-			h.handleRenameFile(conn, wsMsg.Payload)
+			h.handleRenameFile(cs, wsMsg.Payload)
 		// Task 相关消息
 		case "task_create":
 			log.Printf("[WS] Processing task_create message")
-			h.handleTaskCreate(conn, wsMsg.Payload)
+			h.handleTaskCreate(cs, wsMsg.Payload)
 		case "task_get":
 			log.Printf("[WS] Processing task_get message")
-			h.handleTaskGet(conn, wsMsg.Payload)
+			h.handleTaskGet(cs, wsMsg.Payload)
 		case "task_update":
 			log.Printf("[WS] Processing task_update message")
-			h.handleTaskUpdate(conn, wsMsg.Payload)
+			h.handleTaskUpdate(cs, wsMsg.Payload)
 		case "task_list":
 			log.Printf("[WS] Processing task_list message")
-			h.handleTaskList(conn, wsMsg.Payload)
+			h.handleTaskList(cs, wsMsg.Payload)
 		case "task_reorder":
 			log.Printf("[WS] Processing task_reorder message")
-			h.handleTaskReorder(conn, wsMsg.Payload)
+			h.handleTaskReorder(cs, wsMsg.Payload)
 		// Compact 相关消息
 		case "compact":
 			log.Printf("[WS] Processing compact message")
-			h.handleCompact(conn, wsMsg.Payload)
+			h.handleCompact(cs, wsMsg.Payload)
 		case "context_stats":
 			log.Printf("[WS] Processing context_stats message")
-			h.handleContextStats(conn, wsMsg.Payload)
+			h.handleContextStats(cs, wsMsg.Payload)
 		// Skill 相关消息
 		case "skill_call":
 			log.Printf("[WS] Processing skill_call message")
-			h.handleSkillCall(conn, wsMsg.Payload)
+			h.handleSkillCall(cs, wsMsg.Payload)
 		case "list_skills":
 			log.Printf("[WS] Processing list_skills message")
-			h.handleListSkills(conn)
+			h.handleListSkills(cs)
 		// MCP 相关消息
 		case "mcp_connect":
 			log.Printf("[WS] Processing mcp_connect message")
-			h.handleMCPConnect(conn, wsMsg.Payload)
+			h.handleMCPConnect(cs, wsMsg.Payload)
 		case "mcp_disconnect":
 			log.Printf("[WS] Processing mcp_disconnect message")
-			h.handleMCPDisconnect(conn, wsMsg.Payload)
+			h.handleMCPDisconnect(cs, wsMsg.Payload)
 		case "mcp_list":
 			log.Printf("[WS] Processing mcp_list message")
-			h.handleMCPList(conn)
+			h.handleMCPList(cs)
 		case "mcp_call":
 			log.Printf("[WS] Processing mcp_call message")
-			h.handleMCPCall(conn, wsMsg.Payload)
+			h.handleMCPCall(cs, wsMsg.Payload)
 		// Config 相关消息
 		case "load_config":
 			log.Printf("[WS] Processing load_config message")
-			h.handleLoadConfig(conn, wsMsg.Payload)
+			h.handleLoadConfig(cs, wsMsg.Payload)
 		case "save_config":
 			log.Printf("[WS] Processing save_config message")
-			h.handleSaveConfig(conn, wsMsg.Payload)
+			h.handleSaveConfig(cs, wsMsg.Payload)
 		// Structured Output 相关消息
 		case "set_output_schema":
 			log.Printf("[WS] Processing set_output_schema message")
-			h.handleSetOutputSchema(conn, wsMsg.Payload)
+			h.handleSetOutputSchema(cs, wsMsg.Payload)
 		case "clear_output_schema":
 			log.Printf("[WS] Processing clear_output_schema message")
-			h.handleClearOutputSchema(conn)
+			h.handleClearOutputSchema(cs)
 		// Job 相关消息
 		case "job_create":
 			log.Printf("[WS] Processing job_create message")
-			h.handleJobCreate(conn, wsMsg.Payload)
+			h.handleJobCreate(cs, wsMsg.Payload)
 		case "job_update":
 			log.Printf("[WS] Processing job_update message")
-			h.handleJobUpdate(conn, wsMsg.Payload)
+			h.handleJobUpdate(cs, wsMsg.Payload)
 		case "job_delete":
 			log.Printf("[WS] Processing job_delete message")
-			h.handleJobDelete(conn, wsMsg.Payload)
+			h.handleJobDelete(cs, wsMsg.Payload)
 		case "job_list":
 			log.Printf("[WS] Processing job_list message")
-			h.handleJobList(conn, wsMsg.Payload)
+			h.handleJobList(cs, wsMsg.Payload)
 		case "job_run":
 			log.Printf("[WS] Processing job_run message")
-			h.handleJobRun(conn, wsMsg.Payload)
+			h.handleJobRun(cs, wsMsg.Payload)
 		case "job_reorder":
 			log.Printf("[WS] Processing job_reorder message")
-			h.handleJobReorder(conn, wsMsg.Payload)
+			h.handleJobReorder(cs, wsMsg.Payload)
 		// Memory 相关消息
 		case "memory_create":
 			log.Printf("[WS] Processing memory_create message")
-			h.handleMemoryCreate(conn, wsMsg.Payload)
+			h.handleMemoryCreate(cs, wsMsg.Payload)
 		case "memory_update":
 			log.Printf("[WS] Processing memory_update message")
-			h.handleMemoryUpdate(conn, wsMsg.Payload)
+			h.handleMemoryUpdate(cs, wsMsg.Payload)
 		case "memory_delete":
 			log.Printf("[WS] Processing memory_delete message")
-			h.handleMemoryDelete(conn, wsMsg.Payload)
+			h.handleMemoryDelete(cs, wsMsg.Payload)
 		case "memory_list":
 			log.Printf("[WS] Processing memory_list message")
-			h.handleMemoryList(conn, wsMsg.Payload)
+			h.handleMemoryList(cs, wsMsg.Payload)
 		case "memory_search":
 			log.Printf("[WS] Processing memory_search message")
-			h.handleMemorySearch(conn, wsMsg.Payload)
+			h.handleMemorySearch(cs, wsMsg.Payload)
 		case "extract_memories":
 			log.Printf("[WS] Processing extract_memories message")
-			h.handleExtractMemories(conn, wsMsg.Payload)
+			h.handleExtractMemories(cs, wsMsg.Payload)
 		// Profile 相关消息
 		case "profile_get":
 			log.Printf("[WS] Processing profile_get message")
-			h.handleProfileGet(conn, wsMsg.Payload)
+			h.handleProfileGet(cs, wsMsg.Payload)
 		case "profile_update":
 			log.Printf("[WS] Processing profile_update message")
-			h.handleProfileUpdate(conn, wsMsg.Payload)
+			h.handleProfileUpdate(cs, wsMsg.Payload)
 		}
 	}
-}
-
-// sendJSON 线程安全地发送 JSON 消息
-func (h *WSHandler) sendJSON(conn *websocket.Conn, v interface{}) error {
-	h.connMu.Lock()
-	defer h.connMu.Unlock()
-	return conn.WriteJSON(v)
 }
 
 // toolInputToRaw 将 ToolInput (JSON string) 转为 json.RawMessage，
@@ -383,30 +401,22 @@ func toolInputToRaw(input string) interface{} {
 	return input
 }
 
-// sendError 发送错误消息
-func (h *WSHandler) sendError(conn *websocket.Conn, msg string) {
-	h.sendJSON(conn, map[string]interface{}{
-		"type":    "error",
-		"payload": map[string]string{"error": msg},
-	})
-}
-
 // handleAbort 处理中断请求
-func (h *WSHandler) handleAbort() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.cancelFunc != nil {
-		h.cancelFunc()
-		h.cancelFunc = nil
+func (h *WSHandler) handleAbort(cs *connState) {
+	cs.cancelMu.Lock()
+	defer cs.cancelMu.Unlock()
+	if cs.cancel != nil {
+		cs.cancel()
+		cs.cancel = nil
 		log.Printf("[WS] Conversation aborted")
 	}
 }
 
 // handleChat 处理聊天消息
-func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 	var chat ChatPayload
 	if err := json.Unmarshal(payload, &chat); err != nil {
-		h.sendError(conn, "invalid chat payload")
+		cs.sendError("invalid chat payload")
 		return
 	}
 
@@ -424,7 +434,7 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	// P0.4: 会话 Busy 锁 — 防止同一会话并发处理
 	if _, busy := h.busySessions.LoadOrStore(sess.ID, true); busy {
 		log.Printf("[WS] Session %s is busy, rejecting request", sess.ID)
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "error",
 			"payload": map[string]interface{}{
 				"error": "Session is currently processing a request. Please wait for it to complete or abort the current request.",
@@ -434,10 +444,8 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	}
 
 	// 更新当前连接的会话信息（用于断开时提取记忆）
-	h.mu.Lock()
-	h.currentUserID = chat.UserID
-	h.currentSessionID = sess.ID
-	h.mu.Unlock()
+	cs.userID = chat.UserID
+	cs.sessionID = sess.ID
 
 	// 注入 EventBus 到会话的上下文管理器（用于 compaction 时自动触发记忆提取）
 	if h.bus != nil && sess.Context != nil {
@@ -510,9 +518,9 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 
 	// 创建可取消的 context
 	ctx, cancel := context.WithCancel(context.Background())
-	h.mu.Lock()
-	h.cancelFunc = cancel
-	h.mu.Unlock()
+	cs.cancelMu.Lock()
+	cs.cancel = cancel
+	cs.cancelMu.Unlock()
 
 	// 创建事件通道
 	eventCh := make(chan loop.LoopEvent, 100)
@@ -520,7 +528,7 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	// 如果是新会话，发送 session_created 事件
 	if isNewSession {
 		// 先发送 session_created 消息
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "session_created",
 			"payload": map[string]interface{}{
 				"session_id": sess.ID,
@@ -543,10 +551,10 @@ func (h *WSHandler) handleChat(conn *websocket.Conn, payload json.RawMessage) {
 	}
 
 	// 启动对话循环（传递沙箱和 Agent）
-	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, selectedAgent, eventCh, conn, isNewSession, toolProvider)
+	go h.runConversation(ctx, sess, chat.UserID, chat.Message, systemPrompt, sb, selectedAgent, eventCh, cs, isNewSession, toolProvider)
 
 	// 异步转发事件到 WebSocket（不阻塞消息读取循环）
-	go h.forwardEvents(conn, sess.ID, chat.UserID, eventCh)
+	go h.forwardEvents(cs, sess.ID, chat.UserID, eventCh)
 }
 
 // getClientForUser 根据用户配置创建 per-user 客户端（使用 Coworker 默认令牌）
@@ -590,7 +598,7 @@ func (h *WSHandler) getClientForUser(userID string) *client.ClaudeClient {
 }
 
 // runConversation 运行对话
-func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, ag *agent.AgentType, eventCh chan loop.LoopEvent, conn *websocket.Conn, isNewSession bool, toolProvider types.ToolProvider) {
+func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, userID string, msg string, systemPrompt string, sb *sandbox.Sandbox, ag *agent.AgentType, eventCh chan loop.LoopEvent, cs *connState, isNewSession bool, toolProvider types.ToolProvider) {
 	defer close(eventCh)
 	// P0.4: 对话结束时释放 Busy 锁
 	defer h.busySessions.Delete(sess.ID)
@@ -626,7 +634,7 @@ func (h *WSHandler) runConversation(ctx context.Context, sess *session.Session, 
 	// 如果是新会话且还没有标题，异步生成标题
 	// 注意：使用新的 context，因为对话的 ctx 可能已被取消
 	if isNewSession && sess.GetTitle() == "" {
-		go h.generateSessionTitle(context.Background(), sess, msg, conn)
+		go h.generateSessionTitle(context.Background(), sess, msg, cs)
 	}
 }
 
@@ -636,16 +644,16 @@ type LoadHistoryPayload struct {
 }
 
 // handleLoadHistory 处理加载历史消息请求
-func (h *WSHandler) handleLoadHistory(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleLoadHistory(cs *connState, payload json.RawMessage) {
 	var req LoadHistoryPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid load_history payload")
+		cs.sendError("invalid load_history payload")
 		return
 	}
 
 	if req.SessionID == "" {
 		// 没有 session_id，返回空历史
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "history",
 			"payload": map[string]interface{}{
 				"session_id": "",
@@ -659,7 +667,7 @@ func (h *WSHandler) handleLoadHistory(conn *websocket.Conn, payload json.RawMess
 	sess := h.sessions.Get(req.SessionID)
 	if sess == nil {
 		// 会话不存在，返回空历史
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "history",
 			"payload": map[string]interface{}{
 				"session_id": req.SessionID,
@@ -676,7 +684,7 @@ func (h *WSHandler) handleLoadHistory(conn *websocket.Conn, payload json.RawMess
 
 	log.Printf("[WS] Loaded history for session %s: %d messages", req.SessionID, len(frontendMessages))
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "history",
 		"payload": map[string]interface{}{
 			"session_id": req.SessionID,
@@ -691,7 +699,7 @@ type ListSessionsPayload struct {
 }
 
 // handleListSessions 处理获取会话列表请求
-func (h *WSHandler) handleListSessions(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleListSessions(cs *connState, payload json.RawMessage) {
 	var req ListSessionsPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
 		// 兼容旧版本，不传 user_id
@@ -743,7 +751,7 @@ func (h *WSHandler) handleListSessions(conn *websocket.Conn, payload json.RawMes
 
 	log.Printf("[WS] Listed %d sessions", len(sessionList))
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "sessions_list",
 		"payload": map[string]interface{}{
 			"sessions": sessionList,
@@ -757,22 +765,22 @@ type DeleteSessionPayload struct {
 }
 
 // handleDeleteSession 处理删除会话请求
-func (h *WSHandler) handleDeleteSession(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleDeleteSession(cs *connState, payload json.RawMessage) {
 	var req DeleteSessionPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid delete_session payload")
+		cs.sendError("invalid delete_session payload")
 		return
 	}
 
 	if req.SessionID == "" {
-		h.sendError(conn, "session_id is required")
+		cs.sendError("session_id is required")
 		return
 	}
 
 	h.sessions.Delete(req.SessionID)
 	log.Printf("[WS] Deleted session: %s", req.SessionID)
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "session_deleted",
 		"payload": map[string]interface{}{
 			"session_id": req.SessionID,
@@ -910,73 +918,108 @@ func ConvertMessagesToFrontend(messages []types.Message) []map[string]interface{
 	return result
 }
 
-// forwardEvents 转发事件到 WebSocket
-func (h *WSHandler) forwardEvents(conn *websocket.Conn, sessID string, userID string, eventCh <-chan loop.LoopEvent) {
-	for event := range eventCh {
-		payload := map[string]interface{}{
-			"session_id": sessID,
+// forwardEvents 转发事件到 WebSocket（文本事件 50ms 合并）
+func (h *WSHandler) forwardEvents(cs *connState, sessID string, userID string, eventCh <-chan loop.LoopEvent) {
+	var textBuf strings.Builder
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	flushText := func() {
+		if textBuf.Len() == 0 {
+			return
 		}
-
-		switch event.Type {
-		case loop.EventTypeText:
-			payload["content"] = event.Text
-		case loop.EventTypeThinking:
-			payload["content"] = event.Text
-		case loop.EventTypeToolStart:
-			payload["name"] = event.ToolName
-			payload["tool_id"] = event.ToolID
-			payload["input"] = toolInputToRaw(event.ToolInput)
-		case loop.EventTypeToolInput:
-			log.Printf("[WS] Forwarding tool_input event: tool_id=%s, input_len=%d", event.ToolID, len(event.ToolInput))
-			payload["name"] = event.ToolName
-			payload["tool_id"] = event.ToolID
-			payload["input"] = toolInputToRaw(event.ToolInput)
-		case loop.EventTypeToolEnd:
-			payload["name"] = event.ToolName
-			payload["tool_id"] = event.ToolID
-			payload["input"] = toolInputToRaw(event.ToolInput)
-			payload["result"] = event.ToolResult
-			payload["is_error"] = event.IsError
-			payload["elapsed_ms"] = event.ElapsedMs
-			payload["timeout_ms"] = event.TimeoutMs
-			payload["timed_out"] = event.TimedOut
-		case loop.EventTypeError:
-			payload["error"] = event.Error
-		case loop.EventTypeStatus:
-			if event.Status != nil {
-				payload["model"] = event.Status.Model
-				payload["input_tokens"] = event.Status.InputTokens
-				payload["output_tokens"] = event.Status.OutputTokens
-				payload["total_tokens"] = event.Status.TotalTokens
-				payload["context_used"] = event.Status.ContextUsed
-				payload["context_max"] = event.Status.ContextMax
-				payload["context_percent"] = event.Status.ContextPercent
-				payload["elapsed_ms"] = event.Status.ElapsedMs
-				payload["mode"] = event.Status.Mode
-			}
-		case loop.EventTypeTaskChanged:
-			// 任务变更事件
-			payload["action"] = event.TaskAction
-			payload["task"] = event.TaskData
-			}
-
-		h.sendJSON(conn, map[string]interface{}{
-			"type":    event.Type,
-			"payload": payload,
+		cs.sendJSON(map[string]interface{}{
+			"type": "text",
+			"payload": map[string]interface{}{
+				"session_id": sessID,
+				"content":    textBuf.String(),
+			},
 		})
+		textBuf.Reset()
+	}
 
-		// 任务变更后，额外发送完整任务列表快照（用于前端对话流中嵌入历史进度）
-		if event.Type == loop.EventTypeTaskChanged && h.tasks != nil {
-			taskList := h.tasks.List(userID, "default")
-			if len(taskList) > 0 {
-				h.sendJSON(conn, map[string]interface{}{
-					"type": "task_progress",
-					"payload": map[string]interface{}{
-						"session_id": sessID,
-						"tasks":      taskList,
-					},
-				})
+	for {
+		select {
+		case event, ok := <-eventCh:
+			if !ok {
+				flushText() // channel 关闭前 flush
+				return
 			}
+
+			// 文本事件：积攒到 buffer，等 ticker 或非文本事件触发 flush
+			if event.Type == loop.EventTypeText {
+				textBuf.WriteString(event.Text)
+				continue
+			}
+
+			// 非文本事件到来 → 先 flush 积攒的文本
+			flushText()
+
+			payload := map[string]interface{}{
+				"session_id": sessID,
+			}
+
+			switch event.Type {
+			case loop.EventTypeThinking:
+				payload["content"] = event.Text
+			case loop.EventTypeToolStart:
+				payload["name"] = event.ToolName
+				payload["tool_id"] = event.ToolID
+				payload["input"] = toolInputToRaw(event.ToolInput)
+			case loop.EventTypeToolInput:
+				log.Printf("[WS] Forwarding tool_input event: tool_id=%s, input_len=%d", event.ToolID, len(event.ToolInput))
+				payload["name"] = event.ToolName
+				payload["tool_id"] = event.ToolID
+				payload["input"] = toolInputToRaw(event.ToolInput)
+			case loop.EventTypeToolEnd:
+				payload["name"] = event.ToolName
+				payload["tool_id"] = event.ToolID
+				payload["input"] = toolInputToRaw(event.ToolInput)
+				payload["result"] = event.ToolResult
+				payload["is_error"] = event.IsError
+				payload["elapsed_ms"] = event.ElapsedMs
+				payload["timeout_ms"] = event.TimeoutMs
+				payload["timed_out"] = event.TimedOut
+			case loop.EventTypeError:
+				payload["error"] = event.Error
+			case loop.EventTypeStatus:
+				if event.Status != nil {
+					payload["model"] = event.Status.Model
+					payload["input_tokens"] = event.Status.InputTokens
+					payload["output_tokens"] = event.Status.OutputTokens
+					payload["total_tokens"] = event.Status.TotalTokens
+					payload["context_used"] = event.Status.ContextUsed
+					payload["context_max"] = event.Status.ContextMax
+					payload["context_percent"] = event.Status.ContextPercent
+					payload["elapsed_ms"] = event.Status.ElapsedMs
+					payload["mode"] = event.Status.Mode
+				}
+			case loop.EventTypeTaskChanged:
+				payload["action"] = event.TaskAction
+				payload["task"] = event.TaskData
+			}
+
+			cs.sendJSON(map[string]interface{}{
+				"type":    event.Type,
+				"payload": payload,
+			})
+
+			// 任务变更后，额外发送完整任务列表快照（用于前端对话流中嵌入历史进度）
+			if event.Type == loop.EventTypeTaskChanged && h.tasks != nil {
+				taskList := h.tasks.List(userID, "default")
+				if len(taskList) > 0 {
+					cs.sendJSON(map[string]interface{}{
+						"type": "task_progress",
+						"payload": map[string]interface{}{
+							"session_id": sessID,
+							"tasks":      taskList,
+						},
+					})
+				}
+			}
+
+		case <-ticker.C:
+			flushText() // 每 50ms flush 一次积攒的文本
 		}
 	}
 }
@@ -988,20 +1031,20 @@ type ListFilesPayload struct {
 }
 
 // handleListFiles 处理文件列表请求
-func (h *WSHandler) handleListFiles(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleListFiles(cs *connState, payload json.RawMessage) {
 	var req ListFilesPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid list_files payload")
+		cs.sendError("invalid list_files payload")
 		return
 	}
 
 	if req.UserID == "" {
-		h.sendError(conn, "user_id is required")
+		cs.sendError("user_id is required")
 		return
 	}
 
 	if h.workspace == nil {
-		h.sendError(conn, "workspace manager not initialized")
+		cs.sendError("workspace manager not initialized")
 		return
 	}
 
@@ -1009,19 +1052,19 @@ func (h *WSHandler) handleListFiles(conn *websocket.Conn, payload json.RawMessag
 	go func() {
 		// 确保用户工作空间存在
 		if err := h.workspace.EnsureUserWorkspace(req.UserID); err != nil {
-			h.sendError(conn, "failed to create workspace: "+err.Error())
+			cs.sendError("failed to create workspace: "+err.Error())
 			return
 		}
 
 		files, err := h.workspace.ListFiles(req.UserID, req.Path)
 		if err != nil {
-			h.sendError(conn, "failed to list files: "+err.Error())
+			cs.sendError("failed to list files: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Listed %d files for user %s path %s", len(files), req.UserID, req.Path)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "files_list",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -1038,32 +1081,32 @@ type WorkspaceStatsPayload struct {
 }
 
 // handleWorkspaceStats 处理工作空间统计请求
-func (h *WSHandler) handleWorkspaceStats(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleWorkspaceStats(cs *connState, payload json.RawMessage) {
 	var req WorkspaceStatsPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid workspace_stats payload")
+		cs.sendError("invalid workspace_stats payload")
 		return
 	}
 
 	if req.UserID == "" {
-		h.sendError(conn, "user_id is required")
+		cs.sendError("user_id is required")
 		return
 	}
 
 	if h.workspace == nil {
-		h.sendError(conn, "workspace manager not initialized")
+		cs.sendError("workspace manager not initialized")
 		return
 	}
 
 	stats, err := h.workspace.GetWorkspaceStats(req.UserID)
 	if err != nil {
-		h.sendError(conn, "failed to get workspace stats: "+err.Error())
+		cs.sendError("failed to get workspace stats: "+err.Error())
 		return
 	}
 
 	log.Printf("[WS] Got workspace stats for user %s", req.UserID)
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "workspace_stats",
 		"payload": map[string]interface{}{
 			"user_id": req.UserID,
@@ -1079,33 +1122,33 @@ type CreateFolderPayload struct {
 }
 
 // handleCreateFolder 处理创建文件夹请求
-func (h *WSHandler) handleCreateFolder(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleCreateFolder(cs *connState, payload json.RawMessage) {
 	var req CreateFolderPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid create_folder payload")
+		cs.sendError("invalid create_folder payload")
 		return
 	}
 
 	if req.UserID == "" || req.Path == "" {
-		h.sendError(conn, "user_id and path are required")
+		cs.sendError("user_id and path are required")
 		return
 	}
 
 	if h.workspace == nil {
-		h.sendError(conn, "workspace manager not initialized")
+		cs.sendError("workspace manager not initialized")
 		return
 	}
 
 	// 异步执行文件 I/O 操作
 	go func() {
 		if err := h.workspace.CreateFolder(req.UserID, req.Path); err != nil {
-			h.sendError(conn, "failed to create folder: "+err.Error())
+			cs.sendError("failed to create folder: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Created folder for user %s: %s", req.UserID, req.Path)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "folder_created",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -1123,33 +1166,33 @@ type DeleteFilePayload struct {
 }
 
 // handleDeleteFile 处理删除文件请求
-func (h *WSHandler) handleDeleteFile(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleDeleteFile(cs *connState, payload json.RawMessage) {
 	var req DeleteFilePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid delete_file payload")
+		cs.sendError("invalid delete_file payload")
 		return
 	}
 
 	if req.UserID == "" || req.Path == "" {
-		h.sendError(conn, "user_id and path are required")
+		cs.sendError("user_id and path are required")
 		return
 	}
 
 	if h.workspace == nil {
-		h.sendError(conn, "workspace manager not initialized")
+		cs.sendError("workspace manager not initialized")
 		return
 	}
 
 	// 异步执行文件 I/O 操作
 	go func() {
 		if err := h.workspace.DeleteFile(req.UserID, req.Path); err != nil {
-			h.sendError(conn, "failed to delete file: "+err.Error())
+			cs.sendError("failed to delete file: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Deleted file for user %s: %s", req.UserID, req.Path)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "file_deleted",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -1168,33 +1211,33 @@ type RenameFilePayload struct {
 }
 
 // handleRenameFile 处理重命名文件请求
-func (h *WSHandler) handleRenameFile(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleRenameFile(cs *connState, payload json.RawMessage) {
 	var req RenameFilePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid rename_file payload")
+		cs.sendError("invalid rename_file payload")
 		return
 	}
 
 	if req.UserID == "" || req.Path == "" || req.NewName == "" {
-		h.sendError(conn, "user_id, path and new_name are required")
+		cs.sendError("user_id, path and new_name are required")
 		return
 	}
 
 	if h.workspace == nil {
-		h.sendError(conn, "workspace manager not initialized")
+		cs.sendError("workspace manager not initialized")
 		return
 	}
 
 	// 异步执行文件 I/O 操作
 	go func() {
 		if err := h.workspace.RenameFile(req.UserID, req.Path, req.NewName); err != nil {
-			h.sendError(conn, "failed to rename file: "+err.Error())
+			cs.sendError("failed to rename file: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Renamed file for user %s: %s -> %s", req.UserID, req.Path, req.NewName)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "file_renamed",
 			"payload": map[string]interface{}{
 				"user_id":  req.UserID,
@@ -1218,15 +1261,15 @@ type TaskCreatePayload struct {
 }
 
 // handleTaskCreate 处理创建任务请求
-func (h *WSHandler) handleTaskCreate(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleTaskCreate(cs *connState, payload json.RawMessage) {
 	var req TaskCreatePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid task_create payload")
+		cs.sendError("invalid task_create payload")
 		return
 	}
 
 	if req.UserID == "" || req.Subject == "" {
-		h.sendError(conn, "user_id and subject are required")
+		cs.sendError("user_id and subject are required")
 		return
 	}
 
@@ -1235,7 +1278,7 @@ func (h *WSHandler) handleTaskCreate(conn *websocket.Conn, payload json.RawMessa
 	}
 
 	if h.tasks == nil {
-		h.sendError(conn, "task manager not initialized")
+		cs.sendError("task manager not initialized")
 		return
 	}
 
@@ -1243,13 +1286,13 @@ func (h *WSHandler) handleTaskCreate(conn *websocket.Conn, payload json.RawMessa
 	go func() {
 		t, err := h.tasks.Create(req.UserID, req.ListID, req.Subject, req.Description, req.ActiveForm)
 		if err != nil {
-			h.sendError(conn, "failed to create task: "+err.Error())
+			cs.sendError("failed to create task: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Created task for user %s: %s", req.UserID, t.ID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "task_created",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -1269,15 +1312,15 @@ type TaskGetPayload struct {
 }
 
 // handleTaskGet 处理获取任务请求
-func (h *WSHandler) handleTaskGet(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleTaskGet(cs *connState, payload json.RawMessage) {
 	var req TaskGetPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid task_get payload")
+		cs.sendError("invalid task_get payload")
 		return
 	}
 
 	if req.UserID == "" || req.TaskID == "" {
-		h.sendError(conn, "user_id and task_id are required")
+		cs.sendError("user_id and task_id are required")
 		return
 	}
 
@@ -1286,17 +1329,17 @@ func (h *WSHandler) handleTaskGet(conn *websocket.Conn, payload json.RawMessage)
 	}
 
 	if h.tasks == nil {
-		h.sendError(conn, "task manager not initialized")
+		cs.sendError("task manager not initialized")
 		return
 	}
 
 	t := h.tasks.Get(req.UserID, req.ListID, req.TaskID)
 	if t == nil {
-		h.sendError(conn, "task not found")
+		cs.sendError("task not found")
 		return
 	}
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "task_detail",
 		"payload": map[string]interface{}{
 			"user_id": req.UserID,
@@ -1322,15 +1365,15 @@ type TaskUpdatePayload struct {
 }
 
 // handleTaskUpdate 处理更新任务请求
-func (h *WSHandler) handleTaskUpdate(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleTaskUpdate(cs *connState, payload json.RawMessage) {
 	var req TaskUpdatePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid task_update payload")
+		cs.sendError("invalid task_update payload")
 		return
 	}
 
 	if req.UserID == "" || req.TaskID == "" {
-		h.sendError(conn, "user_id and task_id are required")
+		cs.sendError("user_id and task_id are required")
 		return
 	}
 
@@ -1339,7 +1382,7 @@ func (h *WSHandler) handleTaskUpdate(conn *websocket.Conn, payload json.RawMessa
 	}
 
 	if h.tasks == nil {
-		h.sendError(conn, "task manager not initialized")
+		cs.sendError("task manager not initialized")
 		return
 	}
 
@@ -1370,13 +1413,13 @@ func (h *WSHandler) handleTaskUpdate(conn *websocket.Conn, payload json.RawMessa
 	go func() {
 		t, err := h.tasks.Update(req.UserID, req.ListID, req.TaskID, updates)
 		if err != nil {
-			h.sendError(conn, "failed to update task: "+err.Error())
+			cs.sendError("failed to update task: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Updated task for user %s: %s", req.UserID, req.TaskID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "task_updated",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -1395,15 +1438,15 @@ type TaskListPayload struct {
 }
 
 // handleTaskList 处理任务列表请求
-func (h *WSHandler) handleTaskList(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleTaskList(cs *connState, payload json.RawMessage) {
 	var req TaskListPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid task_list payload")
+		cs.sendError("invalid task_list payload")
 		return
 	}
 
 	if req.UserID == "" {
-		h.sendError(conn, "user_id is required")
+		cs.sendError("user_id is required")
 		return
 	}
 
@@ -1412,7 +1455,7 @@ func (h *WSHandler) handleTaskList(conn *websocket.Conn, payload json.RawMessage
 	}
 
 	if h.tasks == nil {
-		h.sendError(conn, "task manager not initialized")
+		cs.sendError("task manager not initialized")
 		return
 	}
 
@@ -1421,7 +1464,7 @@ func (h *WSHandler) handleTaskList(conn *websocket.Conn, payload json.RawMessage
 		tasks := h.tasks.List(req.UserID, req.ListID)
 		log.Printf("[WS] Listed %d tasks for user %s", len(tasks), req.UserID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "tasks_list",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -1440,15 +1483,15 @@ type TaskReorderPayload struct {
 }
 
 // handleTaskReorder 处理任务排序请求
-func (h *WSHandler) handleTaskReorder(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleTaskReorder(cs *connState, payload json.RawMessage) {
 	var req TaskReorderPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid task_reorder payload")
+		cs.sendError("invalid task_reorder payload")
 		return
 	}
 
 	if req.UserID == "" || len(req.TaskIDs) == 0 {
-		h.sendError(conn, "user_id and task_ids are required")
+		cs.sendError("user_id and task_ids are required")
 		return
 	}
 
@@ -1457,19 +1500,19 @@ func (h *WSHandler) handleTaskReorder(conn *websocket.Conn, payload json.RawMess
 	}
 
 	if h.tasks == nil {
-		h.sendError(conn, "task manager not initialized")
+		cs.sendError("task manager not initialized")
 		return
 	}
 
 	go func() {
 		if err := h.tasks.UpdateOrder(req.UserID, req.ListID, req.TaskIDs); err != nil {
-			h.sendError(conn, "failed to reorder tasks: "+err.Error())
+			cs.sendError("failed to reorder tasks: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Reordered tasks for user %s", req.UserID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "tasks_reordered",
 			"payload": map[string]interface{}{
 				"user_id":  req.UserID,
@@ -1489,21 +1532,21 @@ type CompactPayload struct {
 }
 
 // handleCompact 处理压缩上下文请求
-func (h *WSHandler) handleCompact(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleCompact(cs *connState, payload json.RawMessage) {
 	var req CompactPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid compact payload")
+		cs.sendError("invalid compact payload")
 		return
 	}
 
 	if req.SessionID == "" {
-		h.sendError(conn, "session_id is required")
+		cs.sendError("session_id is required")
 		return
 	}
 
 	sess := h.sessions.Get(req.SessionID)
 	if sess == nil {
-		h.sendError(conn, "session not found")
+		cs.sendError("session not found")
 		return
 	}
 
@@ -1525,7 +1568,7 @@ func (h *WSHandler) handleCompact(conn *websocket.Conn, payload json.RawMessage)
 
 		log.Printf("[WS] Compacted context for session %s", req.SessionID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "compact_done",
 			"payload": map[string]interface{}{
 				"session_id": req.SessionID,
@@ -1542,27 +1585,27 @@ type ContextStatsPayload struct {
 }
 
 // handleContextStats 处理上下文统计请求
-func (h *WSHandler) handleContextStats(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleContextStats(cs *connState, payload json.RawMessage) {
 	var req ContextStatsPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid context_stats payload")
+		cs.sendError("invalid context_stats payload")
 		return
 	}
 
 	if req.SessionID == "" {
-		h.sendError(conn, "session_id is required")
+		cs.sendError("session_id is required")
 		return
 	}
 
 	sess := h.sessions.Get(req.SessionID)
 	if sess == nil {
-		h.sendError(conn, "session not found")
+		cs.sendError("session not found")
 		return
 	}
 
 	stats := sess.GetContextStats()
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "context_stats",
 		"payload": map[string]interface{}{
 			"session_id": req.SessionID,
@@ -1581,17 +1624,17 @@ type SkillCallPayload struct {
 }
 
 // handleSkillCall 处理技能调用请求（从 store 加载）
-func (h *WSHandler) handleSkillCall(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleSkillCall(cs *connState, payload json.RawMessage) {
 	var req SkillCallPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid skill_call payload")
+		cs.sendError("invalid skill_call payload")
 		return
 	}
 
 	name := strings.TrimPrefix(req.Name, "/")
 
 	if h.store == nil {
-		h.sendError(conn, "store not available")
+		cs.sendError("store not available")
 		return
 	}
 
@@ -1604,12 +1647,12 @@ func (h *WSHandler) handleSkillCall(conn *websocket.Conn, payload json.RawMessag
 		}
 	}
 	if content == "" {
-		h.sendError(conn, fmt.Sprintf("skill not found: %s", name))
+		cs.sendError(fmt.Sprintf("skill not found: %s", name))
 		return
 	}
 
 	log.Printf("[WS] Skill expanded: %s", name)
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "skill_expanded",
 		"payload": map[string]interface{}{
 			"name":    name,
@@ -1619,7 +1662,7 @@ func (h *WSHandler) handleSkillCall(conn *websocket.Conn, payload json.RawMessag
 }
 
 // handleListSkills 处理列出技能请求（从 store 加载）
-func (h *WSHandler) handleListSkills(conn *websocket.Conn) {
+func (h *WSHandler) handleListSkills(cs *connState) {
 	var skillList []map[string]string
 	if h.store != nil {
 		for _, item := range h.store.List() {
@@ -1631,7 +1674,7 @@ func (h *WSHandler) handleListSkills(conn *websocket.Conn) {
 			}
 		}
 	}
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type":    "skills_list",
 		"payload": map[string]interface{}{"skills": skillList},
 	})
@@ -1649,10 +1692,10 @@ type MCPConnectPayload struct {
 }
 
 // handleMCPConnect 处理 MCP 连接请求
-func (h *WSHandler) handleMCPConnect(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleMCPConnect(cs *connState, payload json.RawMessage) {
 	var req MCPConnectPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid mcp_connect payload")
+		cs.sendError("invalid mcp_connect payload")
 		return
 	}
 
@@ -1666,11 +1709,11 @@ func (h *WSHandler) handleMCPConnect(conn *websocket.Conn, payload json.RawMessa
 
 		mcpConn, err := h.mcp.Connect(context.Background(), req.Name, cfg)
 		if err != nil {
-			h.sendError(conn, "mcp connect failed: "+err.Error())
+			cs.sendError("mcp connect failed: "+err.Error())
 			return
 		}
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "mcp_connected",
 			"payload": map[string]interface{}{
 				"id":     mcpConn.ID,
@@ -1688,19 +1731,19 @@ type MCPDisconnectPayload struct {
 }
 
 // handleMCPDisconnect 处理 MCP 断开请求
-func (h *WSHandler) handleMCPDisconnect(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleMCPDisconnect(cs *connState, payload json.RawMessage) {
 	var req MCPDisconnectPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid mcp_disconnect payload")
+		cs.sendError("invalid mcp_disconnect payload")
 		return
 	}
 
 	if err := h.mcp.Disconnect(req.ID); err != nil {
-		h.sendError(conn, err.Error())
+		cs.sendError(err.Error())
 		return
 	}
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "mcp_disconnected",
 		"payload": map[string]interface{}{
 			"id": req.ID,
@@ -1709,7 +1752,7 @@ func (h *WSHandler) handleMCPDisconnect(conn *websocket.Conn, payload json.RawMe
 }
 
 // handleMCPList 处理 MCP 列表请求
-func (h *WSHandler) handleMCPList(conn *websocket.Conn) {
+func (h *WSHandler) handleMCPList(cs *connState) {
 	connections := h.mcp.List()
 
 	list := make([]map[string]interface{}, 0, len(connections))
@@ -1722,7 +1765,7 @@ func (h *WSHandler) handleMCPList(conn *websocket.Conn) {
 		})
 	}
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "mcp_list",
 		"payload": map[string]interface{}{
 			"connections": list,
@@ -1738,21 +1781,21 @@ type MCPCallPayload struct {
 }
 
 // handleMCPCall 处理 MCP 工具调用请求
-func (h *WSHandler) handleMCPCall(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleMCPCall(cs *connState, payload json.RawMessage) {
 	var req MCPCallPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid mcp_call payload")
+		cs.sendError("invalid mcp_call payload")
 		return
 	}
 
 	go func() {
 		result, err := h.mcp.CallTool(context.Background(), req.ConnID, req.ToolName, req.Args)
 		if err != nil {
-			h.sendError(conn, "mcp call failed: "+err.Error())
+			cs.sendError("mcp call failed: "+err.Error())
 			return
 		}
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "mcp_result",
 			"payload": map[string]interface{}{
 				"conn_id":   req.ConnID,
@@ -1772,17 +1815,17 @@ type ConfigPayload struct {
 }
 
 // handleLoadConfig 处理加载配置请求
-func (h *WSHandler) handleLoadConfig(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleLoadConfig(cs *connState, payload json.RawMessage) {
 	var req ConfigPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid load_config payload")
+		cs.sendError("invalid load_config payload")
 		return
 	}
 
 	go func() {
 		content, err := h.workspace.LoadConfig(req.UserID)
 		if err != nil {
-			h.sendJSON(conn, map[string]interface{}{
+			cs.sendJSON(map[string]interface{}{
 				"type": "config_loaded",
 				"payload": map[string]interface{}{
 					"success": true,
@@ -1792,7 +1835,7 @@ func (h *WSHandler) handleLoadConfig(conn *websocket.Conn, payload json.RawMessa
 			return
 		}
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "config_loaded",
 			"payload": map[string]interface{}{
 				"success": true,
@@ -1803,21 +1846,21 @@ func (h *WSHandler) handleLoadConfig(conn *websocket.Conn, payload json.RawMessa
 }
 
 // handleSaveConfig 处理保存配置请求
-func (h *WSHandler) handleSaveConfig(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleSaveConfig(cs *connState, payload json.RawMessage) {
 	var req ConfigPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid save_config payload")
+		cs.sendError("invalid save_config payload")
 		return
 	}
 
 	go func() {
 		err := h.workspace.SaveConfig(req.UserID, req.Content)
 		if err != nil {
-			h.sendError(conn, "save config failed: "+err.Error())
+			cs.sendError("save config failed: "+err.Error())
 			return
 		}
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "config_saved",
 			"payload": map[string]interface{}{
 				"success": true,
@@ -1834,26 +1877,26 @@ type SetOutputSchemaPayload struct {
 }
 
 // handleSetOutputSchema 处理设置输出 schema 请求
-func (h *WSHandler) handleSetOutputSchema(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleSetOutputSchema(cs *connState, payload json.RawMessage) {
 	var req SetOutputSchemaPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid set_output_schema payload")
+		cs.sendError("invalid set_output_schema payload")
 		return
 	}
 
 	if req.Schema == nil {
-		h.sendError(conn, "schema is required")
+		cs.sendError("schema is required")
 		return
 	}
 
 	if err := h.tools.SetStructuredOutputSchema(req.Schema); err != nil {
-		h.sendError(conn, "failed to set schema: "+err.Error())
+		cs.sendError("failed to set schema: "+err.Error())
 		return
 	}
 
 	log.Printf("[WS] Output schema set successfully")
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "output_schema_set",
 		"payload": map[string]interface{}{
 			"success": true,
@@ -1862,12 +1905,12 @@ func (h *WSHandler) handleSetOutputSchema(conn *websocket.Conn, payload json.Raw
 }
 
 // handleClearOutputSchema 处理清除输出 schema 请求
-func (h *WSHandler) handleClearOutputSchema(conn *websocket.Conn) {
+func (h *WSHandler) handleClearOutputSchema(cs *connState) {
 	h.tools.ClearStructuredOutputSchema()
 
 	log.Printf("[WS] Output schema cleared")
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "output_schema_cleared",
 		"payload": map[string]interface{}{
 			"success": true,
@@ -2055,7 +2098,7 @@ func buildAgentType(name, description, content string, tools []string) *agent.Ag
 
 // generateSessionTitle 异步生成会话标题
 // 参考 OpenCode: ensureTitle() + agent/prompt/title.txt
-func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Session, firstMessage string, conn *websocket.Conn) {
+func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Session, firstMessage string, cs *connState) {
 	// 使用 OpenCode 风格的 TitlePrompt 作为系统提示词
 	// 用户消息作为输入，让 AI 生成标题
 	userMsg := firstMessage
@@ -2094,7 +2137,7 @@ func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Sess
 	}
 
 	// 发送 title_updated 消息
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "title_updated",
 		"payload": map[string]interface{}{
 			"session_id": sess.ID,
@@ -2125,15 +2168,15 @@ type JobCreatePayload struct {
 }
 
 // handleJobCreate 处理创建 Job 请求
-func (h *WSHandler) handleJobCreate(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleJobCreate(cs *connState, payload json.RawMessage) {
 	var req JobCreatePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid job_create payload")
+		cs.sendError("invalid job_create payload")
 		return
 	}
 
 	if req.UserID == "" || req.Name == "" || req.Command == "" {
-		h.sendError(conn, "user_id, name and command are required")
+		cs.sendError("user_id, name and command are required")
 		return
 	}
 
@@ -2144,13 +2187,13 @@ func (h *WSHandler) handleJobCreate(conn *websocket.Conn, payload json.RawMessag
 		if req.CronExpr != "" {
 			scheduleType = job.ScheduleCron
 		} else {
-			h.sendError(conn, "schedule_type or cron_expr is required")
+			cs.sendError("schedule_type or cron_expr is required")
 			return
 		}
 	}
 
 	if h.jobs == nil {
-		h.sendError(conn, "job manager not initialized")
+		cs.sendError("job manager not initialized")
 		return
 	}
 
@@ -2162,13 +2205,13 @@ func (h *WSHandler) handleJobCreate(conn *websocket.Conn, payload json.RawMessag
 			req.Weekdays, req.IntervalMinutes, req.RunAt,
 		)
 		if err != nil {
-			h.sendError(conn, "failed to create job: "+err.Error())
+			cs.sendError("failed to create job: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Created job for user %s: %s", req.UserID, j.ID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "job_created",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -2190,20 +2233,20 @@ type JobUpdatePayload struct {
 }
 
 // handleJobUpdate 处理更新 Job 请求
-func (h *WSHandler) handleJobUpdate(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleJobUpdate(cs *connState, payload json.RawMessage) {
 	var req JobUpdatePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid job_update payload")
+		cs.sendError("invalid job_update payload")
 		return
 	}
 
 	if req.UserID == "" || req.JobID == "" {
-		h.sendError(conn, "user_id and job_id are required")
+		cs.sendError("user_id and job_id are required")
 		return
 	}
 
 	if h.jobs == nil {
-		h.sendError(conn, "job manager not initialized")
+		cs.sendError("job manager not initialized")
 		return
 	}
 
@@ -2224,13 +2267,13 @@ func (h *WSHandler) handleJobUpdate(conn *websocket.Conn, payload json.RawMessag
 	go func() {
 		j, err := h.jobs.Update(req.UserID, req.JobID, updates)
 		if err != nil {
-			h.sendError(conn, "failed to update job: "+err.Error())
+			cs.sendError("failed to update job: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Updated job for user %s: %s", req.UserID, req.JobID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "job_updated",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -2248,32 +2291,32 @@ type JobDeletePayload struct {
 }
 
 // handleJobDelete 处理删除 Job 请求
-func (h *WSHandler) handleJobDelete(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleJobDelete(cs *connState, payload json.RawMessage) {
 	var req JobDeletePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid job_delete payload")
+		cs.sendError("invalid job_delete payload")
 		return
 	}
 
 	if req.UserID == "" || req.JobID == "" {
-		h.sendError(conn, "user_id and job_id are required")
+		cs.sendError("user_id and job_id are required")
 		return
 	}
 
 	if h.jobs == nil {
-		h.sendError(conn, "job manager not initialized")
+		cs.sendError("job manager not initialized")
 		return
 	}
 
 	go func() {
 		if err := h.jobs.Delete(req.UserID, req.JobID); err != nil {
-			h.sendError(conn, "failed to delete job: "+err.Error())
+			cs.sendError("failed to delete job: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Deleted job for user %s: %s", req.UserID, req.JobID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "job_deleted",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -2290,20 +2333,20 @@ type JobListPayload struct {
 }
 
 // handleJobList 处理 Job 列表请求
-func (h *WSHandler) handleJobList(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleJobList(cs *connState, payload json.RawMessage) {
 	var req JobListPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid job_list payload")
+		cs.sendError("invalid job_list payload")
 		return
 	}
 
 	if req.UserID == "" {
-		h.sendError(conn, "user_id is required")
+		cs.sendError("user_id is required")
 		return
 	}
 
 	if h.jobs == nil {
-		h.sendError(conn, "job manager not initialized")
+		cs.sendError("job manager not initialized")
 		return
 	}
 
@@ -2311,7 +2354,7 @@ func (h *WSHandler) handleJobList(conn *websocket.Conn, payload json.RawMessage)
 		jobs := h.jobs.List(req.UserID)
 		log.Printf("[WS] Listed %d jobs for user %s", len(jobs), req.UserID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "jobs_list",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -2328,26 +2371,26 @@ type JobRunPayload struct {
 }
 
 // handleJobRun 处理手动触发 Job 请求
-func (h *WSHandler) handleJobRun(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleJobRun(cs *connState, payload json.RawMessage) {
 	var req JobRunPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid job_run payload")
+		cs.sendError("invalid job_run payload")
 		return
 	}
 
 	if req.UserID == "" || req.JobID == "" {
-		h.sendError(conn, "user_id and job_id are required")
+		cs.sendError("user_id and job_id are required")
 		return
 	}
 
 	if h.jobs == nil {
-		h.sendError(conn, "job manager not initialized")
+		cs.sendError("job manager not initialized")
 		return
 	}
 
 	j := h.jobs.Get(req.UserID, req.JobID)
 	if j == nil {
-		h.sendError(conn, "job not found")
+		cs.sendError("job not found")
 		return
 	}
 
@@ -2356,7 +2399,7 @@ func (h *WSHandler) handleJobRun(conn *websocket.Conn, payload json.RawMessage) 
 
 	log.Printf("[WS] Job manually triggered for user %s: %s", req.UserID, req.JobID)
 
-	h.sendJSON(conn, map[string]interface{}{
+	cs.sendJSON(map[string]interface{}{
 		"type": "job_triggered",
 		"payload": map[string]interface{}{
 			"user_id": req.UserID,
@@ -2373,32 +2416,32 @@ type JobReorderPayload struct {
 }
 
 // handleJobReorder 处理 Job 排序请求
-func (h *WSHandler) handleJobReorder(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleJobReorder(cs *connState, payload json.RawMessage) {
 	var req JobReorderPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid job_reorder payload")
+		cs.sendError("invalid job_reorder payload")
 		return
 	}
 
 	if req.UserID == "" || len(req.JobIDs) == 0 {
-		h.sendError(conn, "user_id and job_ids are required")
+		cs.sendError("user_id and job_ids are required")
 		return
 	}
 
 	if h.jobs == nil {
-		h.sendError(conn, "job manager not initialized")
+		cs.sendError("job manager not initialized")
 		return
 	}
 
 	go func() {
 		if err := h.jobs.UpdateOrder(req.UserID, req.JobIDs); err != nil {
-			h.sendError(conn, "failed to reorder jobs: "+err.Error())
+			cs.sendError("failed to reorder jobs: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Reordered jobs for user %s", req.UserID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "jobs_reordered",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -2422,20 +2465,20 @@ type MemoryCreatePayload struct {
 }
 
 // handleMemoryCreate 处理创建记忆请求
-func (h *WSHandler) handleMemoryCreate(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleMemoryCreate(cs *connState, payload json.RawMessage) {
 	var req MemoryCreatePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid memory_create payload")
+		cs.sendError("invalid memory_create payload")
 		return
 	}
 
 	if req.UserID == "" || req.Content == "" {
-		h.sendError(conn, "user_id and content are required")
+		cs.sendError("user_id and content are required")
 		return
 	}
 
 	if h.memories == nil {
-		h.sendError(conn, "memory manager not initialized")
+		cs.sendError("memory manager not initialized")
 		return
 	}
 
@@ -2451,13 +2494,13 @@ func (h *WSHandler) handleMemoryCreate(conn *websocket.Conn, payload json.RawMes
 
 		created, err := h.memories.Create(req.UserID, mem)
 		if err != nil {
-			h.sendError(conn, "failed to create memory: "+err.Error())
+			cs.sendError("failed to create memory: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Created memory for user %s: %s", req.UserID, created.ID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "memory_created",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -2479,20 +2522,20 @@ type MemoryUpdatePayload struct {
 }
 
 // handleMemoryUpdate 处理更新记忆请求
-func (h *WSHandler) handleMemoryUpdate(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleMemoryUpdate(cs *connState, payload json.RawMessage) {
 	var req MemoryUpdatePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid memory_update payload")
+		cs.sendError("invalid memory_update payload")
 		return
 	}
 
 	if req.UserID == "" || req.MemoryID == "" {
-		h.sendError(conn, "user_id and memory_id are required")
+		cs.sendError("user_id and memory_id are required")
 		return
 	}
 
 	if h.memories == nil {
-		h.sendError(conn, "memory manager not initialized")
+		cs.sendError("memory manager not initialized")
 		return
 	}
 
@@ -2513,13 +2556,13 @@ func (h *WSHandler) handleMemoryUpdate(conn *websocket.Conn, payload json.RawMes
 
 		updated, err := h.memories.Update(req.UserID, req.MemoryID, updates)
 		if err != nil {
-			h.sendError(conn, "failed to update memory: "+err.Error())
+			cs.sendError("failed to update memory: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Updated memory for user %s: %s", req.UserID, req.MemoryID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "memory_updated",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -2537,32 +2580,32 @@ type MemoryDeletePayload struct {
 }
 
 // handleMemoryDelete 处理删除记忆请求
-func (h *WSHandler) handleMemoryDelete(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleMemoryDelete(cs *connState, payload json.RawMessage) {
 	var req MemoryDeletePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid memory_delete payload")
+		cs.sendError("invalid memory_delete payload")
 		return
 	}
 
 	if req.UserID == "" || req.MemoryID == "" {
-		h.sendError(conn, "user_id and memory_id are required")
+		cs.sendError("user_id and memory_id are required")
 		return
 	}
 
 	if h.memories == nil {
-		h.sendError(conn, "memory manager not initialized")
+		cs.sendError("memory manager not initialized")
 		return
 	}
 
 	go func() {
 		if err := h.memories.Delete(req.UserID, req.MemoryID); err != nil {
-			h.sendError(conn, "failed to delete memory: "+err.Error())
+			cs.sendError("failed to delete memory: "+err.Error())
 			return
 		}
 
 		log.Printf("[WS] Deleted memory for user %s: %s", req.UserID, req.MemoryID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "memory_deleted",
 			"payload": map[string]interface{}{
 				"user_id":   req.UserID,
@@ -2579,20 +2622,20 @@ type MemoryListPayload struct {
 }
 
 // handleMemoryList 处理列出记忆请求
-func (h *WSHandler) handleMemoryList(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleMemoryList(cs *connState, payload json.RawMessage) {
 	var req MemoryListPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid memory_list payload")
+		cs.sendError("invalid memory_list payload")
 		return
 	}
 
 	if req.UserID == "" {
-		h.sendError(conn, "user_id is required")
+		cs.sendError("user_id is required")
 		return
 	}
 
 	if h.memories == nil {
-		h.sendError(conn, "memory manager not initialized")
+		cs.sendError("memory manager not initialized")
 		return
 	}
 
@@ -2602,7 +2645,7 @@ func (h *WSHandler) handleMemoryList(conn *websocket.Conn, payload json.RawMessa
 
 		log.Printf("[WS] Listed %d memories for user %s", len(memories), req.UserID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "memories_list",
 			"payload": map[string]interface{}{
 				"user_id":  req.UserID,
@@ -2620,20 +2663,20 @@ type MemorySearchPayload struct {
 }
 
 // handleMemorySearch 处理搜索记忆请求
-func (h *WSHandler) handleMemorySearch(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleMemorySearch(cs *connState, payload json.RawMessage) {
 	var req MemorySearchPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid memory_search payload")
+		cs.sendError("invalid memory_search payload")
 		return
 	}
 
 	if req.UserID == "" || req.Query == "" {
-		h.sendError(conn, "user_id and query are required")
+		cs.sendError("user_id and query are required")
 		return
 	}
 
 	if h.memories == nil {
-		h.sendError(conn, "memory manager not initialized")
+		cs.sendError("memory manager not initialized")
 		return
 	}
 
@@ -2649,7 +2692,7 @@ func (h *WSHandler) handleMemorySearch(conn *websocket.Conn, payload json.RawMes
 
 		log.Printf("[WS] Found %d memories for query: %s", len(results), req.Query)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "memories_search_result",
 			"payload": map[string]interface{}{
 				"user_id":  req.UserID,
@@ -2667,26 +2710,26 @@ type ExtractMemoriesPayload struct {
 }
 
 // handleExtractMemories 处理用户手动触发的记忆提取请求
-func (h *WSHandler) handleExtractMemories(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleExtractMemories(cs *connState, payload json.RawMessage) {
 	var req ExtractMemoriesPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid extract_memories payload")
+		cs.sendError("invalid extract_memories payload")
 		return
 	}
 
 	if req.UserID == "" || req.SessionID == "" {
-		h.sendError(conn, "user_id and session_id are required")
+		cs.sendError("user_id and session_id are required")
 		return
 	}
 
 	if h.memories == nil {
-		h.sendError(conn, "memory manager not initialized")
+		cs.sendError("memory manager not initialized")
 		return
 	}
 
 	sess := h.sessions.Get(req.SessionID)
 	if sess == nil {
-		h.sendError(conn, "session not found")
+		cs.sendError("session not found")
 		return
 	}
 
@@ -2694,7 +2737,7 @@ func (h *WSHandler) handleExtractMemories(conn *websocket.Conn, payload json.Raw
 		log.Printf("[WS] User requested memory extraction for session %s", req.SessionID)
 		h.extractMemoriesFromSession(req.UserID, sess)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "memories_extracted",
 			"payload": map[string]interface{}{
 				"user_id":    req.UserID,
@@ -2713,20 +2756,20 @@ type ProfileGetPayload struct {
 }
 
 // handleProfileGet 处理获取画像请求
-func (h *WSHandler) handleProfileGet(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleProfileGet(cs *connState, payload json.RawMessage) {
 	var req ProfileGetPayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid profile_get payload")
+		cs.sendError("invalid profile_get payload")
 		return
 	}
 
 	if req.UserID == "" {
-		h.sendError(conn, "user_id is required")
+		cs.sendError("user_id is required")
 		return
 	}
 
 	if h.profiles == nil {
-		h.sendError(conn, "profile manager not initialized")
+		cs.sendError("profile manager not initialized")
 		return
 	}
 
@@ -2735,7 +2778,7 @@ func (h *WSHandler) handleProfileGet(conn *websocket.Conn, payload json.RawMessa
 
 		log.Printf("[WS] Got profile for user %s", req.UserID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "profile_data",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
@@ -2756,20 +2799,20 @@ type ProfileUpdatePayload struct {
 }
 
 // handleProfileUpdate 处理更新画像请求
-func (h *WSHandler) handleProfileUpdate(conn *websocket.Conn, payload json.RawMessage) {
+func (h *WSHandler) handleProfileUpdate(cs *connState, payload json.RawMessage) {
 	var req ProfileUpdatePayload
 	if err := json.Unmarshal(payload, &req); err != nil {
-		h.sendError(conn, "invalid profile_update payload")
+		cs.sendError("invalid profile_update payload")
 		return
 	}
 
 	if req.UserID == "" {
-		h.sendError(conn, "user_id is required")
+		cs.sendError("user_id is required")
 		return
 	}
 
 	if h.profiles == nil {
-		h.sendError(conn, "profile manager not initialized")
+		cs.sendError("profile manager not initialized")
 		return
 	}
 
@@ -2792,7 +2835,7 @@ func (h *WSHandler) handleProfileUpdate(conn *websocket.Conn, payload json.RawMe
 		}
 
 		if err := h.profiles.Update(req.UserID, updates); err != nil {
-			h.sendError(conn, "failed to update profile: "+err.Error())
+			cs.sendError("failed to update profile: "+err.Error())
 			return
 		}
 
@@ -2800,7 +2843,7 @@ func (h *WSHandler) handleProfileUpdate(conn *websocket.Conn, payload json.RawMe
 
 		log.Printf("[WS] Updated profile for user %s", req.UserID)
 
-		h.sendJSON(conn, map[string]interface{}{
+		cs.sendJSON(map[string]interface{}{
 			"type": "profile_updated",
 			"payload": map[string]interface{}{
 				"user_id": req.UserID,
