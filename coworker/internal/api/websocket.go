@@ -21,7 +21,6 @@ import (
 	"github.com/QuantumNous/new-api/coworker/internal/loop"
 	"github.com/QuantumNous/new-api/coworker/internal/mcp"
 	"github.com/QuantumNous/new-api/coworker/internal/memory"
-	"github.com/QuantumNous/new-api/coworker/internal/permissions"
 	"github.com/QuantumNous/new-api/coworker/internal/profile"
 	"github.com/QuantumNous/new-api/coworker/internal/prompt"
 	"github.com/QuantumNous/new-api/coworker/internal/sandbox"
@@ -474,32 +473,15 @@ func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 		sess.SetWorkingDir(userWorkDir)
 	}
 
-	// 渐进式披露：刷新 SkillsTool 的可用技能列表（动态 description）
-	// 复制用户已安装的 skill 到 userdata/{uid}/.skill/
+	// 渐进式披露：刷新 SkillsTool / TaskTool 的缓存（轻量内存操作）
 	t1 := time.Now()
 	log.Printf("[Perf] handleChat sandbox setup: %v", t1.Sub(t0))
-	userSkillDir := h.workspace.GetUserSkillDir(chat.UserID)
-	if h.store != nil {
-		if err := h.store.CopySkillsToUserDir(chat.UserID, userSkillDir); err != nil {
-			log.Printf("[WS] Failed to copy skills to user dir: %v", err)
-		}
-	}
-
-	// 将 .skill 目录作为只读挂载添加到沙箱
-	sb.AddMount("/.skill", userSkillDir, true)
 
 	if skillTool, ok := h.tools.Get("Skills"); ok {
 		if inner, ok := tools.UnwrapAs[*tools.SkillsTool](skillTool); ok {
-			inner.RefreshForUser(chat.UserID, userSkillDir)
+			inner.RefreshForUser(chat.UserID)
 		}
 	}
-
-	// 刷新商店 Agent → 注入 agent.Registry（渐进式披露准备）
-	if h.store != nil {
-		h.refreshStoreAgents(chat.UserID)
-	}
-
-	// 刷新 TaskTool 的可用子代理列表
 	if taskTool, ok := h.tools.Get("Task"); ok {
 		if inner, ok := tools.UnwrapAs[*tools.TaskTool](taskTool); ok {
 			inner.RefreshForUser(chat.UserID)
@@ -2048,74 +2030,6 @@ func (h *WSHandler) buildUserSystemPrompt(userID string, sb *sandbox.Sandbox, us
 		userID, len(systemPrompt), promptCtx.IsGitRepo, customRules != "")
 
 	return systemPrompt
-}
-
-// refreshStoreAgents 刷新商店 Agent → 注入 agent.Registry
-func (h *WSHandler) refreshStoreAgents(userID string) {
-	// 清理旧的非内置代理
-	agent.DefaultRegistry.UnregisterNonNative()
-
-	// 注入商店 Agent
-	ids := h.store.LoadUserInstalled(userID)
-	for _, id := range ids {
-		item := h.store.GetByID(id)
-		if item == nil {
-			continue
-		}
-		if item.Type == store.TypeAgent {
-			// 从 Content frontmatter 解析 tools
-			tools := store.ParseAgentTools(item.Content)
-			at := buildAgentType(item.Name, item.Description, item.Content, tools)
-			agent.DefaultRegistry.Register(at)
-			log.Printf("[WS] Registered store agent: %s (tools: %v)", item.Name, at.Tools)
-		}
-		if item.Type == store.TypePlugin {
-			for _, sub := range item.SubItems {
-				if sub.Type == store.SubTypeAgent {
-					at := buildAgentType(sub.Name, sub.Description, sub.Content, sub.Tools)
-					agent.DefaultRegistry.Register(at)
-					log.Printf("[WS] Registered plugin agent: %s (from plugin %s, tools: %v)", sub.Name, item.Name, at.Tools)
-				}
-			}
-		}
-	}
-}
-
-// buildAgentType 根据 tools 白名单构建 AgentType
-// tools 为 nil/空 → 全部工具（"*"）；非空 → 仅允许指定工具
-func buildAgentType(name, description, content string, tools []string) *agent.AgentType {
-	agentTools := []string{"*"}
-	perm := permissions.Merge(agent.DefaultPermission, permissions.Ruleset{
-		{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
-	})
-
-	if len(tools) > 0 {
-		agentTools = tools
-		// 基于工具白名单生成权限规则：先 deny all，再逐个 allow
-		rules := permissions.Ruleset{
-			{Permission: "*", Pattern: "*", Action: permissions.BehaviorDeny},
-			{Permission: "read", Pattern: "*", Action: permissions.BehaviorAllow}, // 读权限始终开放
-			{Permission: "task", Pattern: "*", Action: permissions.BehaviorDeny},
-		}
-		for _, t := range tools {
-			lowerTool := strings.ToLower(t)
-			rules = append(rules, permissions.Rule{
-				Permission: lowerTool, Pattern: "*", Action: permissions.BehaviorAllow,
-			})
-		}
-		perm = permissions.Merge(agent.DefaultPermission, rules)
-	}
-
-	return &agent.AgentType{
-		Name:        name,
-		Description: description,
-		Mode:        agent.ModeSubagent,
-		Native:      false,
-		Tools:       agentTools,
-		Permission:  perm,
-		Prompt:      content,
-		MaxTurns:    30,
-	}
 }
 
 // generateSessionTitle 异步生成会话标题

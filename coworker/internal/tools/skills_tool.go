@@ -19,7 +19,8 @@ type skillEntry struct {
 	Name        string
 	Description string
 	Content     string
-	LocalDir    string // 本地目录名（相对于 store/skills/）
+	LocalDir    string // 虚拟目录名（用于 /.skill/ 路径）
+	realDir     string // 实际磁盘路径（用于文件列表扫描）
 }
 
 // SkillsTool 技能工具 — 渐进式披露（Progressive Disclosure）
@@ -31,7 +32,6 @@ type SkillsTool struct {
 
 	mu           sync.RWMutex
 	userID       string       // 当前用户 ID
-	skillDir     string       // 当前用户 .skill 目录真实路径
 	cachedDesc   string       // 缓存的动态 description
 	cachedHint   string       // 缓存的 name 示例（用于 InputSchema）
 	cachedSkills []skillEntry // 缓存的可用技能列表
@@ -44,12 +44,10 @@ func NewSkillsTool(storeMgr *store.Manager) *SkillsTool {
 }
 
 // RefreshForUser 刷新当前用户的可用技能列表（每次对话前调用）
-// skillDir 是用户 .skill 目录的真实路径（如 userdata/{uid}/.skill）
-func (t *SkillsTool) RefreshForUser(userID string, skillDir string) {
+func (t *SkillsTool) RefreshForUser(userID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.userID = userID
-	t.skillDir = skillDir
 	t.rebuildCache(userID)
 }
 
@@ -130,13 +128,9 @@ func (t *SkillsTool) Execute(ctx context.Context, input json.RawMessage) (*types
 			fmt.Sprintf("Base directory for this skill: %s", skillBasePath),
 			"Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.",
 		)
-		// 扫描 skillDir 中的 skill 文件
-		t.mu.RLock()
-		sDir := t.skillDir
-		t.mu.RUnlock()
-		if sDir != "" {
-			realSkillDir := filepath.Join(sDir, entry.LocalDir)
-			files := listSkillFiles(realSkillDir, 10)
+		// 扫描 store 数据目录中的 skill 文件
+		if entry.realDir != "" {
+			files := listSkillFiles(entry.realDir, 10)
 			if len(files) > 0 {
 				lines = append(lines, "", "<skill_files>")
 				for _, f := range files {
@@ -207,15 +201,13 @@ func (t *SkillsTool) rebuildCache(userID string) {
 	t.cachedHint = fmt.Sprintf(" (e.g., %s, ...)", strings.Join(examples, ", "))
 }
 
-// resolveSubItemDir 在 skillDir 中查找 sub_item 的实际目录
+// resolveSubItemDir 在 store/plugins 目录中查找 sub_item 的实际目录
 // 尝试三种候选路径（对应三种插件磁盘布局）：
 //  1. {plugin}/{sub.Name}/SKILL.md         — 模式 A（扁平）
 //  2. {plugin}/{sub.LocalDir}/SKILL.md     — 模式 B（skills/ 子目录）
 //  3. {plugin}/SKILL.md                    — 模式 C（根目录即技能）
 func (t *SkillsTool) resolveSubItemDir(pluginDirName string, sub store.SubItem) string {
-	if t.skillDir == "" {
-		return pluginDirName + "/" + sub.Name
-	}
+	pluginsBase := filepath.Join(t.store.DataDir(), "plugins")
 	candidates := []string{
 		pluginDirName + "/" + sub.Name,
 	}
@@ -224,14 +216,14 @@ func (t *SkillsTool) resolveSubItemDir(pluginDirName string, sub store.SubItem) 
 	}
 	for _, c := range candidates {
 		for _, fname := range []string{"SKILL.md", "skill.md"} {
-			if _, err := os.Stat(filepath.Join(t.skillDir, c, fname)); err == nil {
+			if _, err := os.Stat(filepath.Join(pluginsBase, c, fname)); err == nil {
 				return c
 			}
 		}
 	}
 	// 模式 C 回退：插件根目录即技能
 	for _, fname := range []string{"SKILL.md", "skill.md"} {
-		if _, err := os.Stat(filepath.Join(t.skillDir, pluginDirName, fname)); err == nil {
+		if _, err := os.Stat(filepath.Join(pluginsBase, pluginDirName, fname)); err == nil {
 			return pluginDirName
 		}
 	}
@@ -245,6 +237,7 @@ func (t *SkillsTool) collectSkills(userID string) []skillEntry {
 	}
 	var entries []skillEntry
 	seen := make(map[string]bool)
+	dataDir := t.store.DataDir()
 	for _, id := range t.store.LoadUserInstalled(userID) {
 		item := t.store.GetByID(id)
 		if item == nil {
@@ -257,11 +250,13 @@ func (t *SkillsTool) collectSkills(userID string) []skillEntry {
 			}
 			for _, sub := range item.SubItems {
 				if (sub.Type == store.SubTypeSkill || sub.Type == store.SubTypeCommand) && !seen[sub.Name] {
+					localDir := t.resolveSubItemDir(pluginDirName, sub)
 					entries = append(entries, skillEntry{
 						Name:        sub.Name,
 						Description: sub.Description,
 						Content:     sub.Content,
-						LocalDir:    t.resolveSubItemDir(pluginDirName, sub),
+						LocalDir:    localDir,
+						realDir:     filepath.Join(dataDir, "plugins", localDir),
 					})
 					seen[sub.Name] = true
 				}
@@ -276,6 +271,7 @@ func (t *SkillsTool) collectSkills(userID string) []skillEntry {
 			Description: item.Description,
 			Content:     item.Content,
 			LocalDir:    item.LocalDir,
+			realDir:     filepath.Join(dataDir, "skills", item.LocalDir),
 		})
 		seen[item.Name] = true
 	}
@@ -294,6 +290,7 @@ func (t *SkillsTool) findSkill(name string) *skillEntry {
 	if userID == "" {
 		return nil
 	}
+	dataDir := t.store.DataDir()
 	for _, id := range t.store.LoadUserInstalled(userID) {
 		item := t.store.GetByID(id)
 		if item == nil {
@@ -306,11 +303,13 @@ func (t *SkillsTool) findSkill(name string) *skillEntry {
 			}
 			for _, sub := range item.SubItems {
 				if (sub.Type == store.SubTypeSkill || sub.Type == store.SubTypeCommand) && sub.Name == name && sub.Content != "" {
+					localDir := t.resolveSubItemDir(pluginDirName, sub)
 					return &skillEntry{
 						Name:        sub.Name,
 						Description: sub.Description,
 						Content:     sub.Content,
-						LocalDir:    t.resolveSubItemDir(pluginDirName, sub),
+						LocalDir:    localDir,
+						realDir:     filepath.Join(dataDir, "plugins", localDir),
 					}
 				}
 			}
@@ -322,6 +321,7 @@ func (t *SkillsTool) findSkill(name string) *skillEntry {
 				Description: item.Description,
 				Content:     item.Content,
 				LocalDir:    item.LocalDir,
+				realDir:     filepath.Join(dataDir, "skills", item.LocalDir),
 			}
 		}
 	}

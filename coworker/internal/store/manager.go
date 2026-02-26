@@ -31,6 +31,11 @@ func NewManager(baseDir string) *Manager {
 	return m
 }
 
+// DataDir 返回 store 数据目录（skills/plugins 文件所在根目录）
+func (m *Manager) DataDir() string {
+	return m.dataDir
+}
+
 // SetUseDB 设置是否使用数据库持久化
 func (m *Manager) SetUseDB(useDB bool) {
 	m.useDB = useDB
