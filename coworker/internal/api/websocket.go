@@ -723,8 +723,8 @@ func (h *WSHandler) handleListSessions(cs *connState, payload json.RawMessage) {
 				for _, block := range msg.Content {
 					if textBlock, ok := block.(types.TextBlock); ok {
 						title = textBlock.Text
-						if len(title) > 50 {
-							title = title[:50] + "..."
+						if runes := []rune(title); len(runes) > 50 {
+							title = string(runes[:50]) + "..."
 						}
 						break
 					}
@@ -732,8 +732,8 @@ func (h *WSHandler) handleListSessions(cs *connState, payload json.RawMessage) {
 						if blockMap["type"] == "text" {
 							if text, ok := blockMap["text"].(string); ok {
 								title = text
-								if len(title) > 50 {
-									title = title[:50] + "..."
+								if runes := []rune(title); len(runes) > 50 {
+									title = string(runes[:50]) + "..."
 								}
 								break
 							}
@@ -2038,8 +2038,8 @@ func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Sess
 	// 使用 OpenCode 风格的 TitlePrompt 作为系统提示词
 	// 用户消息作为输入，让 AI 生成标题
 	userMsg := firstMessage
-	if len(userMsg) > 500 {
-		userMsg = userMsg[:500] + "..."
+	if runes := []rune(userMsg); len(runes) > 500 {
+		userMsg = string(runes[:500]) + "..."
 	}
 
 	// 使用 TitlePrompt 作为系统提示词 + 用户消息作为输入
@@ -2053,16 +2053,16 @@ func (h *WSHandler) generateSessionTitle(ctx context.Context, sess *session.Sess
 		log.Printf("[WS] Failed to generate title for session %s: %v", sess.ID, err)
 		// 使用消息前缀作为后备标题
 		title = firstMessage
-		if len(title) > 30 {
-			title = title[:30] + "..."
+		if runes := []rune(title); len(runes) > 30 {
+			title = string(runes[:30]) + "..."
 		}
 	}
 
 	// 清理标题
 	title = strings.TrimSpace(title)
 	title = strings.Trim(title, "\"'")
-	if len(title) > 50 {
-		title = title[:50] + "..."
+	if runes := []rune(title); len(runes) > 50 {
+		title = string(runes[:50]) + "..."
 	}
 
 	// 更新会话标题

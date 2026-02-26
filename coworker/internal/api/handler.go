@@ -143,8 +143,8 @@ func (h *RESTHandler) ListSessions(c *gin.Context) {
 					for _, block := range msg.Content {
 						if textBlock, ok := block.(types.TextBlock); ok {
 							title = textBlock.Text
-							if len(title) > 50 {
-								title = title[:50] + "..."
+							if runes := []rune(title); len(runes) > 50 {
+								title = string(runes[:50]) + "..."
 							}
 							break
 						}
@@ -152,8 +152,8 @@ func (h *RESTHandler) ListSessions(c *gin.Context) {
 							if blockMap["type"] == "text" {
 								if text, ok := blockMap["text"].(string); ok {
 									title = text
-									if len(title) > 50 {
-										title = title[:50] + "..."
+									if runes := []rune(title); len(runes) > 50 {
+										title = string(runes[:50]) + "..."
 									}
 									break
 								}
