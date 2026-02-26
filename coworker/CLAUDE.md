@@ -290,6 +290,47 @@ if err != nil {
 
 ## 已完成功能
 
+### 2026-02-26 (MCP Remote Streamable HTTP 集成)
+
+- [x] HTTP Transport (`transport/http.go`)
+  - Streamable HTTP + SSE 降级：POST JSON-RPC → Content-Type 检查 → application/json 直接解析 / text/event-stream SSE 流解析
+  - `Mcp-Session-Id` 会话跟踪
+  - 自定义 Headers 注入（`Authorization: Bearer {key}` 等）
+  - SSE 事件解析器（event: message + data: JSON-RPC）
+- [x] transport.Config 扩展 (`transport/transport.go`)
+  - 新增 `URL`、`Headers`、`Timeout` 字段
+  - `IsHTTP()` 方法判断传输模式
+- [x] Manager 并发支持 (`manager.go`)
+  - `Connection.nextID()` 原子递增请求 ID（替代硬编码 1/2/3）
+  - `Connection.pending sync.Map` 请求/响应配对
+  - `Connection.sendAndWait()` 统一的发送→等待→超时逻辑
+  - `Connection.dispatchLoop()` 从 Transport.Receive 按 msg.ID 分发到 pending channel
+  - `Connect()` 根据 `cfg.IsHTTP()` 选择 HTTP/Stdio 传输层
+- [x] 用户 MCP 配置持久化 (`store/manager.go`)
+  - `installedItemRef.Config map[string]string` 字段
+  - `GetUserItemConfig(userID, itemID)` 读取用户配置
+  - `SaveUserItemConfig(userID, itemID, config)` 保存用户配置
+  - 支持 DB（JSON 序列化到 InstalledItems）和文件两种路径
+- [x] UserMCPManager HTTP 模式 (`user_manager.go`)
+  - `buildMCPConfig()` 替代 `parseMCPServerURL()`
+  - HTTP URL → Config{URL, Headers, Timeout}，自动注入 Authorization
+  - 支持 `smithery_api_key`/`api_key`/`header_*` 配置字段
+  - 检查 ConfigSchema Required 字段，未填则跳过
+- [x] REST API 端点 (`handler.go`, `coworker-router.go`)
+  - `GET /coworker/store/user/:id/config` — 获取用户 MCP 配置
+  - `PUT /coworker/store/user/:id/config` — 保存用户 MCP 配置
+  - `POST /coworker/mcp/test` — 测试 MCP 连接（返回 server info + tool count）
+- [x] WebSocket MCP Connect URL 模式 (`websocket.go`)
+  - `MCPConnectPayload` 新增 `URL`/`Headers`/`Timeout` 字段
+  - `handleMCPConnect` 根据 URL 是否存在选择传输
+- [x] 前端 ConfigPanel MCP 配置 UI (`ConfigPanel.jsx`)
+  - MCP 条目展开 ConfigSchema 表单（动态渲染 key/label/type/required）
+  - password 类型字段自动隐藏输入
+  - 保存配置 + 测试连接按钮
+  - 测试状态显示（testing/success/error + 工具数量）
+- [x] 前端 API 方法 (`api.js`)
+  - `getUserItemConfig()` / `saveUserItemConfig()` / `testMCPConnection()`
+
 ### 2026-02-23 (AskUserQuestion 非阻塞交互)
 
 - [x] AskUserQuestion 工具改为非阻塞模式 (`tools/askuser.go`)

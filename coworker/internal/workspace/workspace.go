@@ -435,6 +435,8 @@ type UserInfo struct {
 	TopP             *float64 `json:"top_p,omitempty"`
 	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
 	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
+	// MCP 全局配置
+	SmitheryApiKey string `json:"smithery_api_key,omitempty"`
 }
 
 // LoadUserInfo 加载用户信息
@@ -525,6 +527,7 @@ func dbProfileToUserInfo(p *model.CoworkerUserProfile) *UserInfo {
 		TopP:             p.TopP,
 		FrequencyPenalty: p.FrequencyPenalty,
 		PresencePenalty:  p.PresencePenalty,
+		SmitheryApiKey:   p.SmitheryApiKey,
 	}
 }
 
@@ -551,6 +554,7 @@ func userInfoToDBProfile(dbUserID int, info *UserInfo) *model.CoworkerUserProfil
 		TopP:             info.TopP,
 		FrequencyPenalty: info.FrequencyPenalty,
 		PresencePenalty:  info.PresencePenalty,
+		SmitheryApiKey:   info.SmitheryApiKey,
 	}
 
 	// 保留已有的 Profile 字段
@@ -568,4 +572,14 @@ func userInfoToDBProfile(dbUserID int, info *UserInfo) *model.CoworkerUserProfil
 	}
 
 	return p
+}
+
+// GetSmitheryApiKey 获取用户的全局 Smithery API Key
+// 实现 mcp.SmitheryApiKeyProvider 接口
+func (m *Manager) GetSmitheryApiKey(userID string) string {
+	info, err := m.LoadUserInfo(userID)
+	if err != nil || info == nil {
+		return ""
+	}
+	return info.SmitheryApiKey
 }

@@ -235,7 +235,7 @@ Initialization sequence: Config → Workspace → Claude Client → Session Mana
 | **Prompt Builder** | `internal/prompt/` | Dynamic system prompt: agent type, COWORKER.md rules, memories, git status |
 | **Agent Types** | `internal/agent/` | 6 built-in agents (build, plan, explore, general, compaction, title) with per-agent tool whitelists |
 | **Skills** | `internal/skills/` | Skill definitions (YAML frontmatter + content), parser, registry, executor |
-| **MCP** | `internal/mcp/` | Model Context Protocol via stdio transport |
+| **MCP** | `internal/mcp/` | Model Context Protocol via stdio + Streamable HTTP transport |
 | **Profile** | `internal/profile/` | User preference learning |
 | **Variables** | `internal/variable/` | Variable system with builtins |
 

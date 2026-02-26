@@ -214,6 +214,7 @@ export async function saveUserInfo(userId, userInfo) {
       top_p: userInfo.topP,
       frequency_penalty: userInfo.frequencyPenalty,
       presence_penalty: userInfo.presencePenalty,
+      smithery_api_key: userInfo.smitheryApiKey || '',
     }),
   });
 }
@@ -306,5 +307,28 @@ export async function reorderJobs(userId, jobIds) {
       user_id: userId,
       job_ids: jobIds,
     }),
+  });
+}
+
+// ========== MCP 配置 API ==========
+
+export async function getUserItemConfig(userId, itemId) {
+  return request(`/store/user/${encodeURIComponent(itemId)}/config?user_id=${encodeURIComponent(userId)}`);
+}
+
+export async function saveUserItemConfig(userId, itemId, config) {
+  return request(`/store/user/${encodeURIComponent(itemId)}/config`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      user_id: userId,
+      config,
+    }),
+  });
+}
+
+export async function testMCPConnection(url, smitheryApiKey = '', timeout = 15) {
+  return request('/mcp/test', {
+    method: 'POST',
+    body: JSON.stringify({ url, smithery_api_key: smitheryApiKey, timeout }),
   });
 }

@@ -35,7 +35,7 @@ type SubItem struct {
 type ConfigField struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
-	Type        string `json:"type"` // "string" | "password" | "url"
+	Type        string `json:"type"` // "string" | "password" | "url" | "apikey"
 	Required    bool   `json:"required"`
 	Placeholder string `json:"placeholder,omitempty"`
 }

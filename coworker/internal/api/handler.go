@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"time"
 
 	"github.com/QuantumNous/new-api/coworker/internal/config"
 	"github.com/QuantumNous/new-api/coworker/internal/job"
+	"github.com/QuantumNous/new-api/coworker/internal/mcp"
 	"github.com/QuantumNous/new-api/coworker/internal/memory"
 	"github.com/QuantumNous/new-api/coworker/internal/session"
 	"github.com/QuantumNous/new-api/coworker/internal/store"
@@ -24,6 +27,8 @@ type RESTHandler struct {
 	jobs      *job.Manager
 	memories  *memory.Manager
 	store     *store.Manager
+	mcpMgr    *mcp.Manager
+	config    *config.Config
 }
 
 // SetStoreManager 设置商店管理器
@@ -54,6 +59,16 @@ func (h *RESTHandler) SetJobManager(jm *job.Manager) {
 // SetMemoryManager 设置记忆管理器
 func (h *RESTHandler) SetMemoryManager(mm *memory.Manager) {
 	h.memories = mm
+}
+
+// SetMCPManager 设置 MCP 管理器
+func (h *RESTHandler) SetMCPManager(mgr *mcp.Manager) {
+	h.mcpMgr = mgr
+}
+
+// SetConfig 设置配置
+func (h *RESTHandler) SetConfig(cfg *config.Config) {
+	h.config = cfg
 }
 
 // CreateSession 创建会话
@@ -534,6 +549,7 @@ func (h *RESTHandler) GetUserInfo(c *gin.Context) {
 		"top_p":             info.TopP,
 		"frequency_penalty": info.FrequencyPenalty,
 		"presence_penalty":  info.PresencePenalty,
+		"smithery_api_key":  info.SmitheryApiKey,
 	})
 }
 
@@ -554,6 +570,7 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 		TopP             *float64 `json:"top_p"`
 		FrequencyPenalty *float64 `json:"frequency_penalty"`
 		PresencePenalty  *float64 `json:"presence_penalty"`
+		SmitheryApiKey   string   `json:"smithery_api_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -583,6 +600,7 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 	info.TopP = req.TopP
 	info.FrequencyPenalty = req.FrequencyPenalty
 	info.PresencePenalty = req.PresencePenalty
+	info.SmitheryApiKey = req.SmitheryApiKey
 
 	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1299,4 +1317,137 @@ func (h *RESTHandler) UninstallStoreItem(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ========== MCP 配置 API ==========
+
+// GetUserItemConfig 获取用户对某条目的配置
+func (h *RESTHandler) GetUserItemConfig(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusOK, gin.H{"config": map[string]string{}})
+		return
+	}
+
+	itemID := c.Param("id")
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	cfg := h.store.GetUserItemConfig(userID, itemID)
+	if cfg == nil {
+		cfg = map[string]string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"config": cfg})
+}
+
+// SaveUserItemConfig 保存用户对某条目的配置
+func (h *RESTHandler) SaveUserItemConfig(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+
+	itemID := c.Param("id")
+	var req struct {
+		UserID string            `json:"user_id"`
+		Config map[string]string `json:"config"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+
+	if err := h.store.SaveUserItemConfig(req.UserID, itemID, req.Config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// TestMCPConnection 测试 MCP 连接
+func (h *RESTHandler) TestMCPConnection(c *gin.Context) {
+	var req struct {
+		URL            string            `json:"url"`
+		Headers        map[string]string `json:"headers"`
+		Timeout        int               `json:"timeout"`
+		SmitheryApiKey string            `json:"smithery_api_key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.URL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
+		return
+	}
+	if req.Timeout <= 0 {
+		req.Timeout = 15
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
+	defer cancel()
+
+	var cfg *mcp.TransportConfig
+
+	// 如果提供了 Smithery API Key，走 Smithery Connect 代理
+	if req.SmitheryApiKey != "" {
+		connID := "test-" + fmt.Sprintf("%d", time.Now().UnixMilli())
+		mcpEndpoint, err := mcp.CreateSmitheryConnection(ctx, req.SmitheryApiKey, req.URL, connID)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"error":   "Smithery Connect: " + err.Error(),
+			})
+			return
+		}
+		cfg = &mcp.TransportConfig{
+			URL:     mcpEndpoint,
+			Headers: map[string]string{"Authorization": "Bearer " + req.SmitheryApiKey},
+			Timeout: req.Timeout,
+		}
+	} else {
+		cfg = &mcp.TransportConfig{
+			URL:     req.URL,
+			Headers: req.Headers,
+			Timeout: req.Timeout,
+		}
+	}
+
+	// 使用临时 manager 测试连接
+	testMgr := mcp.NewManager()
+
+	conn, err := testMgr.Connect(ctx, "test", cfg)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// 连接成功，返回服务器信息和工具数量
+	result := gin.H{
+		"success":    true,
+		"server":     conn.Server,
+		"tool_count": len(conn.Tools),
+	}
+	if len(conn.Tools) > 0 {
+		toolNames := make([]string, 0, len(conn.Tools))
+		for _, t := range conn.Tools {
+			toolNames = append(toolNames, t.Name)
+		}
+		result["tools"] = toolNames
+	}
+
+	// 断开测试连接
+	testMgr.Disconnect(conn.ID)
+
+	c.JSON(http.StatusOK, result)
 }

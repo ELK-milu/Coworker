@@ -29,6 +29,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     topP: null,
     frequencyPenalty: null,
     presencePenalty: null,
+    smitheryApiKey: '',
   });
   const [userInfoLoading, setUserInfoLoading] = useState(false);
   const [userInfoExpanded, setUserInfoExpanded] = useState(true);
@@ -51,6 +52,12 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const [skillsExpanded, setSkillsExpanded] = useState(true);
   const [storeItems, setStoreItems] = useState([]);
   const [installedItems, setInstalledItems] = useState([]);
+
+  // MCP 配置状态
+  const [mcpConfigs, setMcpConfigs] = useState({}); // itemId → { key: value }
+  const [mcpConfigExpanded, setMcpConfigExpanded] = useState({}); // itemId → bool
+  const [mcpTestStatus, setMcpTestStatus] = useState({}); // itemId → 'testing'|'success'|'error'|null
+  const [mcpTestMessage, setMcpTestMessage] = useState({}); // itemId → string
 
   const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP', plugin: '插件' };
   const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green', plugin: 'orange' };
@@ -101,6 +108,66 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
       Toast.success('已安装');
     } catch (e) {
       Toast.error('安装失败: ' + e.message);
+    }
+  };
+
+  // MCP 配置加载
+  const loadMCPConfig = async (itemId) => {
+    try {
+      const data = await api.getUserItemConfig(userId, itemId);
+      setMcpConfigs(prev => ({ ...prev, [itemId]: data.config || {} }));
+    } catch (e) {
+      console.log('Failed to load MCP config:', e.message);
+    }
+  };
+
+  // MCP 配置保存
+  const saveMCPConfig = async (itemId) => {
+    try {
+      await api.saveUserItemConfig(userId, itemId, mcpConfigs[itemId] || {});
+      Toast.success('MCP 配置已保存');
+    } catch (e) {
+      Toast.error('保存失败: ' + e.message);
+    }
+  };
+
+  // MCP 配置字段更新
+  const updateMCPConfigField = (itemId, key, value) => {
+    setMcpConfigs(prev => ({
+      ...prev,
+      [itemId]: { ...(prev[itemId] || {}), [key]: value },
+    }));
+  };
+
+  // MCP 连接测试（通过 Smithery Connect 代理）
+  const testMCPConnection = async (itemId) => {
+    const item = storeItems.find(s => s.id === itemId);
+    if (!item || !item.server_url) return;
+
+    setMcpTestStatus(prev => ({ ...prev, [itemId]: 'testing' }));
+    setMcpTestMessage(prev => ({ ...prev, [itemId]: '' }));
+
+    try {
+      const data = await api.testMCPConnection(item.server_url, userInfo.smitheryApiKey || '', 15);
+      if (data.success) {
+        setMcpTestStatus(prev => ({ ...prev, [itemId]: 'success' }));
+        setMcpTestMessage(prev => ({ ...prev, [itemId]: `${data.tool_count || 0} 个工具` }));
+      } else {
+        setMcpTestStatus(prev => ({ ...prev, [itemId]: 'error' }));
+        setMcpTestMessage(prev => ({ ...prev, [itemId]: data.error || '连接失败' }));
+      }
+    } catch (e) {
+      setMcpTestStatus(prev => ({ ...prev, [itemId]: 'error' }));
+      setMcpTestMessage(prev => ({ ...prev, [itemId]: e.message }));
+    }
+  };
+
+  // 切换 MCP 配置面板展开
+  const toggleMCPConfig = (itemId) => {
+    const newExpanded = !mcpConfigExpanded[itemId];
+    setMcpConfigExpanded(prev => ({ ...prev, [itemId]: newExpanded }));
+    if (newExpanded && !mcpConfigs[itemId]) {
+      loadMCPConfig(itemId);
     }
   };
 
@@ -295,6 +362,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
             topP: data.top_p ?? null,
             frequencyPenalty: data.frequency_penalty ?? null,
             presencePenalty: data.presence_penalty ?? null,
+            smitheryApiKey: data.smithery_api_key || '',
           };
           setUserInfo(info);
           setParamEnabled({
@@ -561,30 +629,124 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
 
         {skillsExpanded && (
           <div className="config-section-content">
+            {/* 全局 Smithery API Key 配置 */}
+            <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 6, background: 'var(--semi-color-fill-0)', border: '1px solid var(--semi-color-border)' }}>
+              <Text size="small" strong style={{ display: 'block', marginBottom: 4 }}>Smithery API Key</Text>
+              <Text type="tertiary" size="small" style={{ display: 'block', marginBottom: 6 }}>
+                所有 MCP 服务共用此 Key，在 smithery.ai 获取
+              </Text>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <Input
+                  size="small"
+                  mode="password"
+                  value={userInfo.smitheryApiKey}
+                  onChange={(v) => setUserInfo(prev => ({ ...prev, smitheryApiKey: v }))}
+                  placeholder="输入您的 Smithery API Key"
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  size="small"
+                  theme="solid"
+                  onClick={saveUserInfo}
+                  loading={userInfoLoading}
+                >
+                  保存
+                </Button>
+              </div>
+            </div>
+
             {installedItems.length === 0 ? (
               <Text type="tertiary" size="small">暂无已安装的技能</Text>
             ) : (
               installedItems.map(itemId => {
                 const item = storeItems.find(s => s.id === itemId);
                 if (!item) return null;
+                const isMCP = item.type === 'mcp';
+                const hasSchema = isMCP && item.config_schema && item.config_schema.length > 0;
+                const isExpanded = mcpConfigExpanded[itemId];
+                const testStatus = mcpTestStatus[itemId];
+                const testMsg = mcpTestMessage[itemId];
+
                 return (
-                  <div key={itemId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--semi-color-border)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                      {item.icon && item.icon.startsWith('data:image/')
-                        ? <img src={item.icon} alt="icon" style={{ width: 20, height: 20, borderRadius: 3, objectFit: 'cover' }} />
-                        : <span style={{ fontSize: 14 }}>{item.icon || DEFAULT_ICONS[item.type] || '✨'}</span>
-                      }
-                      <Text size="small" ellipsis={{ showTooltip: true }} style={{ flex: 1 }}>{item.display_name || item.name}</Text>
-                      <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
+                  <div key={itemId} style={{ borderBottom: '1px solid var(--semi-color-border)', paddingBottom: hasSchema ? 8 : 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                        {item.icon && item.icon.startsWith('data:image/')
+                          ? <img src={item.icon} alt="icon" style={{ width: 20, height: 20, borderRadius: 3, objectFit: 'cover' }} />
+                          : <span style={{ fontSize: 14 }}>{item.icon || DEFAULT_ICONS[item.type] || '✨'}</span>
+                        }
+                        <Text size="small" ellipsis={{ showTooltip: true }} style={{ flex: 1 }}>{item.display_name || item.name}</Text>
+                        <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        {hasSchema && (
+                          <Button
+                            size="small"
+                            theme="borderless"
+                            icon={isExpanded ? <IconChevronUp size="small" /> : <IconChevronDown size="small" />}
+                            onClick={() => toggleMCPConfig(itemId)}
+                            style={{ width: 24, height: 24, padding: 0, minWidth: 0 }}
+                          />
+                        )}
+                        <Button
+                          size="small"
+                          type="danger"
+                          theme="borderless"
+                          icon={<IconDelete />}
+                          onClick={() => handleUninstall(itemId)}
+                        />
+                      </div>
                     </div>
-                    <Button
-                      size="small"
-                      type="danger"
-                      theme="borderless"
-                      icon={<IconDelete />}
-                      onClick={() => handleUninstall(itemId)}
-                      style={{ marginLeft: 4 }}
-                    />
+
+                    {/* MCP ConfigSchema 表单 */}
+                    {hasSchema && isExpanded && (
+                      <div style={{ padding: '4px 0 8px 26px' }}>
+                        {item.config_schema.map(field => {
+                          // apikey 类型：显示"使用全局 API Key"提示，不可编辑
+                          if (field.type === 'apikey') {
+                            return (
+                              <div key={field.key} style={{ marginBottom: 6 }}>
+                                <Text size="small" type="secondary">
+                                  {field.label || field.key}
+                                  {field.required && <span style={{ color: 'var(--semi-color-danger)' }}> *</span>}
+                                </Text>
+                                <div style={{ marginTop: 2, padding: '4px 8px', borderRadius: 4, background: 'var(--semi-color-fill-0)', fontSize: 12, color: 'var(--semi-color-text-2)' }}>
+                                  {userInfo.smitheryApiKey ? '使用全局 Smithery API Key' : '未配置全局 API Key'}
+                                </div>
+                              </div>
+                            );
+                          }
+                          // 其他类型字段：正常可编辑
+                          return (
+                            <div key={field.key} style={{ marginBottom: 6 }}>
+                              <Text size="small" type="secondary">
+                                {field.label || field.key}
+                                {field.required && <span style={{ color: 'var(--semi-color-danger)' }}> *</span>}
+                              </Text>
+                              <Input
+                                size="small"
+                                mode={field.type === 'password' ? 'password' : undefined}
+                                value={(mcpConfigs[itemId] || {})[field.key] || ''}
+                                onChange={(v) => updateMCPConfigField(itemId, field.key, v)}
+                                placeholder={field.placeholder || ''}
+                                style={{ marginTop: 2 }}
+                              />
+                            </div>
+                          );
+                        })}
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }}>
+                          <Button size="small" onClick={() => testMCPConnection(itemId)} loading={testStatus === 'testing'}>
+                            测试连接
+                          </Button>
+                          {testStatus === 'success' && (
+                            <Tag color="green" size="small">已连接 ({testMsg})</Tag>
+                          )}
+                          {testStatus === 'error' && (
+                            <Tag color="red" size="small">{testMsg}</Tag>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })

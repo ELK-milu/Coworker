@@ -533,8 +533,9 @@ func (m *Manager) ImportPlugin(repoURL string) ([]StoreItem, error) {
 
 // installedItemRef 用户已安装条目引用（DB JSON 格式）
 type installedItemRef struct {
-	ItemID  string `json:"item_id"`
-	Enabled bool   `json:"enabled"`
+	ItemID  string            `json:"item_id"`
+	Enabled bool              `json:"enabled"`
+	Config  map[string]string `json:"config,omitempty"` // 用户填入的配置（如 API Key）
 }
 
 // UserInstalled 用户已安装的技能 ID 列表
@@ -843,6 +844,89 @@ func (m *Manager) GetByID(id string) *StoreItem {
 	}
 
 	return nil
+}
+
+// GetUserItemConfig 获取用户对某条目的配置（如 API Key）
+func (m *Manager) GetUserItemConfig(userID, itemID string) map[string]string {
+	refs := m.loadUserInstalledRefs(userID)
+	for _, ref := range refs {
+		if ref.ItemID == itemID {
+			return ref.Config
+		}
+	}
+	return nil
+}
+
+// SaveUserItemConfig 保存用户对某条目的配置
+func (m *Manager) SaveUserItemConfig(userID, itemID string, config map[string]string) error {
+	refs := m.loadUserInstalledRefs(userID)
+
+	found := false
+	for i, ref := range refs {
+		if ref.ItemID == itemID {
+			refs[i].Config = config
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("item %s not installed for user %s", itemID, userID)
+	}
+
+	return m.saveUserInstalledRefs(userID, refs)
+}
+
+// loadUserInstalledRefs 加载用户已安装条目的完整引用列表（含 Config）
+func (m *Manager) loadUserInstalledRefs(userID string) []installedItemRef {
+	if m.useDB {
+		if dbUserID, err := strconv.Atoi(userID); err == nil {
+			dbProfile, err := model.GetCoworkerUserProfile(dbUserID)
+			if err == nil && dbProfile.InstalledItems != "" {
+				var refs []installedItemRef
+				if err := json.Unmarshal([]byte(dbProfile.InstalledItems), &refs); err == nil {
+					return refs
+				}
+			}
+		}
+		return nil
+	}
+
+	// 文件路径 — 文件模式只存 item_ids，无 refs 结构
+	// 降级：从 LoadUserInstalled 读取 ID 列表，构造无 Config 的 refs
+	ids := m.LoadUserInstalled(userID)
+	refs := make([]installedItemRef, 0, len(ids))
+	for _, id := range ids {
+		refs = append(refs, installedItemRef{ItemID: id, Enabled: true})
+	}
+	return refs
+}
+
+// saveUserInstalledRefs 保存用户已安装条目的完整引用列表（含 Config）
+func (m *Manager) saveUserInstalledRefs(userID string, refs []installedItemRef) error {
+	if m.useDB {
+		if dbUserID, err := strconv.Atoi(userID); err == nil {
+			refsJSON, _ := json.Marshal(refs)
+			existing, _ := model.GetCoworkerUserProfile(dbUserID)
+			if existing == nil {
+				return model.UpsertCoworkerUserProfile(&model.CoworkerUserProfile{
+					UserID:         dbUserID,
+					InstalledItems: string(refsJSON),
+				})
+			}
+			existing.InstalledItems = string(refsJSON)
+			return model.UpdateCoworkerUserProfile(existing)
+		}
+	}
+
+	// 文件模式：保存完整 refs 到 installed/{userID}_refs.json
+	p := filepath.Join(m.dataDir, "installed", userID+"_refs.json")
+	os.MkdirAll(filepath.Dir(p), 0755)
+	data, err := json.MarshalIndent(refs, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0644)
 }
 
 // fetchGithubContent 从 GitHub URL 获取内容

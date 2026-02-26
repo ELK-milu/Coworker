@@ -38,8 +38,19 @@ type Transport interface {
 
 // Config 传输配置
 type Config struct {
+	// Stdio 模式字段
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
 	Env     []string `json:"env"`
 	Cwd     string   `json:"cwd"`
+
+	// HTTP 模式字段（Streamable HTTP + SSE 降级）
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Timeout int               `json:"timeout,omitempty"` // 秒，默认 30
+}
+
+// IsHTTP 返回是否使用 HTTP 传输
+func (c *Config) IsHTTP() bool {
+	return c.URL != ""
 }

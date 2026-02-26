@@ -135,7 +135,18 @@ function EditModal({ visible, item, onClose, onSave }) {
           <Text size="small" style={{ display: 'block', marginBottom: 4 }}>类型</Text>
           <Select
             value={form.type}
-            onChange={v => setForm(f => ({ ...f, type: v }))}
+            onChange={v => {
+              const updates = { type: v };
+              // 切换到 MCP 时，确保内置 API Key 字段存在
+              if (v === 'mcp') {
+                const existing = form.config_schema || [];
+                const hasApiKey = existing.some(f => f.type === 'apikey' && f.key === 'api_key');
+                if (!hasApiKey) {
+                  updates.config_schema = [{ key: 'api_key', label: 'API Key', type: 'apikey', required: true }, ...existing];
+                }
+              }
+              setForm(f => ({ ...f, ...updates }));
+            }}
             optionList={[
               { label: '技能 (Skill)', value: 'skill' },
               { label: 'Agent', value: 'agent' },
@@ -199,7 +210,126 @@ function EditModal({ visible, item, onClose, onSave }) {
         {form.type === 'mcp' && (
           <div>
             <Text size="small" style={{ display: 'block', marginBottom: 4 }}>服务器 URL</Text>
-            <Input value={form.server_url || ''} onChange={v => setForm(f => ({ ...f, server_url: v }))} />
+            <Input
+              value={form.server_url || ''}
+              onChange={v => setForm(f => ({ ...f, server_url: v }))}
+              placeholder="https://server.smithery.ai/your-server 或 command arg1 arg2"
+            />
+          </div>
+        )}
+        {form.type === 'mcp' && (
+          <div>
+            <Text size="small" style={{ display: 'block', marginBottom: 4 }}>
+              用户配置字段 (ConfigSchema)
+            </Text>
+            <Text type="tertiary" size="small" style={{ display: 'block', marginBottom: 8 }}>
+              API Key 为内置字段（使用用户全局 Smithery Key），勾选"必填"启用校验
+            </Text>
+            {/* 内置 API Key 行 — 不可编辑 key/label/type，不可删除 */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center', opacity: 0.85 }}>
+              <Input size="small" value="api_key" disabled style={{ width: 100 }} />
+              <Input size="small" value="API Key" disabled style={{ flex: 1 }} />
+              <Select size="small" value="apikey" disabled optionList={[{ label: 'API Key', value: 'apikey' }]} style={{ width: 80 }} />
+              <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 2, whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={(() => {
+                    const apiKeyField = (form.config_schema || []).find(f => f.type === 'apikey' && f.key === 'api_key');
+                    return apiKeyField ? (apiKeyField.required || false) : true;
+                  })()}
+                  onChange={e => {
+                    const schema = [...(form.config_schema || [])];
+                    const apiIdx = schema.findIndex(f => f.type === 'apikey' && f.key === 'api_key');
+                    if (apiIdx >= 0) {
+                      schema[apiIdx] = { ...schema[apiIdx], required: e.target.checked };
+                    }
+                    setForm(f => ({ ...f, config_schema: schema }));
+                  }}
+                />
+                必填
+              </label>
+              <div style={{ width: 24, height: 24 }} /> {/* 占位，对齐删除按钮列 */}
+            </div>
+            {/* 其他自定义字段 */}
+            {(form.config_schema || []).filter(f => !(f.type === 'apikey' && f.key === 'api_key')).map((field, idx) => {
+              // 找到真实索引
+              const realIdx = (form.config_schema || []).indexOf(field);
+              return (
+                <div key={realIdx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                  <Input
+                    size="small"
+                    value={field.key}
+                    onChange={v => {
+                      const schema = [...(form.config_schema || [])];
+                      schema[realIdx] = { ...schema[realIdx], key: v };
+                      setForm(f => ({ ...f, config_schema: schema }));
+                    }}
+                    placeholder="key"
+                    style={{ width: 100 }}
+                  />
+                  <Input
+                    size="small"
+                    value={field.label}
+                    onChange={v => {
+                      const schema = [...(form.config_schema || [])];
+                      schema[realIdx] = { ...schema[realIdx], label: v };
+                      setForm(f => ({ ...f, config_schema: schema }));
+                    }}
+                    placeholder="显示标签"
+                    style={{ flex: 1 }}
+                  />
+                  <Select
+                    size="small"
+                    value={field.type || 'string'}
+                    onChange={v => {
+                      const schema = [...(form.config_schema || [])];
+                      schema[realIdx] = { ...schema[realIdx], type: v };
+                      setForm(f => ({ ...f, config_schema: schema }));
+                    }}
+                    optionList={[
+                      { label: '文本', value: 'string' },
+                      { label: '密码', value: 'password' },
+                      { label: 'URL', value: 'url' },
+                    ]}
+                    style={{ width: 80 }}
+                  />
+                  <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 2, whiteSpace: 'nowrap' }}>
+                    <input
+                      type="checkbox"
+                      checked={field.required || false}
+                      onChange={e => {
+                        const schema = [...(form.config_schema || [])];
+                        schema[realIdx] = { ...schema[realIdx], required: e.target.checked };
+                        setForm(f => ({ ...f, config_schema: schema }));
+                      }}
+                    />
+                    必填
+                  </label>
+                  <Button
+                    size="small"
+                    type="danger"
+                    theme="borderless"
+                    icon={<IconDelete />}
+                    onClick={() => {
+                      const schema = [...(form.config_schema || [])];
+                      schema.splice(realIdx, 1);
+                      setForm(f => ({ ...f, config_schema: schema }));
+                    }}
+                    style={{ width: 24, height: 24, padding: 0, minWidth: 0 }}
+                  />
+                </div>
+              );
+            })}
+            <Button
+              size="small"
+              icon={<IconPlus />}
+              onClick={() => {
+                const schema = [...(form.config_schema || []), { key: '', label: '', type: 'string', required: false }];
+                setForm(f => ({ ...f, config_schema: schema }));
+              }}
+            >
+              添加字段
+            </Button>
           </div>
         )}
       </div>

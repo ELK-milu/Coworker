@@ -253,3 +253,15 @@ func (ctrl *CoworkerController) InstallStoreItem(c *gin.Context) {
 func (ctrl *CoworkerController) UninstallStoreItem(c *gin.Context) {
 	ctrl.module.RESTHandler.UninstallStoreItem(c)
 }
+
+// ========== MCP 配置 ==========
+
+func (ctrl *CoworkerController) GetUserItemConfig(c *gin.Context) {
+	ctrl.module.RESTHandler.GetUserItemConfig(c)
+}
+func (ctrl *CoworkerController) SaveUserItemConfig(c *gin.Context) {
+	ctrl.module.RESTHandler.SaveUserItemConfig(c)
+}
+func (ctrl *CoworkerController) TestMCPConnection(c *gin.Context) {
+	ctrl.module.RESTHandler.TestMCPConnection(c)
+}

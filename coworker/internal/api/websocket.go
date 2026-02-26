@@ -1688,11 +1688,14 @@ func (h *WSHandler) handleListSkills(cs *connState) {
 
 // MCPConnectPayload MCP 连接载荷
 type MCPConnectPayload struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Env     []string `json:"env"`
-	Cwd     string   `json:"cwd"`
+	Name    string            `json:"name"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     []string          `json:"env"`
+	Cwd     string            `json:"cwd"`
+	URL     string            `json:"url,omitempty"`     // HTTP 模式
+	Headers map[string]string `json:"headers,omitempty"` // HTTP 模式
+	Timeout int               `json:"timeout,omitempty"` // HTTP 模式超时（秒）
 }
 
 // handleMCPConnect 处理 MCP 连接请求
@@ -1704,11 +1707,22 @@ func (h *WSHandler) handleMCPConnect(cs *connState, payload json.RawMessage) {
 	}
 
 	go func() {
-		cfg := &mcp.TransportConfig{
-			Command: req.Command,
-			Args:    req.Args,
-			Env:     req.Env,
-			Cwd:     req.Cwd,
+		var cfg *mcp.TransportConfig
+		if req.URL != "" {
+			// HTTP 模式
+			cfg = &mcp.TransportConfig{
+				URL:     req.URL,
+				Headers: req.Headers,
+				Timeout: req.Timeout,
+			}
+		} else {
+			// Stdio 模式
+			cfg = &mcp.TransportConfig{
+				Command: req.Command,
+				Args:    req.Args,
+				Env:     req.Env,
+				Cwd:     req.Cwd,
+			}
 		}
 
 		mcpConn, err := h.mcp.Connect(context.Background(), req.Name, cfg)

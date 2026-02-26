@@ -212,6 +212,7 @@ func Init() *Module {
 
 	// 创建每用户 MCP 管理器
 	userMCPManager := mcp.NewUserMCPManager(storeManager)
+	userMCPManager.SetSmitheryApiKeyProvider(workspaceManager)
 	wsHandler.SetUserMCPManager(userMCPManager)
 
 	// 注入 SubagentExecutor 到 TaskTool
