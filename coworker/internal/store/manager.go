@@ -533,9 +533,9 @@ func (m *Manager) ImportPlugin(repoURL string) ([]StoreItem, error) {
 
 // installedItemRef 用户已安装条目引用（DB JSON 格式）
 type installedItemRef struct {
-	ItemID  string            `json:"item_id"`
-	Enabled bool              `json:"enabled"`
-	Config  map[string]string `json:"config,omitempty"` // 用户填入的配置（如 API Key）
+	ItemID  string `json:"item_id"`
+	Enabled bool   `json:"enabled"`
+	MCPJson string `json:"mcp_json,omitempty"` // 用户粘贴的原始 MCP 配置 JSON
 }
 
 // UserInstalled 用户已安装的技能 ID 列表
@@ -846,25 +846,25 @@ func (m *Manager) GetByID(id string) *StoreItem {
 	return nil
 }
 
-// GetUserItemConfig 获取用户对某条目的配置（如 API Key）
-func (m *Manager) GetUserItemConfig(userID, itemID string) map[string]string {
+// GetUserMCPJson 获取用户对某 MCP 条目的配置 JSON
+func (m *Manager) GetUserMCPJson(userID, itemID string) string {
 	refs := m.loadUserInstalledRefs(userID)
 	for _, ref := range refs {
 		if ref.ItemID == itemID {
-			return ref.Config
+			return ref.MCPJson
 		}
 	}
-	return nil
+	return ""
 }
 
-// SaveUserItemConfig 保存用户对某条目的配置
-func (m *Manager) SaveUserItemConfig(userID, itemID string, config map[string]string) error {
+// SaveUserMCPJson 保存用户对某 MCP 条目的配置 JSON
+func (m *Manager) SaveUserMCPJson(userID, itemID, mcpJson string) error {
 	refs := m.loadUserInstalledRefs(userID)
 
 	found := false
 	for i, ref := range refs {
 		if ref.ItemID == itemID {
-			refs[i].Config = config
+			refs[i].MCPJson = mcpJson
 			found = true
 			break
 		}

@@ -29,7 +29,6 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     topP: null,
     frequencyPenalty: null,
     presencePenalty: null,
-    smitheryApiKey: '',
   });
   const [userInfoLoading, setUserInfoLoading] = useState(false);
   const [userInfoExpanded, setUserInfoExpanded] = useState(true);
@@ -54,7 +53,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const [installedItems, setInstalledItems] = useState([]);
 
   // MCP 配置状态
-  const [mcpConfigs, setMcpConfigs] = useState({}); // itemId → { key: value }
+  const [mcpJsons, setMcpJsons] = useState({}); // itemId → MCP JSON string
   const [mcpConfigExpanded, setMcpConfigExpanded] = useState({}); // itemId → bool
   const [mcpTestStatus, setMcpTestStatus] = useState({}); // itemId → 'testing'|'success'|'error'|null
   const [mcpTestMessage, setMcpTestMessage] = useState({}); // itemId → string
@@ -114,8 +113,8 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   // MCP 配置加载
   const loadMCPConfig = async (itemId) => {
     try {
-      const data = await api.getUserItemConfig(userId, itemId);
-      setMcpConfigs(prev => ({ ...prev, [itemId]: data.config || {} }));
+      const data = await api.getUserMCPConfig(userId, itemId);
+      setMcpJsons(prev => ({ ...prev, [itemId]: data.mcp_json || '' }));
     } catch (e) {
       console.log('Failed to load MCP config:', e.message);
     }
@@ -124,31 +123,28 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   // MCP 配置保存
   const saveMCPConfig = async (itemId) => {
     try {
-      await api.saveUserItemConfig(userId, itemId, mcpConfigs[itemId] || {});
+      await api.saveUserMCPConfig(userId, itemId, mcpJsons[itemId] || '');
       Toast.success('MCP 配置已保存');
     } catch (e) {
       Toast.error('保存失败: ' + e.message);
     }
   };
 
-  // MCP 配置字段更新
-  const updateMCPConfigField = (itemId, key, value) => {
-    setMcpConfigs(prev => ({
-      ...prev,
-      [itemId]: { ...(prev[itemId] || {}), [key]: value },
-    }));
-  };
-
-  // MCP 连接测试（通过 Smithery Connect 代理）
+  // MCP 连接测试
   const testMCPConnection = async (itemId) => {
     const item = storeItems.find(s => s.id === itemId);
-    if (!item || !item.server_url) return;
+    if (!item) return;
+    const mcpJson = mcpJsons[itemId] || '';
+    if (!mcpJson) {
+      Toast.warning('请先粘贴 MCP 配置 JSON');
+      return;
+    }
 
     setMcpTestStatus(prev => ({ ...prev, [itemId]: 'testing' }));
     setMcpTestMessage(prev => ({ ...prev, [itemId]: '' }));
 
     try {
-      const data = await api.testMCPConnection(item.server_url, userInfo.smitheryApiKey || '', 15);
+      const data = await api.testMCPConnection(mcpJson, item.name || '', 15);
       if (data.success) {
         setMcpTestStatus(prev => ({ ...prev, [itemId]: 'success' }));
         setMcpTestMessage(prev => ({ ...prev, [itemId]: `${data.tool_count || 0} 个工具` }));
@@ -166,7 +162,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const toggleMCPConfig = (itemId) => {
     const newExpanded = !mcpConfigExpanded[itemId];
     setMcpConfigExpanded(prev => ({ ...prev, [itemId]: newExpanded }));
-    if (newExpanded && !mcpConfigs[itemId]) {
+    if (newExpanded && mcpJsons[itemId] === undefined) {
       loadMCPConfig(itemId);
     }
   };
@@ -362,7 +358,6 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
             topP: data.top_p ?? null,
             frequencyPenalty: data.frequency_penalty ?? null,
             presencePenalty: data.presence_penalty ?? null,
-            smitheryApiKey: data.smithery_api_key || '',
           };
           setUserInfo(info);
           setParamEnabled({
@@ -629,32 +624,6 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
 
         {skillsExpanded && (
           <div className="config-section-content">
-            {/* 全局 Smithery API Key 配置 */}
-            <div style={{ marginBottom: 12, padding: '8px 10px', borderRadius: 6, background: 'var(--semi-color-fill-0)', border: '1px solid var(--semi-color-border)' }}>
-              <Text size="small" strong style={{ display: 'block', marginBottom: 4 }}>Smithery API Key</Text>
-              <Text type="tertiary" size="small" style={{ display: 'block', marginBottom: 6 }}>
-                所有 MCP 服务共用此 Key，在 smithery.ai 获取
-              </Text>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <Input
-                  size="small"
-                  mode="password"
-                  value={userInfo.smitheryApiKey}
-                  onChange={(v) => setUserInfo(prev => ({ ...prev, smitheryApiKey: v }))}
-                  placeholder="输入您的 Smithery API Key"
-                  style={{ flex: 1 }}
-                />
-                <Button
-                  size="small"
-                  theme="solid"
-                  onClick={saveUserInfo}
-                  loading={userInfoLoading}
-                >
-                  保存
-                </Button>
-              </div>
-            </div>
-
             {installedItems.length === 0 ? (
               <Text type="tertiary" size="small">暂无已安装的技能</Text>
             ) : (
@@ -662,13 +631,12 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                 const item = storeItems.find(s => s.id === itemId);
                 if (!item) return null;
                 const isMCP = item.type === 'mcp';
-                const hasSchema = isMCP && item.config_schema && item.config_schema.length > 0;
                 const isExpanded = mcpConfigExpanded[itemId];
                 const testStatus = mcpTestStatus[itemId];
                 const testMsg = mcpTestMessage[itemId];
 
                 return (
-                  <div key={itemId} style={{ borderBottom: '1px solid var(--semi-color-border)', paddingBottom: hasSchema ? 8 : 0 }}>
+                  <div key={itemId} style={{ borderBottom: '1px solid var(--semi-color-border)', paddingBottom: isMCP ? 8 : 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
                         {item.icon && item.icon.startsWith('data:image/')
@@ -679,7 +647,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                         <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        {hasSchema && (
+                        {isMCP && (
                           <Button
                             size="small"
                             theme="borderless"
@@ -698,43 +666,31 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                       </div>
                     </div>
 
-                    {/* MCP ConfigSchema 表单 */}
-                    {hasSchema && isExpanded && (
+                    {/* MCP JSON 配置 */}
+                    {isMCP && isExpanded && (
                       <div style={{ padding: '4px 0 8px 26px' }}>
-                        {item.config_schema.map(field => {
-                          // apikey 类型：显示"使用全局 API Key"提示，不可编辑
-                          if (field.type === 'apikey') {
-                            return (
-                              <div key={field.key} style={{ marginBottom: 6 }}>
-                                <Text size="small" type="secondary">
-                                  {field.label || field.key}
-                                  {field.required && <span style={{ color: 'var(--semi-color-danger)' }}> *</span>}
-                                </Text>
-                                <div style={{ marginTop: 2, padding: '4px 8px', borderRadius: 4, background: 'var(--semi-color-fill-0)', fontSize: 12, color: 'var(--semi-color-text-2)' }}>
-                                  {userInfo.smitheryApiKey ? '使用全局 Smithery API Key' : '未配置全局 API Key'}
-                                </div>
-                              </div>
-                            );
-                          }
-                          // 其他类型字段：正常可编辑
-                          return (
-                            <div key={field.key} style={{ marginBottom: 6 }}>
-                              <Text size="small" type="secondary">
-                                {field.label || field.key}
-                                {field.required && <span style={{ color: 'var(--semi-color-danger)' }}> *</span>}
-                              </Text>
-                              <Input
-                                size="small"
-                                mode={field.type === 'password' ? 'password' : undefined}
-                                value={(mcpConfigs[itemId] || {})[field.key] || ''}
-                                onChange={(v) => updateMCPConfigField(itemId, field.key, v)}
-                                placeholder={field.placeholder || ''}
-                                style={{ marginTop: 2 }}
-                              />
-                            </div>
-                          );
-                        })}
+                        {item.server_url && (
+                          <div style={{ marginBottom: 6 }}>
+                            <a href={item.server_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--semi-color-link)' }}>
+                              查看详情页
+                            </a>
+                          </div>
+                        )}
+                        <Text size="small" type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+                          MCP 配置 JSON
+                        </Text>
+                        <TextArea
+                          size="small"
+                          value={mcpJsons[itemId] || ''}
+                          onChange={(v) => setMcpJsons(prev => ({ ...prev, [itemId]: v }))}
+                          placeholder='{"mcpServers":{"name":{"type":"streamable_http","url":"...","headers":{...}}}}'
+                          autosize={{ minRows: 3, maxRows: 8 }}
+                          style={{ fontFamily: 'monospace', fontSize: 12 }}
+                        />
                         <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }}>
+                          <Button size="small" theme="solid" onClick={() => saveMCPConfig(itemId)}>
+                            保存
+                          </Button>
                           <Button size="small" onClick={() => testMCPConnection(itemId)} loading={testStatus === 'testing'}>
                             测试连接
                           </Button>

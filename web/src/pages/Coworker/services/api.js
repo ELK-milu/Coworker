@@ -214,7 +214,6 @@ export async function saveUserInfo(userId, userInfo) {
       top_p: userInfo.topP,
       frequency_penalty: userInfo.frequencyPenalty,
       presence_penalty: userInfo.presencePenalty,
-      smithery_api_key: userInfo.smitheryApiKey || '',
     }),
   });
 }
@@ -312,23 +311,23 @@ export async function reorderJobs(userId, jobIds) {
 
 // ========== MCP 配置 API ==========
 
-export async function getUserItemConfig(userId, itemId) {
+export async function getUserMCPConfig(userId, itemId) {
   return request(`/store/user/${encodeURIComponent(itemId)}/config?user_id=${encodeURIComponent(userId)}`);
 }
 
-export async function saveUserItemConfig(userId, itemId, config) {
+export async function saveUserMCPConfig(userId, itemId, mcpJson) {
   return request(`/store/user/${encodeURIComponent(itemId)}/config`, {
     method: 'PUT',
     body: JSON.stringify({
       user_id: userId,
-      config,
+      mcp_json: mcpJson,
     }),
   });
 }
 
-export async function testMCPConnection(url, smitheryApiKey = '', timeout = 15) {
+export async function testMCPConnection(mcpJson, expectedName = '', timeout = 15) {
   return request('/mcp/test', {
     method: 'POST',
-    body: JSON.stringify({ url, smithery_api_key: smitheryApiKey, timeout }),
+    body: JSON.stringify({ mcp_json: mcpJson, expected_name: expectedName, timeout }),
   });
 }

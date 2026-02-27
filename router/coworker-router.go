@@ -78,8 +78,8 @@ func SetCoworkerRouter(router *gin.Engine) {
 		coworkerGroup.POST("/store/user/install/:id", coworkerCtrl.InstallStoreItem)
 		coworkerGroup.DELETE("/store/user/uninstall/:id", coworkerCtrl.UninstallStoreItem)
 		// MCP 用户配置
-		coworkerGroup.GET("/store/user/:id/config", coworkerCtrl.GetUserItemConfig)
-		coworkerGroup.PUT("/store/user/:id/config", coworkerCtrl.SaveUserItemConfig)
+		coworkerGroup.GET("/store/user/:id/config", coworkerCtrl.GetUserMCPConfig)
+		coworkerGroup.PUT("/store/user/:id/config", coworkerCtrl.SaveUserMCPConfig)
 		// MCP 连接测试
 		coworkerGroup.POST("/mcp/test", coworkerCtrl.TestMCPConnection)
 

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -549,7 +548,6 @@ func (h *RESTHandler) GetUserInfo(c *gin.Context) {
 		"top_p":             info.TopP,
 		"frequency_penalty": info.FrequencyPenalty,
 		"presence_penalty":  info.PresencePenalty,
-		"smithery_api_key":  info.SmitheryApiKey,
 	})
 }
 
@@ -570,7 +568,6 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 		TopP             *float64 `json:"top_p"`
 		FrequencyPenalty *float64 `json:"frequency_penalty"`
 		PresencePenalty  *float64 `json:"presence_penalty"`
-		SmitheryApiKey   string   `json:"smithery_api_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -600,7 +597,6 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 	info.TopP = req.TopP
 	info.FrequencyPenalty = req.FrequencyPenalty
 	info.PresencePenalty = req.PresencePenalty
-	info.SmitheryApiKey = req.SmitheryApiKey
 
 	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1321,10 +1317,10 @@ func (h *RESTHandler) UninstallStoreItem(c *gin.Context) {
 
 // ========== MCP 配置 API ==========
 
-// GetUserItemConfig 获取用户对某条目的配置
-func (h *RESTHandler) GetUserItemConfig(c *gin.Context) {
+// GetUserMCPConfig 获取用户对某 MCP 条目的配置 JSON
+func (h *RESTHandler) GetUserMCPConfig(c *gin.Context) {
 	if h.store == nil {
-		c.JSON(http.StatusOK, gin.H{"config": map[string]string{}})
+		c.JSON(http.StatusOK, gin.H{"mcp_json": ""})
 		return
 	}
 
@@ -1335,15 +1331,12 @@ func (h *RESTHandler) GetUserItemConfig(c *gin.Context) {
 		return
 	}
 
-	cfg := h.store.GetUserItemConfig(userID, itemID)
-	if cfg == nil {
-		cfg = map[string]string{}
-	}
-	c.JSON(http.StatusOK, gin.H{"config": cfg})
+	mcpJson := h.store.GetUserMCPJson(userID, itemID)
+	c.JSON(http.StatusOK, gin.H{"mcp_json": mcpJson})
 }
 
-// SaveUserItemConfig 保存用户对某条目的配置
-func (h *RESTHandler) SaveUserItemConfig(c *gin.Context) {
+// SaveUserMCPConfig 保存用户对某 MCP 条目的配置 JSON
+func (h *RESTHandler) SaveUserMCPConfig(c *gin.Context) {
 	if h.store == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
 		return
@@ -1351,8 +1344,8 @@ func (h *RESTHandler) SaveUserItemConfig(c *gin.Context) {
 
 	itemID := c.Param("id")
 	var req struct {
-		UserID string            `json:"user_id"`
-		Config map[string]string `json:"config"`
+		UserID  string `json:"user_id"`
+		MCPJson string `json:"mcp_json"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1363,7 +1356,20 @@ func (h *RESTHandler) SaveUserItemConfig(c *gin.Context) {
 		return
 	}
 
-	if err := h.store.SaveUserItemConfig(req.UserID, itemID, req.Config); err != nil {
+	// 校验服务名是否匹配
+	item := h.store.GetByID(itemID)
+	if item == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item not found"})
+		return
+	}
+	if req.MCPJson != "" {
+		if err := mcp.ValidateMCPJson(req.MCPJson, item.Name); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	if err := h.store.SaveUserMCPJson(req.UserID, itemID, req.MCPJson); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1374,50 +1380,50 @@ func (h *RESTHandler) SaveUserItemConfig(c *gin.Context) {
 // TestMCPConnection 测试 MCP 连接
 func (h *RESTHandler) TestMCPConnection(c *gin.Context) {
 	var req struct {
-		URL            string            `json:"url"`
-		Headers        map[string]string `json:"headers"`
-		Timeout        int               `json:"timeout"`
-		SmitheryApiKey string            `json:"smithery_api_key"`
+		MCPJson      string `json:"mcp_json"`
+		ExpectedName string `json:"expected_name"`
+		Timeout      int    `json:"timeout"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.URL == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
+	if req.MCPJson == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mcp_json is required"})
 		return
 	}
 	if req.Timeout <= 0 {
 		req.Timeout = 15
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
-	defer cancel()
-
-	var cfg *mcp.TransportConfig
-
-	// 如果提供了 Smithery API Key，走 Smithery Connect 代理
-	if req.SmitheryApiKey != "" {
-		connID := "test-" + fmt.Sprintf("%d", time.Now().UnixMilli())
-		mcpEndpoint, err := mcp.CreateSmitheryConnection(ctx, req.SmitheryApiKey, req.URL, connID)
-		if err != nil {
+	// 校验服务名
+	if req.ExpectedName != "" {
+		if err := mcp.ValidateMCPJson(req.MCPJson, req.ExpectedName); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"error":   "Smithery Connect: " + err.Error(),
+				"error":   err.Error(),
 			})
 			return
 		}
-		cfg = &mcp.TransportConfig{
-			URL:     mcpEndpoint,
-			Headers: map[string]string{"Authorization": "Bearer " + req.SmitheryApiKey},
-			Timeout: req.Timeout,
-		}
-	} else {
-		cfg = &mcp.TransportConfig{
-			URL:     req.URL,
-			Headers: req.Headers,
-			Timeout: req.Timeout,
-		}
+	}
+
+	// 解析 MCP JSON
+	_, serverCfg, err := mcp.ParseMCPJson(req.MCPJson)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(req.Timeout)*time.Second)
+	defer cancel()
+
+	cfg := &mcp.TransportConfig{
+		URL:     serverCfg.URL,
+		Headers: serverCfg.Headers,
+		Timeout: req.Timeout,
 	}
 
 	// 使用临时 manager 测试连接

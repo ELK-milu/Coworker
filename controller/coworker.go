@@ -256,11 +256,11 @@ func (ctrl *CoworkerController) UninstallStoreItem(c *gin.Context) {
 
 // ========== MCP 配置 ==========
 
-func (ctrl *CoworkerController) GetUserItemConfig(c *gin.Context) {
-	ctrl.module.RESTHandler.GetUserItemConfig(c)
+func (ctrl *CoworkerController) GetUserMCPConfig(c *gin.Context) {
+	ctrl.module.RESTHandler.GetUserMCPConfig(c)
 }
-func (ctrl *CoworkerController) SaveUserItemConfig(c *gin.Context) {
-	ctrl.module.RESTHandler.SaveUserItemConfig(c)
+func (ctrl *CoworkerController) SaveUserMCPConfig(c *gin.Context) {
+	ctrl.module.RESTHandler.SaveUserMCPConfig(c)
 }
 func (ctrl *CoworkerController) TestMCPConnection(c *gin.Context) {
 	ctrl.module.RESTHandler.TestMCPConnection(c)

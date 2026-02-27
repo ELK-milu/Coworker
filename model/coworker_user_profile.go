@@ -18,7 +18,6 @@ type CoworkerUserProfile struct {
 	TopP             *float64 `json:"top_p"`
 	FrequencyPenalty *float64 `json:"frequency_penalty"`
 	PresencePenalty  *float64 `json:"presence_penalty"`
-	SmitheryApiKey   string   `json:"smithery_api_key" gorm:"type:varchar(256)"`
 	// Profile 字段（合并自 profile.json）
 	Languages       string `json:"languages" gorm:"type:text"`          // JSON array
 	Frameworks      string `json:"frameworks" gorm:"type:text"`         // JSON array
