@@ -73,6 +73,7 @@ func SetCoworkerRouter(router *gin.Engine) {
 		coworkerGroup.PUT("/store/items/:id", coworkerCtrl.UpdateStoreItem)
 		coworkerGroup.DELETE("/store/items/:id", coworkerCtrl.DeleteStoreItem)
 		coworkerGroup.POST("/store/import", coworkerCtrl.ImportStoreItems)
+		coworkerGroup.POST("/store/import-modelscope", coworkerCtrl.ImportFromModelScope)
 		coworkerGroup.GET("/store/user", coworkerCtrl.GetUserStore)
 		coworkerGroup.PUT("/store/user", coworkerCtrl.SaveUserStore)
 		coworkerGroup.POST("/store/user/install/:id", coworkerCtrl.InstallStoreItem)

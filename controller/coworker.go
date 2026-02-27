@@ -241,6 +241,9 @@ func (ctrl *CoworkerController) DeleteStoreItem(c *gin.Context) {
 func (ctrl *CoworkerController) ImportStoreItems(c *gin.Context) {
 	ctrl.module.RESTHandler.ImportStoreItems(c)
 }
+func (ctrl *CoworkerController) ImportFromModelScope(c *gin.Context) {
+	ctrl.module.RESTHandler.ImportFromModelScope(c)
+}
 func (ctrl *CoworkerController) GetUserStore(c *gin.Context) {
 	ctrl.module.RESTHandler.GetUserStore(c)
 }

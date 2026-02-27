@@ -1315,6 +1315,28 @@ func (h *RESTHandler) UninstallStoreItem(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// ImportFromModelScope 从魔搭 MCP 广场导入 MCP 服务器（仅管理员）
+func (h *RESTHandler) ImportFromModelScope(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+	var req struct {
+		ModelScopeURL string `json:"modelscope_url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.ModelScopeURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "modelscope_url is required"})
+		return
+	}
+
+	item, err := h.store.ImportFromModelScope(req.ModelScopeURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "item": item})
+}
+
 // ========== MCP 配置 API ==========
 
 // GetUserMCPConfig 获取用户对某 MCP 条目的配置 JSON

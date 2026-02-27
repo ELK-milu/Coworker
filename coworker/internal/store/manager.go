@@ -929,6 +929,112 @@ func (m *Manager) saveUserInstalledRefs(userID string, refs []installedItemRef) 
 	return os.WriteFile(p, data, 0644)
 }
 
+// ImportFromModelScope 从魔搭 MCP 广场导入 MCP 服务器
+func (m *Manager) ImportFromModelScope(msURL string) (StoreItem, error) {
+	// 从 URL 提取 {org}/{name}
+	// 支持格式：
+	//   https://www.modelscope.cn/mcp/servers/@org/name
+	//   https://modelscope.cn/mcp/servers/@org/name
+	//   @org/name
+	slug := msURL
+	if idx := strings.Index(slug, "/mcp/servers/"); idx >= 0 {
+		slug = slug[idx+len("/mcp/servers/"):]
+	}
+	slug = strings.TrimRight(slug, "/")
+	if slug == "" || !strings.Contains(slug, "/") {
+		return StoreItem{}, fmt.Errorf("无效的魔搭地址，格式应为: https://www.modelscope.cn/mcp/servers/@org/name")
+	}
+
+	// 调用魔搭 API
+	apiURL := "https://www.modelscope.cn/api/v1/mcpServers/" + slug
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		return StoreItem{}, fmt.Errorf("请求魔搭 API 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return StoreItem{}, fmt.Errorf("魔搭 API 返回 %d，请检查地址是否正确", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return StoreItem{}, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	// 解析 JSON
+	var result struct {
+		Code int `json:"Code"`
+		Data struct {
+			Name         string `json:"Name"`
+			ChineseName  string `json:"ChineseName"`
+			Abstract     string `json:"Abstract"`
+			AbstractCN   string `json:"AbstractCN"`
+			FromSiteIcon string `json:"FromSiteIcon"`
+			Publisher    string `json:"Publisher"`
+			FromSiteUrl  string `json:"FromSiteUrl"`
+			License      string `json:"License"`
+		} `json:"Data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return StoreItem{}, fmt.Errorf("解析魔搭响应失败: %w", err)
+	}
+	if result.Code != 200 {
+		return StoreItem{}, fmt.Errorf("魔搭 API 错误码: %d", result.Code)
+	}
+
+	d := result.Data
+	if d.Name == "" {
+		return StoreItem{}, fmt.Errorf("魔搭返回数据缺少 Name 字段")
+	}
+
+	// 检查重名
+	m.mu.RLock()
+	for _, item := range m.items {
+		if item.Name == d.Name && item.Type == TypeMCP {
+			m.mu.RUnlock()
+			return StoreItem{}, fmt.Errorf("同名 MCP 条目已存在: %s", d.Name)
+		}
+	}
+	m.mu.RUnlock()
+
+	// 构建详情页 URL
+	detailURL := msURL
+	if !strings.HasPrefix(detailURL, "http") {
+		detailURL = "https://www.modelscope.cn/mcp/servers/" + slug
+	}
+
+	// 映射到 StoreItem
+	description := d.AbstractCN
+	if description == "" {
+		description = d.Abstract
+	}
+	displayName := d.ChineseName
+	if displayName == "" {
+		displayName = d.Name
+	}
+
+	item := StoreItem{
+		Name:        d.Name,
+		DisplayName: displayName,
+		Description: description,
+		Type:        TypeMCP,
+		Icon:        d.FromSiteIcon,
+		Author:      d.Publisher,
+		GithubURL:   d.FromSiteUrl,
+		ServerURL:   detailURL,
+	}
+
+	created, err := m.Create(item)
+	if err != nil {
+		return StoreItem{}, fmt.Errorf("创建条目失败: %w", err)
+	}
+
+	log.Printf("[Store] ImportFromModelScope: imported %s (%s)", d.Name, displayName)
+	return created, nil
+}
+
 // fetchGithubContent 从 GitHub URL 获取内容
 func fetchGithubContent(githubURL string) (string, error) {
 	rawURL := githubURL

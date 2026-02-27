@@ -26,7 +26,7 @@ async function apiFetch(path, options = {}) {
 }
 
 function SkillIcon({ icon, type, size = 28 }) {
-  if (icon && icon.startsWith('data:image/')) {
+  if (icon && (icon.startsWith('data:image/') || icon.startsWith('http://') || icon.startsWith('https://'))) {
     return <img src={icon} alt="icon" style={{ width: size, height: size, borderRadius: 4, objectFit: 'cover' }} />;
   }
   return <span style={{ fontSize: size * 0.64 }}>{icon || DEFAULT_ICONS[type] || '✨'}</span>;
@@ -285,12 +285,67 @@ function ImportModal({ visible, onClose, onDone }) {
   );
 }
 
+function ModelScopeImportModal({ visible, onClose, onDone }) {
+  const [msURL, setMsURL] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleImport = async () => {
+    if (!msURL.trim()) {
+      Toast.error('请输入魔搭项目地址');
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await apiFetch('/import-modelscope', {
+        method: 'POST',
+        body: JSON.stringify({ modelscope_url: msURL.trim() }),
+      });
+      if (data.success) {
+        Toast.success(`已导入: ${data.item?.display_name || data.item?.name}`);
+        setMsURL('');
+        onClose();
+        onDone();
+      } else {
+        Toast.error(data.error || '导入失败');
+      }
+    } catch {
+      Toast.error('网络错误');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="从魔搭安装 MCP"
+      visible={visible}
+      onCancel={onClose}
+      onOk={handleImport}
+      okText="安装"
+      confirmLoading={loading}
+    >
+      <div style={{ marginBottom: 12 }}>
+        <Text size="small" style={{ display: 'block', marginBottom: 4 }}>魔搭项目地址</Text>
+        <Input
+          placeholder="https://www.modelscope.cn/mcp/servers/@org/name"
+          value={msURL}
+          onChange={setMsURL}
+        />
+      </div>
+      <Text type="tertiary" size="small">
+        从魔搭 MCP 广场导入 MCP 服务器，自动获取名称、描述、图标等元数据
+      </Text>
+    </Modal>
+  );
+}
+
 export default function Skills() {
   const [items, setItems] = useState([]);
   const [installed, setInstalled] = useState([]);
   const [editVisible, setEditVisible] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [importVisible, setImportVisible] = useState(false);
+  const [msImportVisible, setMsImportVisible] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
   const admin = isAdmin();
 
@@ -358,6 +413,9 @@ export default function Skills() {
         <Title heading={4} style={{ margin: 0 }}>技能商店</Title>
         {admin && (
           <div style={{ display: 'flex', gap: 8 }}>
+            <Button onClick={() => setMsImportVisible(true)}>
+              从魔搭安装
+            </Button>
             <Button icon={<IconGithubLogo />} onClick={() => setImportVisible(true)}>
               从 GitHub 安装
             </Button>
@@ -403,6 +461,12 @@ export default function Skills() {
       <ImportModal
         visible={importVisible}
         onClose={() => setImportVisible(false)}
+        onDone={loadItems}
+      />
+
+      <ModelScopeImportModal
+        visible={msImportVisible}
+        onClose={() => setMsImportVisible(false)}
         onDone={loadItems}
       />
     </div>
