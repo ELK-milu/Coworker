@@ -6,6 +6,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Button, Typography, Toast, TextArea, Input, Select, Slider, Tag } from '@douyinfe/semi-ui';
 import { IconUpload, IconDownload, IconSave, IconRefresh, IconChevronDown, IconChevronUp, IconDelete, IconGridStroked } from '@douyinfe/semi-icons';
 import * as api from '../services/api';
+import { API } from '../../../helpers/api';
 import './ConfigPanel.css';
 
 const { Text, Title } = Typography;
@@ -639,7 +640,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                   <div key={itemId} style={{ borderBottom: '1px solid var(--semi-color-border)', paddingBottom: isMCP ? 8 : 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                        {item.icon && item.icon.startsWith('data:image/')
+                        {item.icon && (item.icon.startsWith('data:image/') || item.icon.startsWith('http://') || item.icon.startsWith('https://'))
                           ? <img src={item.icon} alt="icon" style={{ width: 20, height: 20, borderRadius: 3, objectFit: 'cover' }} />
                           : <span style={{ fontSize: 14 }}>{item.icon || DEFAULT_ICONS[item.type] || '✨'}</span>
                         }
