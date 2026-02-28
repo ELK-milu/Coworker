@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  Button, Card, Tag, Modal, Input, Select, Toast, Tabs, TabPane, Popconfirm, Typography, TextArea
+  Button, Card, Tag, Modal, Input, Select, Toast, Popconfirm, Typography, TextArea
 } from '@douyinfe/semi-ui';
-import { IconPlus, IconEdit, IconDelete, IconGithubLogo } from '@douyinfe/semi-icons';
+import { IconPlus, IconEdit, IconDelete, IconGithubLogo, IconSearch } from '@douyinfe/semi-icons';
 import { isAdmin, getUserIdFromLocalStorage } from '../../helpers/utils';
 
 const { Text, Title } = Typography;
@@ -10,6 +10,29 @@ const { Text, Title } = Typography;
 const TYPE_LABELS = { skill: '技能', agent: 'Agent', mcp: 'MCP', plugin: '插件' };
 const TYPE_COLORS = { skill: 'blue', agent: 'purple', mcp: 'green', plugin: 'orange' };
 const DEFAULT_ICONS = { skill: '✨', agent: '🤖', mcp: '🔔', plugin: '🔌' };
+
+const CATEGORIES = [
+  { key: 'all', label: '全部', icon: '📋' },
+  { key: '_favorites', label: '收藏', icon: '❤️' },
+  { key: '_installed', label: '已安装', icon: '✓' },
+  { key: '自动化', label: '自动化', icon: '⚙️' },
+  { key: '工具', label: '工具', icon: '🔧' },
+  { key: '开发', label: '开发', icon: '💻' },
+  { key: 'API', label: 'API', icon: '🔌' },
+  { key: '文档', label: '文档', icon: '📄' },
+  { key: '数据', label: '数据', icon: '📊' },
+  { key: '创作', label: '创作', icon: '🎨' },
+  { key: '搜索', label: '搜索', icon: '🔍' },
+  { key: '其他', label: '其他', icon: '📦' },
+];
+
+const TYPE_FILTERS = [
+  { key: 'all', label: '全部' },
+  { key: 'skill', label: '技能' },
+  { key: 'agent', label: 'Agent' },
+  { key: 'mcp', label: 'MCP' },
+  { key: 'plugin', label: '插件' },
+];
 
 const API_BASE = '/coworker/store';
 
@@ -32,57 +55,70 @@ function SkillIcon({ icon, type, size = 28 }) {
   return <span style={{ fontSize: size * 0.64 }}>{icon || DEFAULT_ICONS[type] || '✨'}</span>;
 }
 
-function ItemCard({ item, installed, onInstall, onUninstall, onEdit, onDelete, admin }) {
-  const isInstalled = installed.includes(item.id);
+const cardStyle = {
+  borderRadius: 12, cursor: 'pointer', transition: 'transform 0.2s, box-shadow 0.2s',
+  border: '1px solid var(--semi-color-border)', overflow: 'hidden',
+};
+const cardHoverStyle = { transform: 'translateY(-4px)', boxShadow: '0 8px 24px rgba(59,130,246,0.15)' };
 
-  const countByType = (type) => (item.sub_items || []).filter(s => s.type === type).length;
+function SkillCard({ item, installed, favorites, onInstall, onUninstall, onFavorite, onEdit, onDelete, admin }) {
+  const isInstalled = installed.includes(item.id);
+  const isFav = favorites.includes(item.id);
+  const [hover, setHover] = useState(false);
+  const desc = item.display_desc || item.description || '';
+  const dateStr = item.created_at ? new Date(item.created_at).toLocaleDateString() : '';
 
   return (
-    <Card
-      style={{ marginBottom: 12 }}
-      bodyStyle={{ padding: '12px 16px' }}
-      headerLine={false}
+    <div
+      style={{ ...cardStyle, ...(hover ? cardHoverStyle : {}), background: 'var(--semi-color-bg-2)', padding: 16, display: 'flex', flexDirection: 'column', minHeight: 200 }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <SkillIcon icon={item.icon} type={item.type} size={28} />
-            <Text strong>{item.display_name || item.name}</Text>
-            <Tag color={TYPE_COLORS[item.type]} size="small">{TYPE_LABELS[item.type]}</Tag>
-            {item.author && <Text type="tertiary" size="small">by {item.author}</Text>}
+      {/* Header: icon + name + author */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <SkillIcon icon={item.icon} type={item.type} size={48} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {item.display_name || item.name}
           </div>
-          <Text type="secondary" size="small">{item.display_desc || item.description}</Text>
-          {item.type === 'plugin' && item.sub_items && item.sub_items.length > 0 && (
-            <div style={{ marginTop: 4, display: 'flex', gap: 8 }}>
-              {countByType('agent') > 0 && <Tag size="small" color="purple">{countByType('agent')} Agents</Tag>}
-              {countByType('skill') > 0 && <Tag size="small" color="blue">{countByType('skill')} Skills</Tag>}
-              {countByType('command') > 0 && <Tag size="small" color="cyan">{countByType('command')} Commands</Tag>}
-            </div>
-          )}
-          {item.github_url && (
-            <div style={{ marginTop: 4 }}>
-              <a href={item.github_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <IconGithubLogo size="small" /> 查看源码
-              </a>
-            </div>
-          )}
+          {item.author && <Text type="tertiary" size="small">by {item.author}</Text>}
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: 12 }}>
-          {admin && (
-            <>
-              <Button size="small" icon={<IconEdit />} onClick={() => onEdit(item)} />
-              <Popconfirm title="确认删除？" onConfirm={() => onDelete(item.id)}>
-                <Button size="small" type="danger" icon={<IconDelete />} />
-              </Popconfirm>
-            </>
-          )}
+        {admin && (
+          <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
+            <Button size="small" icon={<IconEdit />} theme="borderless" onClick={() => onEdit(item)} />
+            <Popconfirm title="确认删除？" onConfirm={() => onDelete(item.id)}>
+              <Button size="small" type="danger" icon={<IconDelete />} theme="borderless" />
+            </Popconfirm>
+          </div>
+        )}
+      </div>
+
+      {/* Description: 3 lines max */}
+      <Text type="secondary" size="small" style={{ flex: 1, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '1.5em', marginBottom: 10 }}>
+        {desc}
+      </Text>
+
+      {/* Footer */}
+      <div style={{ borderTop: '1px solid var(--semi-color-border)', paddingTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--semi-color-text-2)' }}>
+          <span>⭐ {item.install_count || 0}</span>
+          {dateStr && <span>📅 {dateStr}</span>}
+          <button
+            onClick={e => { e.stopPropagation(); onFavorite(item.id); }}
+            style={{ width: 28, height: 28, borderRadius: '50%', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isFav ? '#fee2e2' : 'var(--semi-color-fill-0)', fontSize: 14 }}
+          >
+            {isFav ? '❤️' : '🤍'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {item.category && <Tag size="small" color="light-blue">{item.category}</Tag>}
+          <Tag size="small" color={TYPE_COLORS[item.type]}>{TYPE_LABELS[item.type]}</Tag>
           {isInstalled
-            ? <Button size="small" type="tertiary" onClick={() => onUninstall(item.id)}>已安装</Button>
-            : <Button size="small" theme="solid" onClick={() => onInstall(item)}>安装</Button>
+            ? <Button size="small" type="tertiary" onClick={e => { e.stopPropagation(); onUninstall(item.id); }}>已安装</Button>
+            : <Button size="small" theme="solid" onClick={e => { e.stopPropagation(); onInstall(item); }}>安装</Button>
           }
         </div>
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -342,15 +378,26 @@ function ModelScopeImportModal({ visible, onClose, onDone }) {
 export default function Skills() {
   const [items, setItems] = useState([]);
   const [installed, setInstalled] = useState([]);
+  const [favorites, setFavorites] = useState([]);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [activeType, setActiveType] = useState('all');
+  const [activeCategory, setActiveCategory] = useState('all');
+  const [sortBy, setSortBy] = useState('popular');
   const [editVisible, setEditVisible] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [importVisible, setImportVisible] = useState(false);
   const [msImportVisible, setMsImportVisible] = useState(false);
-  const [activeTab, setActiveTab] = useState('all');
   const admin = isAdmin();
 
   const rawId = getUserIdFromLocalStorage();
   const userId = rawId && rawId !== -1 ? String(rawId) : '';
+
+  // 300ms debounce search
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const loadItems = useCallback(async () => {
     const data = await apiFetch('/items');
@@ -363,10 +410,17 @@ export default function Skills() {
     setInstalled(data.installed || []);
   }, [userId]);
 
+  const loadFavorites = useCallback(async () => {
+    if (!userId) return;
+    const data = await apiFetch(`/user/favorites?user_id=${userId}`);
+    setFavorites(data.favorites || []);
+  }, [userId]);
+
   useEffect(() => {
     loadItems();
     loadInstalled();
-  }, [loadItems, loadInstalled]);
+    loadFavorites();
+  }, [loadItems, loadInstalled, loadFavorites]);
 
   const handleSave = async (form) => {
     if (form.id) {
@@ -389,6 +443,7 @@ export default function Skills() {
     const data = await apiFetch(`/user/install/${item.id}`, { method: 'POST', body: JSON.stringify({ user_id: userId }) });
     if (data.success) {
       setInstalled(prev => [...new Set([...prev, item.id])]);
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, install_count: (i.install_count || 0) + 1 } : i));
       Toast.success(`已安装 ${item.display_name || item.name}`);
     } else {
       Toast.error(data.error || '安装失败');
@@ -399,76 +454,132 @@ export default function Skills() {
     const data = await apiFetch(`/user/uninstall/${itemId}?user_id=${userId}`, { method: 'DELETE' });
     if (data.success) {
       setInstalled(prev => prev.filter(id => id !== itemId));
+      setItems(prev => prev.map(i => i.id === itemId ? { ...i, install_count: Math.max(0, (i.install_count || 0) - 1) } : i));
       Toast.success('已卸载');
     } else {
       Toast.error(data.error || '卸载失败');
     }
   };
 
-  const filtered = activeTab === 'all' ? items : items.filter(i => i.type === activeTab);
+  const handleFavorite = async (itemId) => {
+    const data = await apiFetch(`/user/favorite/${itemId}`, { method: 'POST', body: JSON.stringify({ user_id: userId }) });
+    if (data.success) {
+      setFavorites(prev => data.favorited ? [...new Set([...prev, itemId])] : prev.filter(id => id !== itemId));
+    }
+  };
+
+  // Combined filtering: type + category + search + favorites/installed
+  const filtered = useMemo(() => {
+    let list = items;
+    if (activeType !== 'all') list = list.filter(i => i.type === activeType);
+    if (activeCategory === '_favorites') list = list.filter(i => favorites.includes(i.id));
+    else if (activeCategory === '_installed') list = list.filter(i => installed.includes(i.id));
+    else if (activeCategory !== 'all') list = list.filter(i => i.category === activeCategory);
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
+      list = list.filter(i => (i.display_name || i.name || '').toLowerCase().includes(q) || (i.display_desc || i.description || '').toLowerCase().includes(q));
+    }
+    return sortBy === 'popular'
+      ? [...list].sort((a, b) => (b.install_count || 0) - (a.install_count || 0))
+      : [...list].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  }, [items, activeType, activeCategory, debouncedSearch, sortBy, favorites, installed]);
+
+  // Category counts
+  const categoryCounts = useMemo(() => {
+    const counts = {};
+    const typeFiltered = activeType === 'all' ? items : items.filter(i => i.type === activeType);
+    counts.all = typeFiltered.length;
+    counts._favorites = typeFiltered.filter(i => favorites.includes(i.id)).length;
+    counts._installed = typeFiltered.filter(i => installed.includes(i.id)).length;
+    CATEGORIES.filter(c => !c.key.startsWith('_') && c.key !== 'all').forEach(c => {
+      counts[c.key] = typeFiltered.filter(i => i.category === c.key).length;
+    });
+    return counts;
+  }, [items, activeType, favorites, installed]);
+
+  const pillStyle = (active) => ({
+    padding: '4px 14px', borderRadius: 16, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: active ? 600 : 400,
+    background: active ? 'var(--semi-color-primary)' : 'var(--semi-color-fill-0)',
+    color: active ? '#fff' : 'var(--semi-color-text-0)',
+  });
 
   return (
-    <div className="mt-[60px] px-2" style={{ maxWidth: 900, margin: '60px auto 0' }}>
+    <div className="mt-[60px] px-2" style={{ maxWidth: 1400, margin: '60px auto 0' }}>
+      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title heading={4} style={{ margin: 0 }}>技能商店</Title>
         {admin && (
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button onClick={() => setMsImportVisible(true)}>
-              从魔搭安装
-            </Button>
-            <Button icon={<IconGithubLogo />} onClick={() => setImportVisible(true)}>
-              从 GitHub 安装
-            </Button>
-            <Button icon={<IconPlus />} theme="solid" onClick={() => { setEditItem(null); setEditVisible(true); }}>
-              新增
-            </Button>
+            <Button onClick={() => setMsImportVisible(true)}>从魔搭安装</Button>
+            <Button icon={<IconGithubLogo />} onClick={() => setImportVisible(true)}>从 GitHub 安装</Button>
+            <Button icon={<IconPlus />} theme="solid" onClick={() => { setEditItem(null); setEditVisible(true); }}>新增</Button>
           </div>
         )}
       </div>
 
-      <Tabs activeKey={activeTab} onChange={setActiveTab} style={{ marginBottom: 16 }}>
-        <TabPane tab="全部" itemKey="all" />
-        <TabPane tab="技能" itemKey="skill" />
-        <TabPane tab="Agent" itemKey="agent" />
-        <TabPane tab="MCP" itemKey="mcp" />
-        <TabPane tab="插件" itemKey="plugin" />
-      </Tabs>
+      {/* Search */}
+      <Input prefix={<IconSearch />} placeholder="搜索技能..." value={search} onChange={setSearch} showClear style={{ marginBottom: 12 }} />
 
-      {filtered.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>暂无条目</div>
-      )}
+      {/* Type pills + Sort pills */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {TYPE_FILTERS.map(t => (
+            <button key={t.key} style={pillStyle(activeType === t.key)} onClick={() => setActiveType(t.key)}>{t.label}</button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button style={pillStyle(sortBy === 'popular')} onClick={() => setSortBy('popular')}>最热门</button>
+          <button style={pillStyle(sortBy === 'newest')} onClick={() => setSortBy('newest')}>最新</button>
+        </div>
+      </div>
 
-      {filtered.map(item => (
-        <ItemCard
-          key={item.id}
-          item={item}
-          installed={installed}
-          onInstall={handleInstall}
-          onUninstall={handleUninstall}
-          onEdit={i => { setEditItem(i); setEditVisible(true); }}
-          onDelete={handleDelete}
-          admin={admin}
-        />
-      ))}
+      {/* Sidebar + Grid */}
+      <div style={{ display: 'flex', gap: 24 }}>
+        {/* Category sidebar */}
+        <div style={{ width: 220, flexShrink: 0, position: 'sticky', top: 76, alignSelf: 'flex-start' }}>
+          <div style={{ background: 'var(--semi-color-bg-2)', borderRadius: 12, border: '1px solid var(--semi-color-border)', overflow: 'hidden' }}>
+            {CATEGORIES.map((c, i) => (
+              <div key={c.key}>
+                {i === 3 && <div style={{ height: 1, background: 'var(--semi-color-border)' }} />}
+                <div
+                  onClick={() => setActiveCategory(c.key)}
+                  style={{
+                    padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
+                    borderLeft: activeCategory === c.key ? '3px solid var(--semi-color-primary)' : '3px solid transparent',
+                    background: activeCategory === c.key ? 'var(--semi-color-primary-light-default)' : 'transparent',
+                    fontWeight: activeCategory === c.key ? 600 : 400,
+                  }}
+                >
+                  <span>{c.icon}</span>
+                  <span style={{ flex: 1 }}>{c.label}</span>
+                  <span style={{ color: 'var(--semi-color-text-2)', fontSize: 12 }}>{categoryCounts[c.key] || 0}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
-      <EditModal
-        visible={editVisible}
-        item={editItem}
-        onClose={() => setEditVisible(false)}
-        onSave={handleSave}
-      />
+        {/* Grid */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '60px 0', color: '#999' }}>暂无条目</div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 20 }}>
+              {filtered.map(item => (
+                <SkillCard
+                  key={item.id} item={item} installed={installed} favorites={favorites}
+                  onInstall={handleInstall} onUninstall={handleUninstall} onFavorite={handleFavorite}
+                  onEdit={i => { setEditItem(i); setEditVisible(true); }} onDelete={handleDelete} admin={admin}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
-      <ImportModal
-        visible={importVisible}
-        onClose={() => setImportVisible(false)}
-        onDone={loadItems}
-      />
-
-      <ModelScopeImportModal
-        visible={msImportVisible}
-        onClose={() => setMsImportVisible(false)}
-        onDone={loadItems}
-      />
+      <EditModal visible={editVisible} item={editItem} onClose={() => setEditVisible(false)} onSave={handleSave} />
+      <ImportModal visible={importVisible} onClose={() => setImportVisible(false)} onDone={loadItems} />
+      <ModelScopeImportModal visible={msImportVisible} onClose={() => setMsImportVisible(false)} onDone={loadItems} />
     </div>
   );
 }

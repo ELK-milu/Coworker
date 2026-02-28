@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/QuantumNous/new-api/coworker/internal/client"
 	"github.com/QuantumNous/new-api/coworker/internal/config"
 	"github.com/QuantumNous/new-api/coworker/internal/job"
 	"github.com/QuantumNous/new-api/coworker/internal/mcp"
@@ -28,6 +29,12 @@ type RESTHandler struct {
 	store     *store.Manager
 	mcpMgr    *mcp.Manager
 	config    *config.Config
+	aiClient  *client.ClaudeClient
+}
+
+// SetAIClient 设置 AI 客户端（用于分类等）
+func (h *RESTHandler) SetAIClient(c *client.ClaudeClient) {
+	h.aiClient = c
 }
 
 // SetStoreManager 设置商店管理器
@@ -1478,4 +1485,94 @@ func (h *RESTHandler) TestMCPConnection(c *gin.Context) {
 	testMgr.Disconnect(conn.ID)
 
 	c.JSON(http.StatusOK, result)
+}
+
+// ========== 收藏 API ==========
+
+// FavoriteStoreItem toggle 收藏
+func (h *RESTHandler) FavoriteStoreItem(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+	id := c.Param("id")
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+	added, err := h.store.FavoriteItem(req.UserID, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "favorited": added})
+}
+
+// GetUserFavorites 获取用户收藏列表
+func (h *RESTHandler) GetUserFavorites(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+		return
+	}
+	if h.store == nil {
+		c.JSON(http.StatusOK, gin.H{"favorites": []string{}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"favorites": h.store.LoadUserFavorites(userID)})
+}
+
+// ========== 分类 API ==========
+
+// ClassifyStoreItem AI 分类单个条目
+func (h *RESTHandler) ClassifyStoreItem(c *gin.Context) {
+	if h.store == nil || h.aiClient == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "not initialized"})
+		return
+	}
+	id := c.Param("id")
+	item := h.store.GetByID(id)
+	if item == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "item not found"})
+		return
+	}
+	desc := item.Description
+	if item.DisplayDesc != "" {
+		desc = item.DisplayDesc
+	}
+	cat := store.ClassifyItem(h.aiClient, item.DisplayName, desc)
+	item.Category = cat
+	updated, err := h.store.Update(id, *item)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "item": updated})
+}
+
+// ClassifyAllStoreItems AI 分类所有未分类条目
+func (h *RESTHandler) ClassifyAllStoreItems(c *gin.Context) {
+	if h.store == nil || h.aiClient == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "not initialized"})
+		return
+	}
+	items := h.store.List()
+	classified := 0
+	for _, item := range items {
+		if item.Category != "" {
+			continue
+		}
+		desc := item.Description
+		if item.DisplayDesc != "" {
+			desc = item.DisplayDesc
+		}
+		cat := store.ClassifyItem(h.aiClient, item.DisplayName, desc)
+		item.Category = cat
+		h.store.Update(item.ID, item)
+		classified++
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "classified": classified})
 }

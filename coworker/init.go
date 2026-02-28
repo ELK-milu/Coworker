@@ -188,6 +188,7 @@ func Init() *Module {
 	restHandler.SetJobManager(jobManager)
 	restHandler.SetMemoryManager(memoryManager)
 	restHandler.SetStoreManager(storeManager)
+	restHandler.SetAIClient(claudeClient)
 
 	// 创建 WebSocket 处理器（不再传递静态系统提示词，改为动态构建）
 	wsHandler := api.NewWSHandler(claudeClient, sessionManager, toolRegistry, workspaceManager, taskManager, mcpManager, cfg)

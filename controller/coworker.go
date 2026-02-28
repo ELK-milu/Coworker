@@ -268,3 +268,18 @@ func (ctrl *CoworkerController) SaveUserMCPConfig(c *gin.Context) {
 func (ctrl *CoworkerController) TestMCPConnection(c *gin.Context) {
 	ctrl.module.RESTHandler.TestMCPConnection(c)
 }
+
+// ========== 收藏 + 分类 ==========
+
+func (ctrl *CoworkerController) FavoriteStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.FavoriteStoreItem(c)
+}
+func (ctrl *CoworkerController) GetUserFavorites(c *gin.Context) {
+	ctrl.module.RESTHandler.GetUserFavorites(c)
+}
+func (ctrl *CoworkerController) ClassifyStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.ClassifyStoreItem(c)
+}
+func (ctrl *CoworkerController) ClassifyAllStoreItems(c *gin.Context) {
+	ctrl.module.RESTHandler.ClassifyAllStoreItems(c)
+}

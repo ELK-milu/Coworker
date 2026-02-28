@@ -81,6 +81,12 @@ func SetCoworkerRouter(router *gin.Engine) {
 		// MCP 用户配置
 		coworkerGroup.GET("/store/user/:id/config", coworkerCtrl.GetUserMCPConfig)
 		coworkerGroup.PUT("/store/user/:id/config", coworkerCtrl.SaveUserMCPConfig)
+		// 收藏
+		coworkerGroup.POST("/store/user/favorite/:id", coworkerCtrl.FavoriteStoreItem)
+		coworkerGroup.GET("/store/user/favorites", coworkerCtrl.GetUserFavorites)
+		// AI 分类
+		coworkerGroup.POST("/store/items/:id/classify", coworkerCtrl.ClassifyStoreItem)
+		coworkerGroup.POST("/store/classify-all", coworkerCtrl.ClassifyAllStoreItems)
 		// MCP 连接测试
 		coworkerGroup.POST("/mcp/test", coworkerCtrl.TestMCPConnection)
 

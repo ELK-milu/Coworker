@@ -16,6 +16,8 @@ type CoworkerStoreItem struct {
 	ServerURL    string `json:"server_url" gorm:"type:varchar(512)"`
 	ConfigSchema string `json:"config_schema" gorm:"type:text"` // JSON array
 	SubItems     string `json:"sub_items" gorm:"type:text"`     // JSON array of SubItem
+	Category     string `json:"category" gorm:"type:varchar(32)"`
+	InstallCount int    `json:"install_count" gorm:"default:0"`
 	CreatedAt    int64  `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt    int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }

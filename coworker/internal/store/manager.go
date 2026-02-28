@@ -64,6 +64,8 @@ func storeItemToDBModel(item StoreItem) *model.CoworkerStoreItem {
 		ServerURL:    item.ServerURL,
 		ConfigSchema: string(configJSON),
 		SubItems:     string(subItemsJSON),
+		Category:     item.Category,
+		InstallCount: item.InstallCount,
 		CreatedAt:    item.CreatedAt.Unix(),
 		UpdatedAt:    item.UpdatedAt.Unix(),
 	}
@@ -92,6 +94,8 @@ func dbModelToStoreItem(dbItem *model.CoworkerStoreItem) StoreItem {
 		ServerURL:    dbItem.ServerURL,
 		ConfigSchema: configSchema,
 		SubItems:     subItems,
+		Category:     dbItem.Category,
+		InstallCount: dbItem.InstallCount,
 		CreatedAt:    time.Unix(dbItem.CreatedAt, 0),
 		UpdatedAt:    time.Unix(dbItem.UpdatedAt, 0),
 	}
@@ -641,6 +645,9 @@ func (m *Manager) InstallItemForUser(userID, itemID, skillDir string) error {
 		return fmt.Errorf("item not found: %s", itemID)
 	}
 
+	// +1 安装计数
+	m.incrInstallCount(itemID, 1)
+
 	// 确保目标目录存在
 	os.MkdirAll(skillDir, 0755)
 
@@ -678,6 +685,9 @@ func (m *Manager) UninstallItemForUser(userID, itemID, skillDir string) error {
 	if err := m.SaveUserInstalled(userID, newIDs); err != nil {
 		return fmt.Errorf("save installed list: %w", err)
 	}
+
+	// -1 安装计数
+	m.incrInstallCount(itemID, -1)
 
 	// 获取条目信息
 	item := m.GetByID(itemID)
@@ -1033,6 +1043,84 @@ func (m *Manager) ImportFromModelScope(msURL string) (StoreItem, error) {
 
 	log.Printf("[Store] ImportFromModelScope: imported %s (%s)", d.Name, displayName)
 	return created, nil
+}
+
+// incrInstallCount 增减安装计数
+func (m *Manager) incrInstallCount(itemID string, delta int) {
+	m.mu.Lock()
+	for i, item := range m.items {
+		if item.ID == itemID {
+			m.items[i].InstallCount += delta
+			if m.items[i].InstallCount < 0 {
+				m.items[i].InstallCount = 0
+			}
+			if m.useDB {
+				dbItem := storeItemToDBModel(m.items[i])
+				model.UpdateCoworkerStoreItem(dbItem)
+			} else {
+				m.save()
+			}
+			break
+		}
+	}
+	m.mu.Unlock()
+}
+
+// LoadUserFavorites 加载用户收藏列表
+func (m *Manager) LoadUserFavorites(userID string) []string {
+	if m.useDB {
+		if dbUserID, err := strconv.Atoi(userID); err == nil {
+			profile, err := model.GetCoworkerUserProfile(dbUserID)
+			if err == nil && profile.FavoriteItems != "" {
+				var ids []string
+				json.Unmarshal([]byte(profile.FavoriteItems), &ids)
+				return ids
+			}
+		}
+		return []string{}
+	}
+	data, err := os.ReadFile(filepath.Join(m.dataDir, "favorites", userID+".json"))
+	if err != nil {
+		return []string{}
+	}
+	var ids []string
+	json.Unmarshal(data, &ids)
+	return ids
+}
+
+// saveUserFavorites 保存用户收藏列表
+func (m *Manager) saveUserFavorites(userID string, ids []string) error {
+	if m.useDB {
+		if dbUserID, err := strconv.Atoi(userID); err == nil {
+			idsJSON, _ := json.Marshal(ids)
+			existing, _ := model.GetCoworkerUserProfile(dbUserID)
+			if existing == nil {
+				return model.UpsertCoworkerUserProfile(&model.CoworkerUserProfile{
+					UserID:        dbUserID,
+					FavoriteItems: string(idsJSON),
+				})
+			}
+			existing.FavoriteItems = string(idsJSON)
+			return model.UpdateCoworkerUserProfile(existing)
+		}
+	}
+	p := filepath.Join(m.dataDir, "favorites", userID+".json")
+	os.MkdirAll(filepath.Dir(p), 0755)
+	data, _ := json.Marshal(ids)
+	return os.WriteFile(p, data, 0644)
+}
+
+// FavoriteItem toggle 收藏（已收藏则取消，未收藏则添加）
+func (m *Manager) FavoriteItem(userID, itemID string) (bool, error) {
+	ids := m.LoadUserFavorites(userID)
+	for i, id := range ids {
+		if id == itemID {
+			ids = append(ids[:i], ids[i+1:]...)
+			return false, m.saveUserFavorites(userID, ids)
+		}
+	}
+	ids = append(ids, itemID)
+	return true, m.saveUserFavorites(userID, ids)
 }
 
 // fetchGithubContent 从 GitHub URL 获取内容

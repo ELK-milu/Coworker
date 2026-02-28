@@ -56,6 +56,8 @@ type StoreItem struct {
 	ServerURL    string        `json:"server_url,omitempty"` // mcp: 服务器 URL
 	ConfigSchema []ConfigField `json:"config_schema,omitempty"`
 	SubItems     []SubItem     `json:"sub_items,omitempty"` // plugin: 子条目列表
+	Category     string        `json:"category,omitempty"`
+	InstallCount int           `json:"install_count"`
 	CreatedAt    time.Time     `json:"created_at"`
 	UpdatedAt    time.Time     `json:"updated_at"`
 }

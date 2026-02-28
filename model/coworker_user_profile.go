@@ -14,6 +14,7 @@ type CoworkerUserProfile struct {
 	Group            string   `json:"group" gorm:"type:varchar(64)"`
 	AssistantAvatar  string   `json:"assistant_avatar" gorm:"type:text"`  // base64
 	InstalledItems   string   `json:"installed_items" gorm:"type:text"`   // JSON array
+	FavoriteItems    string   `json:"favorite_items" gorm:"type:text"`   // JSON array of item IDs
 	Temperature      *float64 `json:"temperature"`
 	TopP             *float64 `json:"top_p"`
 	FrequencyPenalty *float64 `json:"frequency_penalty"`
