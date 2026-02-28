@@ -10,7 +10,7 @@ tmp_dir = "tmp"
   bin = "./tmp/main"
   cmd = "go build -mod=mod -o ./tmp/main ."
   delay = 1000
-  exclude_dir = ["assets", "tmp", "vendor", "testdata", "web/build", "web/node_modules"]
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "web/build", "web/node_modules", "userdata"]
   exclude_file = []
   exclude_regex = ["_test.go"]
   exclude_unchanged = false
