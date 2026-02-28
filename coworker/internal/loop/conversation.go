@@ -272,6 +272,8 @@ func (l *ConversationLoop) runLoop(ctx context.Context) error {
 		apiDuration := time.Since(apiStart)
 		log.Printf("[Perf] runLoop step %d: API+stream done in %v (stopReason=%s, toolCalls=%d)", l.currentStep, apiDuration, stopReason, len(toolCalls))
 		if err != nil {
+			log.Printf("[Perf] runLoop step %d: stream error after %v: %v", l.currentStep, apiDuration, err)
+			l.eventCh <- LoopEvent{Type: EventTypeError, Error: err.Error()}
 			return err
 		}
 

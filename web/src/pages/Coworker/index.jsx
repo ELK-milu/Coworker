@@ -559,6 +559,7 @@ const Coworker = () => {
         setThinking(false);
         setPendingQuestion(null);
         setMessages(prev => [...prev, { type: 'error', content: payload.error }]);
+        Toast.error({ content: payload.error || '对话出错', duration: 6 });
         break;
 
       case 'status':
