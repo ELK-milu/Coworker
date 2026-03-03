@@ -216,6 +216,27 @@ function EditModal({ visible, item, onClose, onSave }) {
           </div>
         </div>
         <div>
+          <Text size="small" style={{ display: 'block', marginBottom: 4 }}>分类</Text>
+          <Select
+            value={form.category || ''}
+            onChange={v => setForm(f => ({ ...f, category: v }))}
+            optionList={[
+              { label: '⚙️ 自动化', value: '自动化' },
+              { label: '🔧 工具', value: '工具' },
+              { label: '💻 开发', value: '开发' },
+              { label: '🔌 API', value: 'API' },
+              { label: '📄 文档', value: '文档' },
+              { label: '📊 数据', value: '数据' },
+              { label: '🎨 创作', value: '创作' },
+              { label: '🔍 搜索', value: '搜索' },
+              { label: '📦 其他', value: '其他' },
+            ]}
+            placeholder="选择分类（可留空由 AI 自动分类）"
+            showClear
+            style={{ width: '100%' }}
+          />
+        </div>
+        <div>
           <Text size="small" style={{ display: 'block', marginBottom: 4 }}>作者</Text>
           <Input value={form.author || ''} onChange={v => setForm(f => ({ ...f, author: v }))} />
         </div>

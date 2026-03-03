@@ -27,6 +27,7 @@ import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
+import SettingsBuiltinModel from '../../pages/Setting/Dashboard/SettingsBuiltinModel';
 import { API, showError, toBoolean } from '../../helpers';
 
 const OperationSetting = () => {
@@ -125,6 +126,10 @@ const OperationSetting = () => {
         {/* 通用设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsGeneral options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 内置模型设置 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsBuiltinModel />
         </Card>
         {/* 顶栏模块管理 */}
         <div style={{ marginTop: '10px' }}>

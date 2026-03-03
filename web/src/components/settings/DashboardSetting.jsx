@@ -25,8 +25,6 @@ import SettingsAnnouncements from '../../pages/Setting/Dashboard/SettingsAnnounc
 import SettingsFAQ from '../../pages/Setting/Dashboard/SettingsFAQ';
 import SettingsUptimeKuma from '../../pages/Setting/Dashboard/SettingsUptimeKuma';
 import SettingsDataDashboard from '../../pages/Setting/Dashboard/SettingsDataDashboard';
-import SettingsBuiltinModel from '../../pages/Setting/Dashboard/SettingsBuiltinModel';
-
 const DashboardSetting = () => {
   let [inputs, setInputs] = useState({
     'console_setting.api_info': '',
@@ -141,11 +139,6 @@ const DashboardSetting = () => {
             迁移过程中会自动处理数据格式转换，迁移完成后旧配置将被清除，请在迁移前在数据库中备份好旧配置。
           </p>
         </Modal>
-
-        {/* 内置模型设置 */}
-        <Card style={{ marginTop: '10px' }}>
-          <SettingsBuiltinModel />
-        </Card>
 
         {/* 数据看板设置 */}
         <Card style={{ marginTop: '10px' }}>
