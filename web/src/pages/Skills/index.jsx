@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Button, Card, Tag, Modal, Input, Select, Toast, Popconfirm, Typography, TextArea
 } from '@douyinfe/semi-ui';
@@ -61,7 +62,7 @@ const cardStyle = {
 };
 const cardHoverStyle = { transform: 'translateY(-4px)', boxShadow: '0 8px 24px rgba(59,130,246,0.15)' };
 
-function SkillCard({ item, installed, favorites, onInstall, onUninstall, onFavorite, onEdit, onDelete, admin }) {
+function SkillCard({ item, installed, favorites, onInstall, onUninstall, onFavorite, onEdit, onDelete, onCardClick, admin }) {
   const isInstalled = installed.includes(item.id);
   const isFav = favorites.includes(item.id);
   const [hover, setHover] = useState(false);
@@ -72,6 +73,7 @@ function SkillCard({ item, installed, favorites, onInstall, onUninstall, onFavor
     <div
       style={{ ...cardStyle, ...(hover ? cardHoverStyle : {}), background: 'var(--semi-color-bg-2)', padding: 16, display: 'flex', flexDirection: 'column', minHeight: 200 }}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      onClick={() => onCardClick && onCardClick(item)}
     >
       {/* Header: icon + name + author */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
@@ -376,6 +378,7 @@ function ModelScopeImportModal({ visible, onClose, onDone }) {
 }
 
 export default function Skills() {
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [installed, setInstalled] = useState([]);
   const [favorites, setFavorites] = useState([]);
@@ -465,6 +468,14 @@ export default function Skills() {
     const data = await apiFetch(`/user/favorite/${itemId}`, { method: 'POST', body: JSON.stringify({ user_id: userId }) });
     if (data.success) {
       setFavorites(prev => data.favorited ? [...new Set([...prev, itemId])] : prev.filter(id => id !== itemId));
+    }
+  };
+
+  const handleCardClick = (item) => {
+    if (item.type === 'mcp' && item.server_url) {
+      window.open(item.server_url, '_blank');
+    } else {
+      navigate('/skills/' + item.id);
     }
   };
 
@@ -569,7 +580,8 @@ export default function Skills() {
                 <SkillCard
                   key={item.id} item={item} installed={installed} favorites={favorites}
                   onInstall={handleInstall} onUninstall={handleUninstall} onFavorite={handleFavorite}
-                  onEdit={i => { setEditItem(i); setEditVisible(true); }} onDelete={handleDelete} admin={admin}
+                  onEdit={i => { setEditItem(i); setEditVisible(true); }} onDelete={handleDelete}
+                  onCardClick={handleCardClick} admin={admin}
                 />
               ))}
             </div>

@@ -271,6 +271,13 @@ func (ctrl *CoworkerController) TestMCPConnection(c *gin.Context) {
 
 // ========== 收藏 + 分类 ==========
 
+func (ctrl *CoworkerController) GetStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.GetStoreItem(c)
+}
+func (ctrl *CoworkerController) DownloadStoreItem(c *gin.Context) {
+	ctrl.module.RESTHandler.DownloadStoreItem(c)
+}
+
 func (ctrl *CoworkerController) FavoriteStoreItem(c *gin.Context) {
 	ctrl.module.RESTHandler.FavoriteStoreItem(c)
 }

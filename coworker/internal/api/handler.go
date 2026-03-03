@@ -1,8 +1,12 @@
 package api
 
 import (
+	"archive/zip"
 	"context"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -1523,6 +1527,75 @@ func (h *RESTHandler) GetUserFavorites(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"favorites": h.store.LoadUserFavorites(userID)})
+}
+
+// ========== 分类 API ==========
+
+// GetStoreItem 获取商店条目详情（含 readme 和文件树）
+func (h *RESTHandler) GetStoreItem(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+	id := c.Param("id")
+	item := h.store.GetByID(id)
+	if item == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "item not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"item":           item,
+		"readme_content": h.store.GetItemReadme(item),
+		"file_tree":      h.store.GetItemFileTree(item),
+	})
+}
+
+// DownloadStoreItem 下载商店条目为 zip 文件
+func (h *RESTHandler) DownloadStoreItem(c *gin.Context) {
+	if h.store == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
+		return
+	}
+	id := c.Param("id")
+	item := h.store.GetByID(id)
+	if item == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "item not found"})
+		return
+	}
+	dir := h.store.ItemDir(item)
+	if dir == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no local files for this item"})
+		return
+	}
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "item directory not found"})
+		return
+	}
+
+	zipName := item.Name + ".zip"
+	c.Header("Content-Type", "application/zip")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", zipName))
+
+	zw := zip.NewWriter(c.Writer)
+	defer zw.Close()
+
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		rel = filepath.ToSlash(rel)
+		w, err := zw.Create(rel)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		w.Write(data)
+		return nil
+	})
 }
 
 // ========== 分类 API ==========

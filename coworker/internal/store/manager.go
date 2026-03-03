@@ -1123,6 +1123,74 @@ func (m *Manager) FavoriteItem(userID, itemID string) (bool, error) {
 	return true, m.saveUserFavorites(userID, ids)
 }
 
+// ItemDir 返回条目的绝对目录路径（统一 SkillDir/PluginDir）
+func (m *Manager) ItemDir(item *StoreItem) string {
+	if item == nil || item.LocalDir == "" {
+		return ""
+	}
+	switch item.Type {
+	case TypePlugin:
+		return filepath.Join(m.dataDir, "plugins", item.LocalDir)
+	default:
+		return filepath.Join(m.dataDir, "skills", item.LocalDir)
+	}
+}
+
+// GetItemReadme 按优先级读取文档内容
+// 优先级：README.md > CLAUDE.md > SKILL.md > item.Content
+func (m *Manager) GetItemReadme(item *StoreItem) string {
+	dir := m.ItemDir(item)
+	if dir != "" {
+		for _, name := range []string{"README.md", "readme.md", "CLAUDE.md", "SKILL.md", "skill.md"} {
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err == nil && len(data) > 0 {
+				return string(data)
+			}
+		}
+	}
+	return item.Content
+}
+
+// FileTreeEntry 文件树节点
+type FileTreeEntry struct {
+	Name     string          `json:"name"`
+	IsDir    bool            `json:"is_dir"`
+	Size     int64           `json:"size,omitempty"`
+	Children []FileTreeEntry `json:"children,omitempty"`
+}
+
+// GetItemFileTree 递归获取条目的文件树
+func (m *Manager) GetItemFileTree(item *StoreItem) []FileTreeEntry {
+	dir := m.ItemDir(item)
+	if dir == "" {
+		return nil
+	}
+	return buildFileTree(dir)
+}
+
+func buildFileTree(dir string) []FileTreeEntry {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var result []FileTreeEntry
+	for _, e := range entries {
+		entry := FileTreeEntry{
+			Name:  e.Name(),
+			IsDir: e.IsDir(),
+		}
+		if e.IsDir() {
+			entry.Children = buildFileTree(filepath.Join(dir, e.Name()))
+		} else {
+			if info, err := e.Info(); err == nil {
+				entry.Size = info.Size()
+			}
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
 // fetchGithubContent 从 GitHub URL 获取内容
 func fetchGithubContent(githubURL string) (string, error) {
 	rawURL := githubURL

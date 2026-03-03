@@ -532,6 +532,7 @@ func buildMarketplacePluginItem(repoDir, repo, ghURL, pluginsDir string, mp *Mar
 			// source="./" 且无显式 skills 数组（如 obra/superpowers）→ 复制整个仓库根目录
 			copyLocalDir(repoDir, "", destDir)
 		}
+		copyReadmeIfMissing(repoDir, destDir)
 	}
 
 	return &StoreItem{
@@ -654,6 +655,7 @@ func buildPluginItem(repoDir, remotePath, name, desc, ghURL, pluginsDir string, 
 	if pluginsDir != "" {
 		destDir := filepath.Join(pluginsDir, localDir)
 		copyLocalDir(repoDir, remotePath, destDir)
+		copyReadmeIfMissing(repoDir, destDir)
 	}
 
 	return &StoreItem{
@@ -700,6 +702,7 @@ func tryDiscoverSkills(repoDir, repo, ghURL, storeDir, searchPath string) ([]Sto
 			} {
 				if err := copyLocalDir(repoDir, candidate, destDir); err == nil {
 					item.LocalDir = localDir
+					copyReadmeIfMissing(repoDir, destDir)
 					break
 				}
 			}
@@ -1156,6 +1159,28 @@ func sanitizeDirName(name string) string {
 	name = strings.ReplaceAll(name, "\\", "-")
 	name = strings.ToLower(name)
 	return name
+}
+
+// copyReadmeIfMissing 将仓库中的 README.md 复制到 destDir（如果 destDir 中还没有）
+func copyReadmeIfMissing(repoDir, destDir string) {
+	if destDir == "" {
+		return
+	}
+	// 如果目标目录已存在 README.md，跳过
+	if _, err := os.Stat(filepath.Join(destDir, "README.md")); err == nil {
+		return
+	}
+	// 尝试从仓库根目录复制 README.md / readme.md
+	for _, name := range []string{"README.md", "readme.md", "Readme.md"} {
+		src := filepath.Join(repoDir, name)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			continue
+		}
+		os.MkdirAll(destDir, 0755)
+		os.WriteFile(filepath.Join(destDir, "README.md"), data, 0644)
+		return
+	}
 }
 
 // filterSkillsByName 按名称过滤 SubItem（大小写不敏感）
