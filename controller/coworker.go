@@ -290,3 +290,12 @@ func (ctrl *CoworkerController) ClassifyStoreItem(c *gin.Context) {
 func (ctrl *CoworkerController) ClassifyAllStoreItems(c *gin.Context) {
 	ctrl.module.RESTHandler.ClassifyAllStoreItems(c)
 }
+
+// ========== 内置模型 ==========
+
+func (ctrl *CoworkerController) GetBuiltinModel(c *gin.Context) {
+	ctrl.module.RESTHandler.GetBuiltinModel(c)
+}
+func (ctrl *CoworkerController) SaveBuiltinModel(c *gin.Context) {
+	ctrl.module.RESTHandler.SaveBuiltinModel(c)
+}

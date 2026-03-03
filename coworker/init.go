@@ -146,6 +146,12 @@ func Init() *Module {
 		jobManager.SetUseDB(true)
 		storeManager.SetUseDB(true)
 		log.Println("[Coworker] Database persistence enabled for all managers")
+
+		// 初始化 store AI client（需要 DB 可用后创建 relay token）
+		if aiClient := store.CreateInternalAIClient(); aiClient != nil {
+			storeManager.SetAIClient(aiClient)
+			log.Println("[Coworker] Store AI client initialized for import enhancement")
+		}
 	}
 
 	// 创建 nsjail 沙箱池（如果启用）

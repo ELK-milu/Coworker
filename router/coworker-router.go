@@ -91,6 +91,9 @@ func SetCoworkerRouter(router *gin.Engine) {
 		coworkerGroup.POST("/store/classify-all", coworkerCtrl.ClassifyAllStoreItems)
 		// MCP 连接测试
 		coworkerGroup.POST("/mcp/test", coworkerCtrl.TestMCPConnection)
+		// 内置模型设置
+		coworkerGroup.GET("/builtin-model", coworkerCtrl.GetBuiltinModel)
+		coworkerGroup.PUT("/builtin-model", coworkerCtrl.SaveBuiltinModel)
 
 		// WebSocket 连接
 		coworkerGroup.GET("/ws", coworkerCtrl.HandleWebSocket)

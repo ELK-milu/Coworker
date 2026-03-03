@@ -226,6 +226,7 @@ func ImportFromGithub(repoURL string, storeDir string) ([]StoreItem, error) {
 		}
 		if len(items) > 0 {
 			fillDefaultAuthor(items, repoIdent)
+			fillDefaultIcon(items, owner)
 			return items, nil
 		}
 	}
@@ -237,6 +238,7 @@ func ImportFromGithub(repoURL string, storeDir string) ([]StoreItem, error) {
 		}
 		if len(items) > 0 {
 			fillDefaultAuthor(items, repoIdent)
+			fillDefaultIcon(items, owner)
 			return items, nil
 		}
 	}
@@ -249,6 +251,7 @@ func ImportFromGithub(repoURL string, storeDir string) ([]StoreItem, error) {
 		}
 		if len(items) > 0 {
 			fillDefaultAuthor(items, repoIdent)
+			fillDefaultIcon(items, owner)
 			return items, nil
 		}
 	}
@@ -276,6 +279,7 @@ func ImportAgentsFromGithub(repoURL string) ([]StoreItem, error) {
 	items := scanAgentsToStoreItems(repoDir, "agents", ghURL)
 	if len(items) > 0 {
 		fillDefaultAuthor(items, repoIdent)
+		fillDefaultIcon(items, owner)
 		return items, nil
 	}
 
@@ -301,18 +305,21 @@ func ImportPluginFromGithub(repoURL string, pluginsDir string) ([]StoreItem, err
 	// 1. 尝试 marketplace.json → 多个插件
 	if items, err := importFromMarketplace(repoDir, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
 		fillDefaultAuthor(items, repoIdent)
+		fillDefaultIcon(items, owner)
 		return items, nil
 	}
 
 	// 2. 尝试 plugin.json → 单个插件
 	if items, err := trySinglePlugin(repoDir, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
 		fillDefaultAuthor(items, repoIdent)
+		fillDefaultIcon(items, owner)
 		return items, nil
 	}
 
 	// 3. 尝试根目录直接扫描 agents/ + skills/ + commands/
 	if items, err := tryRootPlugin(repoDir, repo, ghURL, pluginsDir); err == nil && len(items) > 0 {
 		fillDefaultAuthor(items, repoIdent)
+		fillDefaultIcon(items, owner)
 		return items, nil
 	}
 
@@ -1147,6 +1154,20 @@ func fillDefaultAuthor(items []StoreItem, defaultAuthor string) {
 	for i := range items {
 		if items[i].Author == "" {
 			items[i].Author = defaultAuthor
+		}
+	}
+}
+
+// fillDefaultIcon 为没有 Icon 的 StoreItem 设置 GitHub owner 头像
+// GitHub 标准头像 URL: https://github.com/{owner}.png（会 302 到 avatars.githubusercontent.com）
+func fillDefaultIcon(items []StoreItem, owner string) {
+	if owner == "" {
+		return
+	}
+	avatarURL := "https://github.com/" + owner + ".png"
+	for i := range items {
+		if items[i].Icon == "" {
+			items[i].Icon = avatarURL
 		}
 	}
 }

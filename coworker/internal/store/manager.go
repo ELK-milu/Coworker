@@ -13,15 +13,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/coworker/internal/client"
 	"github.com/QuantumNous/new-api/model"
 )
 
 // Manager 技能商店管理器
 type Manager struct {
-	dataDir string
-	useDB   bool
-	mu      sync.RWMutex
-	items   []StoreItem
+	dataDir  string
+	useDB    bool
+	mu       sync.RWMutex
+	items    []StoreItem
+	aiClient *client.ClaudeClient
 }
 
 // NewManager 创建商店管理器
@@ -29,6 +32,11 @@ func NewManager(baseDir string) *Manager {
 	m := &Manager{dataDir: filepath.Join(baseDir, "store")}
 	m.load()
 	return m
+}
+
+// SetAIClient 设置 AI 客户端（用于导入时的翻译和分类）
+func (m *Manager) SetAIClient(c *client.ClaudeClient) {
+	m.aiClient = c
 }
 
 // DataDir 返回 store 数据目录（skills/plugins 文件所在根目录）
@@ -439,6 +447,12 @@ func (m *Manager) Import(repoURL string) ([]StoreItem, error) {
 			return nil, err
 		}
 	}
+
+	// 异步增强：翻译 + 分类
+	if m.aiClient != nil && len(added) > 0 {
+		PostImportEnhance(m.aiClient, m, added)
+	}
+
 	return added, nil
 }
 
@@ -485,6 +499,12 @@ func (m *Manager) ImportAgents(repoURL string) ([]StoreItem, error) {
 			return nil, err
 		}
 	}
+
+	// 异步增强：翻译 + 分类
+	if m.aiClient != nil && len(added) > 0 {
+		PostImportEnhance(m.aiClient, m, added)
+	}
+
 	return added, nil
 }
 
@@ -532,6 +552,12 @@ func (m *Manager) ImportPlugin(repoURL string) ([]StoreItem, error) {
 			return nil, err
 		}
 	}
+
+	// 异步增强：翻译 + 分类
+	if m.aiClient != nil && len(added) > 0 {
+		PostImportEnhance(m.aiClient, m, added)
+	}
+
 	return added, nil
 }
 
@@ -1041,6 +1067,11 @@ func (m *Manager) ImportFromModelScope(msURL string) (StoreItem, error) {
 		return StoreItem{}, fmt.Errorf("创建条目失败: %w", err)
 	}
 
+	// 异步增强：翻译 + 分类（魔搭数据可能已有中文，但可能缺分类）
+	if m.aiClient != nil {
+		PostImportEnhance(m.aiClient, m, []StoreItem{created})
+	}
+
 	log.Printf("[Store] ImportFromModelScope: imported %s (%s)", d.Name, displayName)
 	return created, nil
 }
@@ -1208,4 +1239,44 @@ func fetchGithubContent(githubURL string) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+// CreateInternalAIClient 创建内部 AI 客户端（通过 relay 自代理）
+// 读取 common.OptionMap["BuiltinModel"]，通过 root 用户的 Coworker token 访问本地 relay
+func CreateInternalAIClient() *client.ClaudeClient {
+	// 获取模型名称
+	modelName := GetBuiltinModelOption()
+	if modelName == "" {
+		modelName = "gpt-4o-mini"
+	}
+
+	// 获取 root 用户的 Coworker token
+	tokenKey, err := model.GetOrCreateCoworkerToken(1)
+	if err != nil || tokenKey == "" {
+		log.Printf("[Store] CreateInternalAIClient: failed to get coworker token: %v", err)
+		return nil
+	}
+
+	// 获取端口
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "3000"
+	}
+	relayURL := "http://127.0.0.1:" + port
+
+	c := client.NewClaudeClient(tokenKey, "", relayURL, modelName, 4096)
+	log.Printf("[Store] CreateInternalAIClient: created client (model=%s, relay=%s)", modelName, relayURL)
+	return c
+}
+
+// GetBuiltinModelOption 获取内置模型配置
+func GetBuiltinModelOption() string {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	return common.OptionMap["BuiltinModel"]
+}
+
+// SaveBuiltinModelOption 保存内置模型配置
+func SaveBuiltinModelOption(modelName string) {
+	model.UpdateOption("BuiltinModel", modelName)
 }

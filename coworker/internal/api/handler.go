@@ -1649,3 +1649,36 @@ func (h *RESTHandler) ClassifyAllStoreItems(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "classified": classified})
 }
+
+// ========== 内置模型 API ==========
+
+// GetBuiltinModel 获取当前内置模型设置
+func (h *RESTHandler) GetBuiltinModel(c *gin.Context) {
+	modelName := "gpt-4o-mini"
+	if v := store.GetBuiltinModelOption(); v != "" {
+		modelName = v
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "model": modelName})
+}
+
+// SaveBuiltinModel 保存内置模型设置
+func (h *RESTHandler) SaveBuiltinModel(c *gin.Context) {
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	store.SaveBuiltinModelOption(req.Model)
+
+	// 重建 store manager 的 AI client
+	newClient := store.CreateInternalAIClient()
+	if newClient != nil {
+		h.store.SetAIClient(newClient)
+		h.aiClient = newClient
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
