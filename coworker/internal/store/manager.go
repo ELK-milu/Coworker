@@ -30,6 +30,10 @@ type Manager struct {
 // NewManager 创建商店管理器
 func NewManager(baseDir string) *Manager {
 	m := &Manager{dataDir: filepath.Join(baseDir, "store")}
+	// 确保 skills/plugins/agents 三个子目录存在
+	os.MkdirAll(filepath.Join(m.dataDir, "skills"), 0755)
+	os.MkdirAll(filepath.Join(m.dataDir, "plugins"), 0755)
+	os.MkdirAll(filepath.Join(m.dataDir, "agents"), 0755)
 	m.load()
 	return m
 }
@@ -214,21 +218,22 @@ func (m *Manager) Update(id string, item StoreItem) (StoreItem, error) {
 	return StoreItem{}, fmt.Errorf("item not found: %s", id)
 }
 
-// Delete 删除条目（同时清理本地 skill 目录）
+// Delete 删除条目（同时清理本地目录）
 func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i, s := range m.items {
 		if s.ID == id {
-			// 清理本地 skill 目录
+			// 清理本地目录
 			if s.LocalDir != "" {
-				skillDir := filepath.Join(m.dataDir, "skills", s.LocalDir)
-				os.RemoveAll(skillDir)
-			}
-			// 清理 plugin 目录
-			if s.Type == TypePlugin && s.LocalDir != "" {
-				pluginDir := filepath.Join(m.dataDir, "plugins", s.LocalDir)
-				os.RemoveAll(pluginDir)
+				switch s.Type {
+				case TypePlugin:
+					os.RemoveAll(filepath.Join(m.dataDir, "plugins", s.LocalDir))
+				case TypeAgent:
+					os.RemoveAll(filepath.Join(m.dataDir, "agents", s.LocalDir))
+				default:
+					os.RemoveAll(filepath.Join(m.dataDir, "skills", s.LocalDir))
+				}
 			}
 			m.items = append(m.items[:i], m.items[i+1:]...)
 
@@ -262,6 +267,14 @@ func (m *Manager) PluginDir(item *StoreItem) string {
 	return filepath.Join(m.dataDir, "plugins", item.LocalDir)
 }
 
+// AgentDir 返回 agent 的全局目录绝对路径
+func (m *Manager) AgentDir(item *StoreItem) string {
+	if item == nil || item.LocalDir == "" || item.Type != TypeAgent {
+		return ""
+	}
+	return filepath.Join(m.dataDir, "agents", item.LocalDir)
+}
+
 // CopySkillsToWorkspace 将用户已安装的 skill 复制到 workspace/.skills/
 // Deprecated: 使用 CopySkillsToUserDir 替代
 func (m *Manager) CopySkillsToWorkspace(userID, workspaceDir string) error {
@@ -287,6 +300,12 @@ func (m *Manager) CopySkillsToWorkspace(userID, workspaceDir string) error {
 			}
 			if item.Type == TypeSkill && item.LocalDir != "" {
 				srcDir := filepath.Join(m.dataDir, "skills", item.LocalDir)
+				if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+					toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir})
+				}
+			}
+			if item.Type == TypeAgent && item.LocalDir != "" {
+				srcDir := filepath.Join(m.dataDir, "agents", item.LocalDir)
 				if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
 					toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir})
 				}
@@ -348,6 +367,12 @@ func (m *Manager) CopySkillsToUserDir(userID, skillDir string) error {
 			}
 			if item.Type == TypeSkill && item.LocalDir != "" {
 				srcDir := filepath.Join(m.dataDir, "skills", item.LocalDir)
+				if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+					toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir})
+				}
+			}
+			if item.Type == TypeAgent && item.LocalDir != "" {
+				srcDir := filepath.Join(m.dataDir, "agents", item.LocalDir)
 				if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
 					toCopy = append(toCopy, skillCopy{srcDir: srcDir, name: item.LocalDir})
 				}
@@ -458,7 +483,8 @@ func (m *Manager) Import(repoURL string) ([]StoreItem, error) {
 
 // ImportAgents 从 GitHub 导入独立 agents
 func (m *Manager) ImportAgents(repoURL string) ([]StoreItem, error) {
-	parsed, err := ImportAgentsFromGithub(repoURL)
+	agentsDir := filepath.Join(m.dataDir, "agents")
+	parsed, err := ImportAgentsFromGithub(repoURL, agentsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -688,6 +714,16 @@ func (m *Manager) InstallItemForUser(userID, itemID, skillDir string) error {
 		}
 	}
 
+	if item.Type == TypeAgent && item.LocalDir != "" {
+		srcDir := filepath.Join(m.dataDir, "agents", item.LocalDir)
+		if info, err := os.Stat(srcDir); err == nil && info.IsDir() {
+			dst := filepath.Join(skillDir, item.LocalDir)
+			if err := copyDir(srcDir, dst); err != nil {
+				return fmt.Errorf("copy agent %s: %w", item.LocalDir, err)
+			}
+		}
+	}
+
 	if item.Type == TypePlugin && item.LocalDir != "" {
 		m.copyPluginSkills(item, skillDir)
 	}
@@ -724,6 +760,10 @@ func (m *Manager) UninstallItemForUser(userID, itemID, skillDir string) error {
 
 	// 删除技能文件
 	if item.Type == TypeSkill && item.LocalDir != "" {
+		os.RemoveAll(filepath.Join(skillDir, item.LocalDir))
+	}
+
+	if item.Type == TypeAgent && item.LocalDir != "" {
 		os.RemoveAll(filepath.Join(skillDir, item.LocalDir))
 	}
 
@@ -1154,7 +1194,7 @@ func (m *Manager) FavoriteItem(userID, itemID string) (bool, error) {
 	return true, m.saveUserFavorites(userID, ids)
 }
 
-// ItemDir 返回条目的绝对目录路径（统一 SkillDir/PluginDir）
+// ItemDir 返回条目的绝对目录路径（统一 SkillDir/PluginDir/AgentDir）
 func (m *Manager) ItemDir(item *StoreItem) string {
 	if item == nil || item.LocalDir == "" {
 		return ""
@@ -1162,6 +1202,8 @@ func (m *Manager) ItemDir(item *StoreItem) string {
 	switch item.Type {
 	case TypePlugin:
 		return filepath.Join(m.dataDir, "plugins", item.LocalDir)
+	case TypeAgent:
+		return filepath.Join(m.dataDir, "agents", item.LocalDir)
 	default:
 		return filepath.Join(m.dataDir, "skills", item.LocalDir)
 	}

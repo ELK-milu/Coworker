@@ -260,7 +260,7 @@ func ImportFromGithub(repoURL string, storeDir string) ([]StoreItem, error) {
 }
 
 // ImportAgentsFromGithub 从 GitHub 导入独立 agents（遍历 agents/ 目录中的 .md 文件）
-func ImportAgentsFromGithub(repoURL string) ([]StoreItem, error) {
+func ImportAgentsFromGithub(repoURL string, agentsDir string) ([]StoreItem, error) {
 	owner, repo := parseRepo(repoURL)
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("invalid repo: %s", repoURL)
@@ -278,6 +278,24 @@ func ImportAgentsFromGithub(repoURL string) ([]StoreItem, error) {
 	// 尝试根目录 agents/
 	items := scanAgentsToStoreItems(repoDir, "agents", ghURL)
 	if len(items) > 0 {
+		// 将 agent 文件持久化到 store/agents/{name}/
+		if agentsDir != "" {
+			os.MkdirAll(agentsDir, 0755)
+			for i := range items {
+				safeName := sanitizeDirName(items[i].Name)
+				if safeName == "" {
+					continue
+				}
+				destDir := filepath.Join(agentsDir, safeName)
+				os.MkdirAll(destDir, 0755)
+				// 写入 agent .md 文件
+				mdPath := filepath.Join(destDir, safeName+".md")
+				if items[i].Content != "" {
+					os.WriteFile(mdPath, []byte(items[i].Content), 0644)
+				}
+				items[i].LocalDir = safeName
+			}
+		}
 		fillDefaultAuthor(items, repoIdent)
 		fillDefaultIcon(items, owner)
 		return items, nil
