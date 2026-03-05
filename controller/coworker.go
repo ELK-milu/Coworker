@@ -299,3 +299,48 @@ func (ctrl *CoworkerController) GetBuiltinModel(c *gin.Context) {
 func (ctrl *CoworkerController) SaveBuiltinModel(c *gin.Context) {
 	ctrl.module.RESTHandler.SaveBuiltinModel(c)
 }
+
+// ========== 微信公众号 ==========
+
+// WeChatVerify 微信服务器验证（GET 回调）
+func (ctrl *CoworkerController) WeChatVerify(c *gin.Context) {
+	if ctrl.module.WeChat == nil {
+		c.String(http.StatusServiceUnavailable, "WeChat service not configured")
+		return
+	}
+	ctrl.module.WeChat.VerifyCallback(c)
+}
+
+// WeChatCallback 微信消息回调（POST 回调）
+func (ctrl *CoworkerController) WeChatCallback(c *gin.Context) {
+	if ctrl.module.WeChat == nil {
+		c.String(http.StatusServiceUnavailable, "WeChat service not configured")
+		return
+	}
+	ctrl.module.WeChat.HandleCallback(c)
+}
+
+// WeChatNotify 主动发送消息给用户（内部 API）
+func (ctrl *CoworkerController) WeChatNotify(c *gin.Context) {
+	if ctrl.module.WeChat == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "WeChat service not configured"})
+		return
+	}
+	var req struct {
+		UserID  int    `json:"user_id"`
+		Message string `json:"message"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	if req.UserID == 0 || req.Message == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "user_id and message are required"})
+		return
+	}
+	if err := ctrl.module.WeChat.SendTextToUser(req.UserID, req.Message); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}

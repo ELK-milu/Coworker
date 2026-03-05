@@ -23,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/coworker/internal/task"
 	"github.com/QuantumNous/new-api/coworker/internal/tools"
 	"github.com/QuantumNous/new-api/coworker/internal/variable"
+	"github.com/QuantumNous/new-api/coworker/internal/wechat"
 	"github.com/QuantumNous/new-api/coworker/internal/workspace"
 	"github.com/QuantumNous/new-api/model"
 )
@@ -43,6 +44,7 @@ type Module struct {
 	RESTHandler *api.RESTHandler
 	WSHandler   *api.WSHandler
 	FileHandler *api.FileHandler
+	WeChat      *wechat.Service
 }
 
 var (
@@ -238,6 +240,9 @@ wsHandler.SetUserMCPManager(userMCPManager)
 	// 创建文件处理器
 	fileHandler := api.NewFileHandler(workspaceManager)
 
+	// 创建微信公众号服务（从 .env 读取配置，未配置则不启用）
+	wechatService := wechat.NewService()
+
 	instance = &Module{
 		Config:      cfg,
 		Client:      claudeClient,
@@ -253,6 +258,7 @@ wsHandler.SetUserMCPManager(userMCPManager)
 		RESTHandler: restHandler,
 		WSHandler:   wsHandler,
 		FileHandler: fileHandler,
+		WeChat:      wechatService,
 	}
 
 	// 创建 Job AI 执行器
@@ -341,6 +347,10 @@ func (m *Module) Shutdown() {
 	if m.SandboxPool != nil {
 		log.Println("[Coworker] Shutting down sandbox pool...")
 		m.SandboxPool.Stop()
+	}
+	if m.WeChat != nil {
+		log.Println("[Coworker] Stopping WeChat service...")
+		m.WeChat.Stop()
 	}
 }
 

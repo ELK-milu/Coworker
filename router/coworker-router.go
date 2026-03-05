@@ -95,6 +95,12 @@ func SetCoworkerRouter(router *gin.Engine) {
 		coworkerGroup.GET("/builtin-model", coworkerCtrl.GetBuiltinModel)
 		coworkerGroup.PUT("/builtin-model", coworkerCtrl.SaveBuiltinModel)
 
+		// 微信公众号回调（不需要认证，微信服务器直接调用）
+		coworkerGroup.GET("/wechat/callback", coworkerCtrl.WeChatVerify)
+		coworkerGroup.POST("/wechat/callback", coworkerCtrl.WeChatCallback)
+		// 微信主动推送消息（内部 API）
+		coworkerGroup.POST("/wechat/notify", coworkerCtrl.WeChatNotify)
+
 		// WebSocket 连接
 		coworkerGroup.GET("/ws", coworkerCtrl.HandleWebSocket)
 	}

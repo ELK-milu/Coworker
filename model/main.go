@@ -281,6 +281,7 @@ func migrateDB() error {
 		&CoworkerUserProfile{},
 		&CoworkerJob{},
 		&CoworkerStoreItem{},
+		&CoworkerWechatBinding{},
 	)
 	if err != nil {
 		return err
@@ -334,6 +335,7 @@ func migrateDBFast() error {
 		{&CoworkerUserProfile{}, "CoworkerUserProfile"},
 		{&CoworkerJob{}, "CoworkerJob"},
 		{&CoworkerStoreItem{}, "CoworkerStoreItem"},
+		{&CoworkerWechatBinding{}, "CoworkerWechatBinding"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
