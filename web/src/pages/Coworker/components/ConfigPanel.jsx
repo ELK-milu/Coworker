@@ -22,6 +22,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     assistantAvatar: '',
     phone: '',
     email: '',
+    wechatId: '',
     apiTokenKey: '',
     apiTokenName: '',
     selectedModel: '',
@@ -351,6 +352,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
             assistantAvatar: data.assistant_avatar || '',
             phone: data.phone || '',
             email: data.email || '',
+            wechatId: data.wechat_id || '',
             apiTokenKey: data.api_token_key || '',
             apiTokenName: data.api_token_name || '',
             selectedModel: data.selected_model || '',
@@ -443,6 +445,15 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
                   value={userInfo.email}
                   onChange={(v) => setUserInfo({ ...userInfo, email: v })}
                   placeholder="用于接收通知（可选）"
+                  size="small"
+                />
+              </div>
+              <div className="config-form-item">
+                <Text size="small" type="secondary">微信号（需关注公众号）</Text>
+                <Input
+                  value={userInfo.wechatId}
+                  onChange={(v) => setUserInfo({ ...userInfo, wechatId: v })}
+                  placeholder="用于接收微信通知（可选）"
                   size="small"
                 />
               </div>

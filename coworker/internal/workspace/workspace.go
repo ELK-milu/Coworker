@@ -424,6 +424,7 @@ type UserInfo struct {
 	CoworkerName  string `json:"coworker_name"`
 	Phone         string `json:"phone"`
 	Email         string `json:"email"`
+	WechatID      string `json:"wechat_id,omitempty"`
 	ApiTokenKey   string `json:"api_token_key,omitempty"`
 	ApiTokenName  string `json:"api_token_name,omitempty"`
 	SelectedModel string `json:"selected_model,omitempty"`
@@ -515,6 +516,7 @@ func dbProfileToUserInfo(p *model.CoworkerUserProfile) *UserInfo {
 		CoworkerName:     p.CoworkerName,
 		Phone:            p.Phone,
 		Email:            p.Email,
+		WechatID:         p.WechatID,
 		ApiTokenKey:      p.ApiTokenKey,
 		ApiTokenName:     p.ApiTokenName,
 		SelectedModel:    p.SelectedModel,
@@ -541,6 +543,7 @@ func userInfoToDBProfile(dbUserID int, info *UserInfo) *model.CoworkerUserProfil
 		CoworkerName:     info.CoworkerName,
 		Phone:            info.Phone,
 		Email:            info.Email,
+		WechatID:         info.WechatID,
 		ApiTokenKey:      info.ApiTokenKey,
 		ApiTokenName:     info.ApiTokenName,
 		SelectedModel:    info.SelectedModel,

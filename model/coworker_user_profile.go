@@ -8,6 +8,7 @@ type CoworkerUserProfile struct {
 	CoworkerName     string   `json:"coworker_name" gorm:"type:varchar(128)"`
 	Phone            string   `json:"phone" gorm:"type:varchar(32)"`
 	Email            string   `json:"email" gorm:"type:varchar(128)"`
+	WechatID         string   `json:"wechat_id" gorm:"type:varchar(64)"`
 	ApiTokenKey      string   `json:"api_token_key" gorm:"type:varchar(128)"`
 	ApiTokenName     string   `json:"api_token_name" gorm:"type:varchar(64)"`
 	SelectedModel    string   `json:"selected_model" gorm:"type:varchar(64)"`

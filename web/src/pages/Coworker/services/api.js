@@ -206,6 +206,7 @@ export async function saveUserInfo(userId, userInfo) {
       assistant_avatar: userInfo.assistantAvatar || '',
       phone: userInfo.phone,
       email: userInfo.email,
+      wechat_id: userInfo.wechatId || '',
       api_token_key: userInfo.apiTokenKey || '',
       api_token_name: userInfo.apiTokenName || '',
       selected_model: userInfo.selectedModel || '',
