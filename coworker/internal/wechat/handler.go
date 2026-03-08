@@ -2,18 +2,23 @@ package wechat
 
 import (
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 )
+
+// maxCallbackBodySize 微信回调请求体最大尺寸 (1MB)
+const maxCallbackBodySize = 1024 * 1024
 
 // VerifyCallback 微信服务器验证回调（GET）
 // 微信服务器配置 URL 时会发送 GET 请求验证
@@ -33,7 +38,26 @@ func (s *Service) VerifyCallback(c *gin.Context) {
 
 // HandleCallback 处理微信推送的消息（POST）
 func (s *Service) HandleCallback(c *gin.Context) {
-	body, err := io.ReadAll(c.Request.Body)
+	// C1: POST 回调也需要验证签名
+	signature := c.Query("signature")
+	timestamp := c.Query("timestamp")
+	nonce := c.Query("nonce")
+	if !s.checkSignature(signature, timestamp, nonce) {
+		log.Printf("[WeChat] POST callback signature verification failed")
+		c.String(http.StatusForbidden, "invalid signature")
+		return
+	}
+
+	// 时间戳时效检查（5 分钟窗口，防止重放攻击）
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || abs64(time.Now().Unix()-ts) > 300 {
+		log.Printf("[WeChat] POST callback timestamp expired or invalid: %s", timestamp)
+		c.String(http.StatusForbidden, "timestamp expired")
+		return
+	}
+
+	// C3: 请求体大小限制
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxCallbackBodySize))
 	if err != nil {
 		log.Printf("[WeChat] Read request body failed: %v", err)
 		c.String(http.StatusBadRequest, "")
@@ -47,7 +71,7 @@ func (s *Service) HandleCallback(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[WeChat] Received message: type=%s, from=%s, content=%s", msg.MsgType, msg.FromUserName, msg.Content)
+	log.Printf("[WeChat] Received message: type=%s, from=%s", msg.MsgType, msg.FromUserName)
 
 	switch msg.MsgType {
 	case MsgTypeEvent:
@@ -222,7 +246,7 @@ func (s *Service) replyText(c *gin.Context, msg *InMessage, content string) {
 	c.Data(http.StatusOK, "application/xml", data)
 }
 
-// checkSignature 验证微信签名
+// checkSignature 验证微信签名（constant-time 比较防止时序侧信道）
 func (s *Service) checkSignature(signature, timestamp, nonce string) bool {
 	arr := []string{s.verifyToken, timestamp, nonce}
 	sort.Strings(arr)
@@ -232,5 +256,13 @@ func (s *Service) checkSignature(signature, timestamp, nonce string) bool {
 	h.Write([]byte(str))
 	computed := fmt.Sprintf("%x", h.Sum(nil))
 
-	return computed == signature
+	return subtle.ConstantTimeCompare([]byte(computed), []byte(signature)) == 1
+}
+
+// abs64 返回 int64 绝对值
+func abs64(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
 }

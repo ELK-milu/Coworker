@@ -13,6 +13,7 @@ func SetCoworkerRouter(router *gin.Engine) {
 
 	// Coworker API 路由组
 	coworkerGroup := router.Group("/coworker")
+	coworkerGroup.Use(middleware.GlobalAPIRateLimit())
 	{
 		// 公开端点（无需认证）
 		coworkerGroup.GET("/health", coworkerCtrl.Health)

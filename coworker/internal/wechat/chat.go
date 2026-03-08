@@ -7,14 +7,61 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/coworker/internal/client"
 	"github.com/QuantumNous/new-api/model"
 )
 
+// perUserRateLimiter 基于简单时间窗口的 per-user 速率限制
+type perUserRateLimiter struct {
+	mu       sync.Mutex
+	records  map[string][]time.Time
+	maxCount int
+	window   time.Duration
+}
+
+var wechatRateLimiter = &perUserRateLimiter{
+	records:  make(map[string][]time.Time),
+	maxCount: 3,               // 每个窗口最多 3 条
+	window:   10 * time.Second, // 10 秒窗口
+}
+
+// allow 检查是否允许该用户发送消息
+func (r *perUserRateLimiter) allow(openID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-r.window)
+
+	// 清理过期记录
+	records := r.records[openID]
+	valid := records[:0]
+	for _, t := range records {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= r.maxCount {
+		r.records[openID] = valid
+		return false
+	}
+
+	r.records[openID] = append(valid, now)
+	return true
+}
+
 // chatWithAI 异步调用 AI 对话，获取回复后通过客服消息发送给用户
 func (s *Service) chatWithAI(openID string, userID int, userMessage string) {
+	// 速率限制：每 10 秒最多 3 条消息
+	if !wechatRateLimiter.allow(openID) {
+		_ = s.SendTextToOpenID(openID, "消息频率过高，请稍后再试。")
+		return
+	}
+
 	go func() {
 		// 构建用户专属的 AI 客户端（通过 Relay 走计费）
 		aiClient := s.getClientForUser(userID)

@@ -137,9 +137,8 @@ func (h *FileHandler) Preview(c *gin.Context) {
 	ext := strings.ToLower(filepath.Ext(filename))
 	mimeType := getMimeType(ext)
 
-	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	c.Header("Content-Type", mimeType)
-	c.Header("Access-Control-Allow-Origin", "*")
 
 	log.Printf("[FileHandler] File preview for user %s: %s (%s)", userID, filePath, mimeType)
 
