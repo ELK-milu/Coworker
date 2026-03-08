@@ -33,7 +33,7 @@ services:
     working_dir: /app
     ports:
       - "5173:5173"
-    command: sh -c "bun install && bun run dev -- --host 0.0.0.0"
+    command: sh -c "bun install && bun run build && bun run dev -- --host 0.0.0.0"
     environment:
       - NODE_ENV=development
       - VITE_API_URL=http://new-api-dev:3000
