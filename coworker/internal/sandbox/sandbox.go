@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -152,33 +153,59 @@ func (s *Sandbox) ToVirtual(realPath string) string {
 	return realPath
 }
 
-// validate 验证路径是否在沙箱内
+// validate 验证路径是否在沙箱内（仅检查主工作区）
 func (s *Sandbox) validate(realPath string) error {
 	cleanPath := filepath.Clean(realPath)
 	cleanBase := filepath.Clean(s.realBase)
 
-	// 确保路径在沙箱基础目录内
-	if !strings.HasPrefix(cleanPath, cleanBase) {
-		return ErrPathOutsideSandbox
+	// 解析符号链接
+	if _, err := os.Lstat(cleanPath); err == nil {
+		if r, err := filepath.EvalSymlinks(cleanPath); err == nil {
+			cleanPath = r
+		}
 	}
 
-	// 额外检查：确保不是通过符号链接逃逸
-	// 注意：这里只做基本检查，生产环境可能需要更严格的检查
-	return nil
+	sep := string(filepath.Separator)
+	if cleanPath == cleanBase || strings.HasPrefix(cleanPath, cleanBase+sep) {
+		return nil
+	}
+
+	return ErrPathOutsideSandbox
 }
 
 // validateAll 验证路径是否在主工作区或任何额外挂载内
+// 会解析符号链接以防止通过 symlink 逃逸沙箱
 func (s *Sandbox) validateAll(realPath string) error {
 	cleanPath := filepath.Clean(realPath)
 
+	// 解析符号链接获取真实物理路径
+	resolved := cleanPath
+	if _, err := os.Lstat(cleanPath); err == nil {
+		// 文件/目录存在时解析 symlink
+		if r, err := filepath.EvalSymlinks(cleanPath); err == nil {
+			resolved = r
+		}
+	} else {
+		// 文件不存在时解析父目录的 symlink
+		dir := filepath.Dir(cleanPath)
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			resolved = filepath.Join(r, filepath.Base(cleanPath))
+		}
+	}
+
+	// 使用路径分隔符后缀防止 "workspace_evil" 匹配 "workspace"
+	sep := string(filepath.Separator)
+
 	// 检查主工作区
-	if strings.HasPrefix(cleanPath, filepath.Clean(s.realBase)) {
+	base := filepath.Clean(s.realBase)
+	if resolved == base || strings.HasPrefix(resolved, base+sep) {
 		return nil
 	}
 
 	// 检查额外挂载
 	for _, m := range s.extraMounts {
-		if strings.HasPrefix(cleanPath, filepath.Clean(m.RealPath)) {
+		mountBase := filepath.Clean(m.RealPath)
+		if resolved == mountBase || strings.HasPrefix(resolved, mountBase+sep) {
 			return nil
 		}
 	}
