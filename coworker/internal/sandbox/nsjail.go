@@ -86,10 +86,10 @@ func (e *NsjailExecutor) Exec(ctx context.Context, workspacePath, command string
 			"--time_limit %d "+
 			"--rlimit_as %d "+
 			"--disable_proc "+
-			"-- /bin/bash -c %q",
+			"-- /bin/bash -c '%s'",
 		int(timeout.Seconds()),
 		e.config.MemoryMB,
-		command,
+		shellEscapeSingleQuote(command),
 	)
 
 	// 通过 docker exec 调用
@@ -141,6 +141,13 @@ func convertToNsjailPath(backendPath string) string {
 		return strings.Replace(cleanPath, "/app/userdata", "/userdata", 1)
 	}
 	return cleanPath
+}
+
+// shellEscapeSingleQuote 使用单引号安全转义 shell 命令
+// 将 command 中的 ' 替换为 '\'' (结束单引号、转义单引号、重新开始单引号)
+// 这可以防止 $()、``、$VAR 等 shell 展开（单引号内不展开变量和子命令）
+func shellEscapeSingleQuote(command string) string {
+	return strings.ReplaceAll(command, "'", `'\''`)
 }
 
 // filterNsjailLogs 过滤 nsjail 的日志输出

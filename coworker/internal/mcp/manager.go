@@ -279,7 +279,19 @@ func (m *Manager) CallTool(ctx context.Context, connID, toolName string, args js
 		return nil, fmt.Errorf("connection not found: %s", connID)
 	}
 
-	params := json.RawMessage(fmt.Sprintf(`{"name":"%s","arguments":%s}`, toolName, args))
+	// 使用 json.Marshal 安全构建 JSON，防止注入
+	paramObj := struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}{
+		Name:      toolName,
+		Arguments: args,
+	}
+	params, err := json.Marshal(paramObj)
+	if err != nil {
+		return nil, fmt.Errorf("marshal tool params: %w", err)
+	}
+
 	resp, err := conn.sendAndWait(ctx, "tools/call", params, 120*time.Second)
 	if err != nil {
 		return nil, err

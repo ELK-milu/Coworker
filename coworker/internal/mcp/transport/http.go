@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,11 @@ func (t *HTTPTransport) Start(ctx context.Context) error {
 
 	if t.running {
 		return fmt.Errorf("transport already running")
+	}
+
+	// SSRF 防护：校验目标 URL 不指向内网/本地
+	if err := validateHTTPURL(ctx, t.config.URL); err != nil {
+		return fmt.Errorf("URL validation failed: %w", err)
 	}
 
 	_, cancel := context.WithCancel(ctx)
@@ -244,4 +251,65 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// --- SSRF 防护 ---
+
+// validateHTTPURL 校验 URL 不指向内网/本地/云元数据地址
+func validateHTTPURL(ctx context.Context, rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
+	}
+
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("missing host")
+	}
+
+	// 检查 localhost
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return fmt.Errorf("localhost is not allowed")
+	}
+
+	// 检查云元数据地址
+	if h == "169.254.169.254" || h == "metadata.google.internal" {
+		return fmt.Errorf("cloud metadata endpoint is not allowed")
+	}
+
+	// IP 地址直接检查
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIPAddr(ip) {
+			return fmt.Errorf("private network address is not allowed")
+		}
+		return nil
+	}
+
+	// 域名先 DNS 解析再检查
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("DNS resolution failed: %w", err)
+	}
+	for _, addr := range addrs {
+		if isPrivateIPAddr(addr.IP) {
+			return fmt.Errorf("host %s resolves to private network address", host)
+		}
+	}
+
+	return nil
+}
+
+// isPrivateIPAddr 判断 IP 是否属于私有/保留范围
+func isPrivateIPAddr(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
 }

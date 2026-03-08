@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -11,6 +12,35 @@ import (
 	"github.com/QuantumNous/new-api/coworker/internal/sandbox"
 	"github.com/QuantumNous/new-api/coworker/pkg/types"
 )
+
+// dangerousPatterns 危险命令正则模式
+var dangerousPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\brm\s+(-[rfRF]+\s+)?/`),                                        // rm -rf /
+	regexp.MustCompile(`\bmkfs\b`),                                                        // mkfs
+	regexp.MustCompile(`\bdd\s+.*\bof\s*=\s*/dev/`),                                       // dd of=/dev/xxx
+	regexp.MustCompile(`>\s*/dev/sd[a-z]`),                                                 // > /dev/sdX
+	regexp.MustCompile(`\b(curl|wget)\s+.*\|\s*(bash|sh|zsh)`),                             // curl | bash
+	regexp.MustCompile(`\b(nc|ncat|netcat)\s+.*\s(-[elp]|--listen|--exec)`),                // reverse shell
+	regexp.MustCompile(`/dev/(tcp|udp)/`),                                                  // bash net redirect
+	regexp.MustCompile(`\bchmod\s+[0-7]*777\b`),                                            // chmod 777
+	regexp.MustCompile(`\bchown\s+.*\s+/`),                                                 // chown /
+	regexp.MustCompile(`\b(iptables|ip6tables|nft)\b`),                                     // firewall
+	regexp.MustCompile(`\b(shutdown|reboot|poweroff|init\s+[06])\b`),                       // system control
+	regexp.MustCompile(`\b(passwd|useradd|userdel|usermod|groupadd)\b`),                    // user mgmt
+	regexp.MustCompile(`\b(mount|umount)\b`),                                               // filesystem mount
+	regexp.MustCompile(`\bsudo\b`),                                                         // privilege escalation
+	regexp.MustCompile(`\bsu\s`),                                                           // switch user
+	regexp.MustCompile(`>\s*/etc/`),                                                        // write to /etc/
+	regexp.MustCompile(`\beval\s+.*\$`),                                                    // eval with variable expansion
+	regexp.MustCompile(`\bcrontab\b`),                                                      // crontab modification
+	regexp.MustCompile(`\bsystemctl\s+(start|stop|restart|enable|disable|mask)\b`),         // systemd control
+}
+
+// dangerousSystemPaths 在本地模式下禁止访问的系统路径
+var dangerousSystemPaths = []string{
+	"/etc/", "/var/", "/usr/", "/bin/", "/sbin/",
+	"/root/", "/proc/", "/sys/", "/boot/", "/dev/",
+}
 
 // BashTool Bash 命令执行工具
 type BashTool struct {
@@ -65,10 +95,17 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (*types.T
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	// 检查危险命令
+	// 检查危险命令（字符串黑名单）
 	for _, blocked := range t.blockedCommands {
 		if strings.Contains(in.Command, blocked) {
 			return &types.ToolResult{Success: false, Error: "blocked command"}, nil
+		}
+	}
+
+	// 检查危险命令（正则模式匹配）
+	for _, pattern := range dangerousPatterns {
+		if pattern.MatchString(in.Command) {
+			return &types.ToolResult{Success: false, Error: "command matches dangerous pattern: " + pattern.String()}, nil
 		}
 	}
 
@@ -148,13 +185,10 @@ func (t *BashTool) executeLocal(ctx context.Context, in BashInput) (*types.ToolR
 	// 获取沙箱
 	sb, _ := ctx.Value(types.SandboxKey).(*sandbox.Sandbox)
 
-	// 检查命令中的危险系统路径
-	if sb != nil {
-		dangerousPaths := []string{"/etc/", "/var/", "/usr/", "/bin/", "/sbin/", "/root/", "/proc/", "/sys/"}
-		for _, path := range dangerousPaths {
-			if strings.Contains(in.Command, path) {
-				return &types.ToolResult{Success: false, Error: "access to system paths not allowed"}, nil
-			}
+	// 检查命令中的危险系统路径（始终检查，无论沙箱是否存在）
+	for _, path := range dangerousSystemPaths {
+		if strings.Contains(in.Command, path) {
+			return &types.ToolResult{Success: false, Error: "access to system paths not allowed"}, nil
 		}
 	}
 
