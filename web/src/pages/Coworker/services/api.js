@@ -5,6 +5,7 @@ Copyright (C) 2025 QuantumNous
 /**
  * Coworker REST API Service
  * 侧边栏功能使用 REST API，聊天功能保持 WebSocket
+ * user_id 由后端从 session cookie 中读取，前端无需传递
  */
 
 const API_BASE = '/coworker';
@@ -29,14 +30,14 @@ async function request(url, options = {}) {
 
 // ========== 会话管理 API ==========
 
-export async function listSessions(userId) {
-  return request(`/sessions?user_id=${encodeURIComponent(userId)}`);
+export async function listSessions() {
+  return request('/sessions');
 }
 
-export async function createSession(userId) {
+export async function createSession() {
   return request('/sessions', {
     method: 'POST',
-    body: JSON.stringify({ user_id: userId }),
+    body: JSON.stringify({}),
   });
 }
 
@@ -56,43 +57,40 @@ export async function deleteSession(sessionId) {
 
 // ========== 任务管理 API ==========
 
-export async function listTasks(userId, listId = 'default') {
-  return request(`/tasks?user_id=${encodeURIComponent(userId)}&list_id=${encodeURIComponent(listId)}`);
+export async function listTasks(listId = 'default') {
+  return request(`/tasks?list_id=${encodeURIComponent(listId)}`);
 }
 
-export async function createTask(userId, taskData, listId = 'default') {
+export async function createTask(taskData, listId = 'default') {
   return request('/tasks', {
     method: 'POST',
     body: JSON.stringify({
-      user_id: userId,
       list_id: listId,
       ...taskData,
     }),
   });
 }
 
-export async function updateTask(userId, taskId, updates, listId = 'default') {
+export async function updateTask(taskId, updates, listId = 'default') {
   return request(`/tasks/${encodeURIComponent(taskId)}`, {
     method: 'PUT',
     body: JSON.stringify({
-      user_id: userId,
       list_id: listId,
       ...updates,
     }),
   });
 }
 
-export async function deleteTask(userId, taskId, listId = 'default') {
-  return request(`/tasks/${encodeURIComponent(taskId)}?user_id=${encodeURIComponent(userId)}&list_id=${encodeURIComponent(listId)}`, {
+export async function deleteTask(taskId, listId = 'default') {
+  return request(`/tasks/${encodeURIComponent(taskId)}?list_id=${encodeURIComponent(listId)}`, {
     method: 'DELETE',
   });
 }
 
-export async function reorderTasks(userId, taskIds, listId = 'default') {
+export async function reorderTasks(taskIds, listId = 'default') {
   return request('/tasks/reorder', {
     method: 'PUT',
     body: JSON.stringify({
-      user_id: userId,
       list_id: listId,
       task_ids: taskIds,
     }),
@@ -101,31 +99,27 @@ export async function reorderTasks(userId, taskIds, listId = 'default') {
 
 // ========== 文件管理 API ==========
 
-export async function listFiles(userId, path = '') {
-  return request(`/files?user_id=${encodeURIComponent(userId)}&path=${encodeURIComponent(path)}`);
+export async function listFiles(path = '') {
+  return request(`/files?path=${encodeURIComponent(path)}`);
 }
 
-export async function createFolder(userId, path) {
+export async function createFolder(path) {
   return request('/files/folder', {
     method: 'POST',
-    body: JSON.stringify({
-      user_id: userId,
-      path,
-    }),
+    body: JSON.stringify({ path }),
   });
 }
 
-export async function deleteFile(userId, path) {
-  return request(`/files?user_id=${encodeURIComponent(userId)}&path=${encodeURIComponent(path)}`, {
+export async function deleteFile(path) {
+  return request(`/files?path=${encodeURIComponent(path)}`, {
     method: 'DELETE',
   });
 }
 
-export async function renameFile(userId, path, newName) {
+export async function renameFile(path, newName) {
   return request('/files/rename', {
     method: 'PUT',
     body: JSON.stringify({
-      user_id: userId,
       path,
       new_name: newName,
     }),
@@ -133,10 +127,9 @@ export async function renameFile(userId, path, newName) {
 }
 
 // 文件上传
-export async function uploadFile(userId, path, file) {
+export async function uploadFile(path, file) {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('user_id', userId);
   formData.append('path', path);
 
   const response = await fetch(`${API_BASE}/files/upload`, {
@@ -153,54 +146,50 @@ export async function uploadFile(userId, path, file) {
 }
 
 // 文件下载 URL
-export function getDownloadUrl(userId, path) {
-  return `${API_BASE}/files/download?user_id=${encodeURIComponent(userId)}&path=${encodeURIComponent(path)}`;
+export function getDownloadUrl(path) {
+  return `${API_BASE}/files/download?path=${encodeURIComponent(path)}`;
 }
 
 // 文件预览 URL（inline + 正确 MIME type）
-export function getPreviewUrl(userId, path) {
-  return `${API_BASE}/files/preview?user_id=${encodeURIComponent(userId)}&path=${encodeURIComponent(path)}`;
+export function getPreviewUrl(path) {
+  return `${API_BASE}/files/preview?path=${encodeURIComponent(path)}`;
 }
 
 // 保存编辑后的文件（覆盖原文件）
-export async function saveFileContent(userId, filePath, blob, fileName) {
+export async function saveFileContent(filePath, blob, fileName) {
   const dir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '';
   const file = new File([blob], fileName, { type: blob.type });
-  return uploadFile(userId, dir, file);
+  return uploadFile(dir, file);
 }
 
 // 工作空间使用统计
-export async function getWorkspaceStats(userId) {
-  return request(`/files/stats?user_id=${encodeURIComponent(userId)}`);
+export async function getWorkspaceStats() {
+  return request('/files/stats');
 }
 
 // ========== 配置管理 API ==========
 
-export async function getConfig(userId) {
-  return request(`/config?user_id=${encodeURIComponent(userId)}`);
+export async function getConfig() {
+  return request('/config');
 }
 
-export async function saveConfig(userId, content) {
+export async function saveConfig(content) {
   return request('/config', {
     method: 'PUT',
-    body: JSON.stringify({
-      user_id: userId,
-      content,
-    }),
+    body: JSON.stringify({ content }),
   });
 }
 
 // ========== 用户信息 API ==========
 
-export async function getUserInfo(userId) {
-  return request(`/userinfo?user_id=${encodeURIComponent(userId)}`);
+export async function getUserInfo() {
+  return request('/userinfo');
 }
 
-export async function saveUserInfo(userId, userInfo) {
+export async function saveUserInfo(userInfo) {
   return request('/userinfo', {
     method: 'PUT',
     body: JSON.stringify({
-      user_id: userId,
       user_name: userInfo.userName,
       coworker_name: userInfo.coworkerName,
       assistant_avatar: userInfo.assistantAvatar || '',
@@ -221,108 +210,88 @@ export async function saveUserInfo(userId, userInfo) {
 
 // ========== 记忆管理 API ==========
 
-export async function listMemories(userId) {
-  return request(`/memories?user_id=${encodeURIComponent(userId)}`);
+export async function listMemories() {
+  return request('/memories');
 }
 
-export async function getMemory(userId, memoryId) {
-  return request(`/memories/${encodeURIComponent(memoryId)}?user_id=${encodeURIComponent(userId)}`);
+export async function getMemory(memoryId) {
+  return request(`/memories/${encodeURIComponent(memoryId)}`);
 }
 
-export async function createMemory(userId, memoryData) {
+export async function createMemory(memoryData) {
   return request('/memories', {
     method: 'POST',
-    body: JSON.stringify({
-      user_id: userId,
-      ...memoryData,
-    }),
+    body: JSON.stringify({ ...memoryData }),
   });
 }
 
-export async function updateMemory(userId, memoryId, updates) {
+export async function updateMemory(memoryId, updates) {
   return request(`/memories/${encodeURIComponent(memoryId)}`, {
     method: 'PUT',
-    body: JSON.stringify({
-      user_id: userId,
-      ...updates,
-    }),
+    body: JSON.stringify({ ...updates }),
   });
 }
 
-export async function deleteMemory(userId, memoryId) {
-  return request(`/memories/${encodeURIComponent(memoryId)}?user_id=${encodeURIComponent(userId)}`, {
+export async function deleteMemory(memoryId) {
+  return request(`/memories/${encodeURIComponent(memoryId)}`, {
     method: 'DELETE',
   });
 }
 
-export async function searchMemories(userId, query) {
-  return request(`/memories/search?user_id=${encodeURIComponent(userId)}&q=${encodeURIComponent(query)}`);
+export async function searchMemories(query) {
+  return request(`/memories/search?q=${encodeURIComponent(query)}`);
 }
 
 // ========== Job 管理 API ==========
 
-export async function listJobs(userId) {
-  return request(`/jobs?user_id=${encodeURIComponent(userId)}`);
+export async function listJobs() {
+  return request('/jobs');
 }
 
-export async function createJob(userId, jobData) {
+export async function createJob(jobData) {
   return request('/jobs', {
     method: 'POST',
-    body: JSON.stringify({
-      user_id: userId,
-      ...jobData,
-    }),
+    body: JSON.stringify({ ...jobData }),
   });
 }
 
-export async function updateJob(userId, jobId, updates) {
+export async function updateJob(jobId, updates) {
   return request(`/jobs/${encodeURIComponent(jobId)}`, {
     method: 'PUT',
-    body: JSON.stringify({
-      user_id: userId,
-      ...updates,
-    }),
+    body: JSON.stringify({ ...updates }),
   });
 }
 
-export async function deleteJob(userId, jobId) {
-  return request(`/jobs/${encodeURIComponent(jobId)}?user_id=${encodeURIComponent(userId)}`, {
+export async function deleteJob(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}`, {
     method: 'DELETE',
   });
 }
 
-export async function runJob(userId, jobId) {
+export async function runJob(jobId) {
   return request(`/jobs/${encodeURIComponent(jobId)}/run`, {
     method: 'POST',
-    body: JSON.stringify({
-      user_id: userId,
-    }),
+    body: JSON.stringify({}),
   });
 }
 
-export async function reorderJobs(userId, jobIds) {
+export async function reorderJobs(jobIds) {
   return request('/jobs/reorder', {
     method: 'PUT',
-    body: JSON.stringify({
-      user_id: userId,
-      job_ids: jobIds,
-    }),
+    body: JSON.stringify({ job_ids: jobIds }),
   });
 }
 
 // ========== MCP 配置 API ==========
 
-export async function getUserMCPConfig(userId, itemId) {
-  return request(`/store/user/${encodeURIComponent(itemId)}/config?user_id=${encodeURIComponent(userId)}`);
+export async function getUserMCPConfig(itemId) {
+  return request(`/store/user/${encodeURIComponent(itemId)}/config`);
 }
 
-export async function saveUserMCPConfig(userId, itemId, mcpJson) {
+export async function saveUserMCPConfig(itemId, mcpJson) {
   return request(`/store/user/${encodeURIComponent(itemId)}/config`, {
     method: 'PUT',
-    body: JSON.stringify({
-      user_id: userId,
-      mcp_json: mcpJson,
-    }),
+    body: JSON.stringify({ mcp_json: mcpJson }),
   });
 }
 

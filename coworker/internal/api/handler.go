@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/coworker/internal/client"
@@ -81,6 +82,11 @@ func (h *RESTHandler) SetConfig(cfg *config.Config) {
 	h.config = cfg
 }
 
+// getUserIDStr 从认证中间件获取可信的 user_id（字符串形式）
+func getUserIDStr(c *gin.Context) string {
+	return strconv.Itoa(c.GetInt("id"))
+}
+
 // CreateSession 创建会话
 func (h *RESTHandler) CreateSession(c *gin.Context) {
 	var req struct {
@@ -90,7 +96,8 @@ func (h *RESTHandler) CreateSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	sess := h.sessions.Create(req.UserID)
+	userID := getUserIDStr(c)
+	sess := h.sessions.Create(userID)
 	c.JSON(http.StatusOK, gin.H{"session_id": sess.ID})
 }
 
@@ -152,7 +159,7 @@ func (h *RESTHandler) Health(c *gin.Context) {
 
 // ListSessions 获取会话列表
 func (h *RESTHandler) ListSessions(c *gin.Context) {
-	userID := c.Query("user_id")
+	userID := getUserIDStr(c)
 	sessions := h.sessions.List(userID)
 
 	var sessionList []map[string]interface{}
@@ -206,13 +213,8 @@ func (h *RESTHandler) ListSessions(c *gin.Context) {
 
 // ListTasks 获取任务列表
 func (h *RESTHandler) ListTasks(c *gin.Context) {
-	userID := c.Query("user_id")
+	userID := getUserIDStr(c)
 	listID := c.DefaultQuery("list_id", "default")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
 	if h.tasks == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "task manager not initialized"})
@@ -236,11 +238,8 @@ func (h *RESTHandler) CreateTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID := getUserIDStr(c)
 
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 	if req.ListID == "" {
 		req.ListID = "default"
 	}
@@ -250,7 +249,7 @@ func (h *RESTHandler) CreateTask(c *gin.Context) {
 		return
 	}
 
-	newTask, err := h.tasks.Create(req.UserID, req.ListID, req.Subject, req.Description, req.ActiveForm)
+	newTask, err := h.tasks.Create(userID, req.ListID, req.Subject, req.Description, req.ActiveForm)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -274,11 +273,8 @@ func (h *RESTHandler) UpdateTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID := getUserIDStr(c)
 
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 	if req.ListID == "" {
 		req.ListID = "default"
 	}
@@ -297,7 +293,7 @@ func (h *RESTHandler) UpdateTask(c *gin.Context) {
 		updates["activeForm"] = req.ActiveForm
 	}
 
-	updatedTask, err := h.tasks.Update(req.UserID, req.ListID, taskID, updates)
+	updatedTask, err := h.tasks.Update(userID, req.ListID, taskID, updates)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -309,13 +305,8 @@ func (h *RESTHandler) UpdateTask(c *gin.Context) {
 // DeleteTask 删除任务
 func (h *RESTHandler) DeleteTask(c *gin.Context) {
 	taskID := c.Param("id")
-	userID := c.Query("user_id")
+	userID := getUserIDStr(c)
 	listID := c.DefaultQuery("list_id", "default")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
 	updates := map[string]interface{}{"status": "deleted"}
 	_, err := h.tasks.Update(userID, listID, taskID, updates)
@@ -338,16 +329,13 @@ func (h *RESTHandler) ReorderTasks(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID := getUserIDStr(c)
 
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 	if req.ListID == "" {
 		req.ListID = "default"
 	}
 
-	err := h.tasks.UpdateOrder(req.UserID, req.ListID, req.TaskIDs)
+	err := h.tasks.UpdateOrder(userID, req.ListID, req.TaskIDs)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -360,13 +348,8 @@ func (h *RESTHandler) ReorderTasks(c *gin.Context) {
 
 // ListFiles 获取文件列表
 func (h *RESTHandler) ListFiles(c *gin.Context) {
-	userID := c.Query("user_id")
+	userID := getUserIDStr(c)
 	path := c.Query("path")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
 	if h.workspace == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "workspace not initialized"})
@@ -397,13 +380,14 @@ func (h *RESTHandler) CreateFolder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID := getUserIDStr(c)
 
-	if req.UserID == "" || req.Path == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id and path are required"})
+	if req.Path == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path is required"})
 		return
 	}
 
-	if err := h.workspace.CreateFolder(req.UserID, req.Path); err != nil {
+	if err := h.workspace.CreateFolder(userID, req.Path); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -413,11 +397,11 @@ func (h *RESTHandler) CreateFolder(c *gin.Context) {
 
 // DeleteFile 删除文件或文件夹
 func (h *RESTHandler) DeleteFile(c *gin.Context) {
-	userID := c.Query("user_id")
+	userID := getUserIDStr(c)
 	path := c.Query("path")
 
-	if userID == "" || path == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id and path are required"})
+	if path == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path is required"})
 		return
 	}
 
@@ -440,13 +424,14 @@ func (h *RESTHandler) RenameFile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID := getUserIDStr(c)
 
-	if req.UserID == "" || req.Path == "" || req.NewName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id, path and new_name are required"})
+	if req.Path == "" || req.NewName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path and new_name are required"})
 		return
 	}
 
-	if err := h.workspace.RenameFile(req.UserID, req.Path, req.NewName); err != nil {
+	if err := h.workspace.RenameFile(userID, req.Path, req.NewName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -456,11 +441,7 @@ func (h *RESTHandler) RenameFile(c *gin.Context) {
 
 // GetWorkspaceStats 获取工作空间使用统计
 func (h *RESTHandler) GetWorkspaceStats(c *gin.Context) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.workspace == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "workspace not initialized"})
@@ -490,11 +471,7 @@ func (h *RESTHandler) GetWorkspaceStats(c *gin.Context) {
 
 // GetConfig 获取配置
 func (h *RESTHandler) GetConfig(c *gin.Context) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	content, err := h.workspace.LoadConfig(userID)
 	if err != nil {
@@ -515,13 +492,9 @@ func (h *RESTHandler) SaveConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID := getUserIDStr(c)
 
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
-
-	if err := h.workspace.SaveConfig(req.UserID, req.Content); err != nil {
+	if err := h.workspace.SaveConfig(userID, req.Content); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -533,11 +506,7 @@ func (h *RESTHandler) SaveConfig(c *gin.Context) {
 
 // GetUserInfo 获取用户信息
 func (h *RESTHandler) GetUserInfo(c *gin.Context) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	info, err := h.workspace.LoadUserInfo(userID)
 	if err != nil {
@@ -584,14 +553,10 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	// 先加载已有数据，保留 InstalledItems 等非本接口管理的字段
-	info, err := h.workspace.LoadUserInfo(req.UserID)
+	info, err := h.workspace.LoadUserInfo(userID)
 	if err != nil {
 		info = &workspace.UserInfo{}
 	}
@@ -609,7 +574,7 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 	info.FrequencyPenalty = req.FrequencyPenalty
 	info.PresencePenalty = req.PresencePenalty
 
-	if err := h.workspace.SaveUserInfo(req.UserID, info); err != nil {
+	if err := h.workspace.SaveUserInfo(userID, info); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -621,11 +586,7 @@ func (h *RESTHandler) SaveUserInfo(c *gin.Context) {
 
 // ListJobs 获取 Job 列表
 func (h *RESTHandler) ListJobs(c *gin.Context) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.jobs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
@@ -653,9 +614,10 @@ func (h *RESTHandler) CreateJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID := getUserIDStr(c)
 
-	if req.UserID == "" || req.Name == "" || req.Command == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id, name and command are required"})
+	if req.Name == "" || req.Command == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and command are required"})
 		return
 	}
 
@@ -683,7 +645,7 @@ func (h *RESTHandler) CreateJob(c *gin.Context) {
 	}
 
 	newJob, err := h.jobs.CreateWithSchedule(
-		req.UserID, req.Name, req.Command,
+		userID, req.Name, req.Command,
 		scheduleType, req.CronExpr, req.Time,
 		req.Weekdays, req.IntervalMinutes, runAt,
 	)
@@ -714,11 +676,7 @@ func (h *RESTHandler) UpdateJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.jobs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
@@ -757,7 +715,7 @@ func (h *RESTHandler) UpdateJob(c *gin.Context) {
 		}
 	}
 
-	updatedJob, err := h.jobs.Update(req.UserID, jobID, updates)
+	updatedJob, err := h.jobs.Update(userID, jobID, updates)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -769,12 +727,7 @@ func (h *RESTHandler) UpdateJob(c *gin.Context) {
 // DeleteJob 删除 Job
 func (h *RESTHandler) DeleteJob(c *gin.Context) {
 	jobID := c.Param("id")
-	userID := c.Query("user_id")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.jobs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
@@ -799,25 +752,21 @@ func (h *RESTHandler) RunJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.jobs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
 		return
 	}
 
-	jobItem := h.jobs.Get(req.UserID, jobID)
+	jobItem := h.jobs.Get(userID, jobID)
 	if jobItem == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
 		return
 	}
 
 	// 异步触发执行
-	if err := h.jobs.RunNow(req.UserID, jobID); err != nil {
+	if err := h.jobs.RunNow(userID, jobID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -839,18 +788,14 @@ func (h *RESTHandler) ReorderJobs(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.jobs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "job manager not initialized"})
 		return
 	}
 
-	if err := h.jobs.UpdateOrder(req.UserID, req.JobIDs); err != nil {
+	if err := h.jobs.UpdateOrder(userID, req.JobIDs); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -862,11 +807,7 @@ func (h *RESTHandler) ReorderJobs(c *gin.Context) {
 
 // ListMemories 获取记忆列表（按 weight 降序）
 func (h *RESTHandler) ListMemories(c *gin.Context) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.memories == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
@@ -894,13 +835,8 @@ func (h *RESTHandler) ListMemories(c *gin.Context) {
 
 // GetMemory 获取单条记忆
 func (h *RESTHandler) GetMemory(c *gin.Context) {
-	userID := c.Query("user_id")
+	userID := getUserIDStr(c)
 	memoryID := c.Param("id")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
 	if h.memories == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
@@ -929,9 +865,10 @@ func (h *RESTHandler) CreateMemory(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	userID := getUserIDStr(c)
 
-	if req.UserID == "" || len(req.Tags) == 0 || req.Content == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id, tags and content are required"})
+	if len(req.Tags) == 0 || req.Content == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tags and content are required"})
 		return
 	}
 
@@ -958,7 +895,7 @@ func (h *RESTHandler) CreateMemory(c *gin.Context) {
 		Weight:  req.Weight,
 	}
 
-	created, err := h.memories.Create(req.UserID, mem)
+	created, err := h.memories.Create(userID, mem)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -981,11 +918,7 @@ func (h *RESTHandler) UpdateMemory(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.memories == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
@@ -1006,7 +939,7 @@ func (h *RESTHandler) UpdateMemory(c *gin.Context) {
 		updates["weight"] = req.Weight
 	}
 
-	updated, err := h.memories.Update(req.UserID, memoryID, updates)
+	updated, err := h.memories.Update(userID, memoryID, updates)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1018,12 +951,7 @@ func (h *RESTHandler) UpdateMemory(c *gin.Context) {
 // DeleteMemory 删除记忆
 func (h *RESTHandler) DeleteMemory(c *gin.Context) {
 	memoryID := c.Param("id")
-	userID := c.Query("user_id")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	if h.memories == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
@@ -1040,13 +968,8 @@ func (h *RESTHandler) DeleteMemory(c *gin.Context) {
 
 // SearchMemories 搜索记忆
 func (h *RESTHandler) SearchMemories(c *gin.Context) {
-	userID := c.Query("user_id")
+	userID := getUserIDStr(c)
 	query := c.Query("q")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
 	if h.memories == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "memory manager not initialized"})
@@ -1193,11 +1116,7 @@ func (h *RESTHandler) ImportStoreItems(c *gin.Context) {
 
 // GetUserStore 获取用户已安装的商店条目
 func (h *RESTHandler) GetUserStore(c *gin.Context) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 	if h.store == nil {
 		c.JSON(http.StatusOK, gin.H{"installed": []string{}})
 		return
@@ -1215,10 +1134,7 @@ func (h *RESTHandler) SaveUserStore(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 	if h.store == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "store not initialized"})
 		return
@@ -1226,11 +1142,11 @@ func (h *RESTHandler) SaveUserStore(c *gin.Context) {
 
 	var skillDir string
 	if h.workspace != nil {
-		skillDir = h.workspace.GetUserSkillDir(req.UserID)
+		skillDir = h.workspace.GetUserSkillDir(userID)
 	}
 
 	// diff：计算需要安装和卸载的 item
-	oldIDs := h.store.LoadUserInstalled(req.UserID)
+	oldIDs := h.store.LoadUserInstalled(userID)
 	oldSet := make(map[string]bool, len(oldIDs))
 	for _, id := range oldIDs {
 		oldSet[id] = true
@@ -1243,14 +1159,14 @@ func (h *RESTHandler) SaveUserStore(c *gin.Context) {
 	// 卸载：旧列表中有但新列表中没有的
 	for _, id := range oldIDs {
 		if !newSet[id] {
-			h.store.UninstallItemForUser(req.UserID, id, skillDir)
+			h.store.UninstallItemForUser(userID, id, skillDir)
 		}
 	}
 
 	// 安装：新列表中有但旧列表中没有的
 	for _, id := range req.ItemIDs {
 		if !oldSet[id] {
-			h.store.InstallItemForUser(req.UserID, id, skillDir)
+			h.store.InstallItemForUser(userID, id, skillDir)
 		}
 	}
 
@@ -1272,17 +1188,14 @@ func (h *RESTHandler) InstallStoreItem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	var skillDir string
 	if h.workspace != nil {
-		skillDir = h.workspace.GetUserSkillDir(req.UserID)
+		skillDir = h.workspace.GetUserSkillDir(userID)
 	}
 
-	if err := h.store.InstallItemForUser(req.UserID, id, skillDir); err != nil {
+	if err := h.store.InstallItemForUser(userID, id, skillDir); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1298,20 +1211,7 @@ func (h *RESTHandler) UninstallStoreItem(c *gin.Context) {
 	}
 
 	id := c.Param("id")
-	// 支持 query param 或 body 传递 user_id
-	userID := c.Query("user_id")
-	if userID == "" {
-		var req struct {
-			UserID string `json:"user_id"`
-		}
-		if err := c.ShouldBindJSON(&req); err == nil {
-			userID = req.UserID
-		}
-	}
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	var skillDir string
 	if h.workspace != nil {
@@ -1358,11 +1258,7 @@ func (h *RESTHandler) GetUserMCPConfig(c *gin.Context) {
 	}
 
 	itemID := c.Param("id")
-	userID := c.Query("user_id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	mcpJson := h.store.GetUserMCPJson(userID, itemID)
 	c.JSON(http.StatusOK, gin.H{"mcp_json": mcpJson})
@@ -1384,10 +1280,7 @@ func (h *RESTHandler) SaveUserMCPConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 
 	// 校验服务名是否匹配
 	item := h.store.GetByID(itemID)
@@ -1402,7 +1295,7 @@ func (h *RESTHandler) SaveUserMCPConfig(c *gin.Context) {
 		}
 	}
 
-	if err := h.store.SaveUserMCPJson(req.UserID, itemID, req.MCPJson); err != nil {
+	if err := h.store.SaveUserMCPJson(userID, itemID, req.MCPJson); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1503,11 +1396,12 @@ func (h *RESTHandler) FavoriteStoreItem(c *gin.Context) {
 	var req struct {
 		UserID string `json:"user_id"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.UserID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	added, err := h.store.FavoriteItem(req.UserID, id)
+	userID := getUserIDStr(c)
+	added, err := h.store.FavoriteItem(userID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1517,11 +1411,7 @@ func (h *RESTHandler) FavoriteStoreItem(c *gin.Context) {
 
 // GetUserFavorites 获取用户收藏列表
 func (h *RESTHandler) GetUserFavorites(c *gin.Context) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
+	userID := getUserIDStr(c)
 	if h.store == nil {
 		c.JSON(http.StatusOK, gin.H{"favorites": []string{}})
 		return

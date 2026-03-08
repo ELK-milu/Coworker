@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/coworker/internal/workspace"
@@ -26,13 +27,8 @@ func NewFileHandler(wm *workspace.Manager) *FileHandler {
 
 // Upload 处理文件上传
 func (h *FileHandler) Upload(c *gin.Context) {
-	userID := c.PostForm("user_id")
+	userID := strconv.Itoa(c.GetInt("id"))
 	targetPath := c.PostForm("path")
-
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
 
 	// 确保用户工作空间存在
 	if err := h.workspace.EnsureUserWorkspace(userID); err != nil {
@@ -72,11 +68,11 @@ func (h *FileHandler) Upload(c *gin.Context) {
 
 // Download 处理文件下载
 func (h *FileHandler) Download(c *gin.Context) {
-	userID := c.Query("user_id")
+	userID := strconv.Itoa(c.GetInt("id"))
 	filePath := c.Query("path")
 
-	if userID == "" || filePath == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id and path are required"})
+	if filePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path is required"})
 		return
 	}
 
@@ -112,11 +108,11 @@ func (h *FileHandler) Download(c *gin.Context) {
 
 // Preview 处理文件预览（inline + 正确 MIME type）
 func (h *FileHandler) Preview(c *gin.Context) {
-	userID := c.Query("user_id")
+	userID := strconv.Itoa(c.GetInt("id"))
 	filePath := c.Query("path")
 
-	if userID == "" || filePath == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id and path are required"})
+	if filePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path is required"})
 		return
 	}
 

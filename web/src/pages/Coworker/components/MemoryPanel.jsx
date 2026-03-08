@@ -4,7 +4,7 @@ import { IconPlus, IconSearch, IconDelete, IconEdit, IconRefresh } from '@douyin
 import { listMemories, createMemory, updateMemory, deleteMemory, searchMemories } from '../services/api';
 import './MemoryPanel.css';
 
-const MemoryPanel = ({ userId }) => {
+const MemoryPanel = () => {
   const [memories, setMemories] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -19,10 +19,9 @@ const MemoryPanel = ({ userId }) => {
 
   // 加载记忆列表（REST API）
   const loadMemories = useCallback(async () => {
-    if (!userId) return;
     setLoading(true);
     try {
-      const data = await listMemories(userId);
+      const data = await listMemories();
       // 后端已按 weight 降序排序
       setMemories(data.memories || []);
     } catch (e) {
@@ -30,25 +29,24 @@ const MemoryPanel = ({ userId }) => {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, []);
 
   // 搜索记忆（REST API）
   const handleSearch = useCallback(async () => {
-    if (!userId) return;
     if (!searchQuery.trim()) {
       loadMemories();
       return;
     }
     setLoading(true);
     try {
-      const data = await searchMemories(userId, searchQuery);
+      const data = await searchMemories(searchQuery);
       setMemories(data.memories || []);
     } catch (e) {
       Toast.error('搜索失败: ' + e.message);
     } finally {
       setLoading(false);
     }
-  }, [userId, searchQuery, loadMemories]);
+  }, [searchQuery, loadMemories]);
 
   // 创建/更新记忆（REST API）
   const saveMemory = async () => {
@@ -64,7 +62,7 @@ const MemoryPanel = ({ userId }) => {
 
     try {
       if (editingMemory) {
-        await updateMemory(userId, editingMemory.id, {
+        await updateMemory(editingMemory.id, {
           tags,
           content: formData.content,
           summary: formData.summary || formData.content.substring(0, 50),
@@ -72,7 +70,7 @@ const MemoryPanel = ({ userId }) => {
         });
         Toast.success('记忆已更新');
       } else {
-        await createMemory(userId, {
+        await createMemory({
           tags,
           content: formData.content,
           summary: formData.summary || formData.content.substring(0, 50),
@@ -91,7 +89,7 @@ const MemoryPanel = ({ userId }) => {
   // 删除记忆（REST API）
   const handleDelete = async (memoryId) => {
     try {
-      await deleteMemory(userId, memoryId);
+      await deleteMemory(memoryId);
       Toast.success('记忆已删除');
       loadMemories();
     } catch (e) {

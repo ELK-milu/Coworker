@@ -3,7 +3,7 @@ import { Form, Select, Input, Button, Tag, Toast, Spin } from '@douyinfe/semi-ui
 import { IconSave, IconRefresh } from '@douyinfe/semi-icons';
 import './ProfileSettings.css';
 
-const ProfileSettings = ({ ws, userId }) => {
+const ProfileSettings = ({ ws }) => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -43,7 +43,7 @@ const ProfileSettings = ({ ws, userId }) => {
     setLoading(true);
     ws.send(JSON.stringify({
       type: 'profile_get',
-      payload: { user_id: userId }
+      payload: {}
     }));
   };
 
@@ -54,7 +54,6 @@ const ProfileSettings = ({ ws, userId }) => {
     ws.send(JSON.stringify({
       type: 'profile_update',
       payload: {
-        user_id: userId,
         languages,
         frameworks,
         response_style: responseStyle,
@@ -98,7 +97,7 @@ const ProfileSettings = ({ ws, userId }) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       loadProfile();
     }
-  }, [ws, userId]);
+  }, [ws]);
 
   if (loading) {
     return (

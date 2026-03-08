@@ -195,7 +195,14 @@ type ChatPayload struct {
 
 // Handle 处理 WebSocket 连接
 func (h *WSHandler) Handle(c *gin.Context) {
-	log.Printf("[WS] Attempting to upgrade connection from %s", c.Request.RemoteAddr)
+	// 从认证中间件获取用户 ID
+	userID := strconv.Itoa(c.GetInt("id"))
+	if userID == "0" {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	log.Printf("[WS] Attempting to upgrade connection from %s (user: %s)", c.Request.RemoteAddr, userID)
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("[WS] Failed to upgrade connection: %v", err)
@@ -203,13 +210,14 @@ func (h *WSHandler) Handle(c *gin.Context) {
 	}
 	defer conn.Close()
 
-	log.Printf("[WS] Connection established successfully")
-	h.handleConnection(conn)
+	log.Printf("[WS] Connection established successfully for user %s", userID)
+	h.handleConnection(conn, userID)
 }
 
 // handleConnection 处理连接
-func (h *WSHandler) handleConnection(conn *websocket.Conn) {
+func (h *WSHandler) handleConnection(conn *websocket.Conn, authUserID string) {
 	cs := newConnState(conn)
+	cs.userID = authUserID
 
 	// 连接断开时通过 EventBus 通知记忆系统
 	defer func() {
@@ -423,6 +431,9 @@ func (h *WSHandler) handleChat(cs *connState, payload json.RawMessage) {
 
 	// 防提示词注入：剥离用户输入中的系统标签
 	chat.Message = sanitize.UserInput(chat.Message)
+
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	chat.UserID = cs.userID
 
 	// 获取或创建会话
 	isNewSession := false
@@ -709,6 +720,9 @@ func (h *WSHandler) handleListSessions(cs *connState, payload json.RawMessage) {
 		// 兼容旧版本，不传 user_id
 		req.UserID = ""
 	}
+
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	sessions := h.sessions.List(req.UserID)
 
@@ -1042,10 +1056,8 @@ func (h *WSHandler) handleListFiles(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" {
-		cs.sendError("user_id is required")
-		return
-	}
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	if h.workspace == nil {
 		cs.sendError("workspace manager not initialized")
@@ -1092,10 +1104,8 @@ func (h *WSHandler) handleWorkspaceStats(cs *connState, payload json.RawMessage)
 		return
 	}
 
-	if req.UserID == "" {
-		cs.sendError("user_id is required")
-		return
-	}
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	if h.workspace == nil {
 		cs.sendError("workspace manager not initialized")
@@ -1133,8 +1143,11 @@ func (h *WSHandler) handleCreateFolder(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.Path == "" {
-		cs.sendError("user_id and path are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.Path == "" {
+		cs.sendError("path is required")
 		return
 	}
 
@@ -1177,8 +1190,11 @@ func (h *WSHandler) handleDeleteFile(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.Path == "" {
-		cs.sendError("user_id and path are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.Path == "" {
+		cs.sendError("path is required")
 		return
 	}
 
@@ -1222,8 +1238,11 @@ func (h *WSHandler) handleRenameFile(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.Path == "" || req.NewName == "" {
-		cs.sendError("user_id, path and new_name are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.Path == "" || req.NewName == "" {
+		cs.sendError("path and new_name are required")
 		return
 	}
 
@@ -1272,8 +1291,11 @@ func (h *WSHandler) handleTaskCreate(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.Subject == "" {
-		cs.sendError("user_id and subject are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.Subject == "" {
+		cs.sendError("subject is required")
 		return
 	}
 
@@ -1323,8 +1345,11 @@ func (h *WSHandler) handleTaskGet(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.TaskID == "" {
-		cs.sendError("user_id and task_id are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.TaskID == "" {
+		cs.sendError("task_id is required")
 		return
 	}
 
@@ -1376,8 +1401,11 @@ func (h *WSHandler) handleTaskUpdate(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.TaskID == "" {
-		cs.sendError("user_id and task_id are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.TaskID == "" {
+		cs.sendError("task_id is required")
 		return
 	}
 
@@ -1449,10 +1477,8 @@ func (h *WSHandler) handleTaskList(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" {
-		cs.sendError("user_id is required")
-		return
-	}
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	if req.ListID == "" {
 		req.ListID = "default"
@@ -1494,8 +1520,11 @@ func (h *WSHandler) handleTaskReorder(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || len(req.TaskIDs) == 0 {
-		cs.sendError("user_id and task_ids are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if len(req.TaskIDs) == 0 {
+		cs.sendError("task_ids are required")
 		return
 	}
 
@@ -1840,6 +1869,9 @@ func (h *WSHandler) handleLoadConfig(cs *connState, payload json.RawMessage) {
 		return
 	}
 
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
 	go func() {
 		content, err := h.workspace.LoadConfig(req.UserID)
 		if err != nil {
@@ -1870,6 +1902,9 @@ func (h *WSHandler) handleSaveConfig(cs *connState, payload json.RawMessage) {
 		cs.sendError("invalid save_config payload")
 		return
 	}
+
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	go func() {
 		err := h.workspace.SaveConfig(req.UserID, req.Content)
@@ -2126,8 +2161,11 @@ func (h *WSHandler) handleJobCreate(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.Name == "" || req.Command == "" {
-		cs.sendError("user_id, name and command are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.Name == "" || req.Command == "" {
+		cs.sendError("name and command are required")
 		return
 	}
 
@@ -2191,8 +2229,11 @@ func (h *WSHandler) handleJobUpdate(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.JobID == "" {
-		cs.sendError("user_id and job_id are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.JobID == "" {
+		cs.sendError("job_id is required")
 		return
 	}
 
@@ -2249,8 +2290,11 @@ func (h *WSHandler) handleJobDelete(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.JobID == "" {
-		cs.sendError("user_id and job_id are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.JobID == "" {
+		cs.sendError("job_id is required")
 		return
 	}
 
@@ -2291,10 +2335,8 @@ func (h *WSHandler) handleJobList(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" {
-		cs.sendError("user_id is required")
-		return
-	}
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	if h.jobs == nil {
 		cs.sendError("job manager not initialized")
@@ -2329,8 +2371,11 @@ func (h *WSHandler) handleJobRun(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.JobID == "" {
-		cs.sendError("user_id and job_id are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.JobID == "" {
+		cs.sendError("job_id is required")
 		return
 	}
 
@@ -2374,8 +2419,11 @@ func (h *WSHandler) handleJobReorder(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || len(req.JobIDs) == 0 {
-		cs.sendError("user_id and job_ids are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if len(req.JobIDs) == 0 {
+		cs.sendError("job_ids are required")
 		return
 	}
 
@@ -2423,8 +2471,11 @@ func (h *WSHandler) handleMemoryCreate(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.Content == "" {
-		cs.sendError("user_id and content are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.Content == "" {
+		cs.sendError("content is required")
 		return
 	}
 
@@ -2480,8 +2531,11 @@ func (h *WSHandler) handleMemoryUpdate(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.MemoryID == "" {
-		cs.sendError("user_id and memory_id are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.MemoryID == "" {
+		cs.sendError("memory_id is required")
 		return
 	}
 
@@ -2538,8 +2592,11 @@ func (h *WSHandler) handleMemoryDelete(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.MemoryID == "" {
-		cs.sendError("user_id and memory_id are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.MemoryID == "" {
+		cs.sendError("memory_id is required")
 		return
 	}
 
@@ -2580,10 +2637,8 @@ func (h *WSHandler) handleMemoryList(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" {
-		cs.sendError("user_id is required")
-		return
-	}
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	if h.memories == nil {
 		cs.sendError("memory manager not initialized")
@@ -2621,8 +2676,11 @@ func (h *WSHandler) handleMemorySearch(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" || req.Query == "" {
-		cs.sendError("user_id and query are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.Query == "" {
+		cs.sendError("query is required")
 		return
 	}
 
@@ -2668,8 +2726,11 @@ func (h *WSHandler) handleExtractMemories(cs *connState, payload json.RawMessage
 		return
 	}
 
-	if req.UserID == "" || req.SessionID == "" {
-		cs.sendError("user_id and session_id are required")
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
+
+	if req.SessionID == "" {
+		cs.sendError("session_id is required")
 		return
 	}
 
@@ -2714,10 +2775,8 @@ func (h *WSHandler) handleProfileGet(cs *connState, payload json.RawMessage) {
 		return
 	}
 
-	if req.UserID == "" {
-		cs.sendError("user_id is required")
-		return
-	}
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	if h.profiles == nil {
 		cs.sendError("profile manager not initialized")
@@ -2757,10 +2816,8 @@ func (h *WSHandler) handleProfileUpdate(cs *connState, payload json.RawMessage) 
 		return
 	}
 
-	if req.UserID == "" {
-		cs.sendError("user_id is required")
-		return
-	}
+	// 使用认证用户 ID，忽略客户端提供的 user_id
+	req.UserID = cs.userID
 
 	if h.profiles == nil {
 		cs.sendError("profile manager not initialized")

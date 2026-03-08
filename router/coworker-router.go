@@ -2,6 +2,7 @@ package router
 
 import (
 	"github.com/QuantumNous/new-api/controller"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -10,99 +11,114 @@ func SetCoworkerRouter(router *gin.Engine) {
 	// 创建 Coworker 控制器实例
 	coworkerCtrl := controller.NewCoworkerController()
 
-	// Coworker API 路由组 (新的 REST API)
+	// Coworker API 路由组
 	coworkerGroup := router.Group("/coworker")
 	{
-		// 健康检查
+		// 公开端点（无需认证）
 		coworkerGroup.GET("/health", coworkerCtrl.Health)
 
-		// 会话管理
-		coworkerGroup.GET("/sessions", coworkerCtrl.ListSessions)
-		coworkerGroup.POST("/sessions", coworkerCtrl.CreateSession)
-		coworkerGroup.GET("/sessions/:id", coworkerCtrl.GetSession)
-		coworkerGroup.GET("/sessions/:id/history", coworkerCtrl.GetSessionHistory)
-		coworkerGroup.DELETE("/sessions/:id", coworkerCtrl.DeleteSession)
-
-		// 任务管理
-		coworkerGroup.GET("/tasks", coworkerCtrl.ListTasks)
-		coworkerGroup.POST("/tasks", coworkerCtrl.CreateTask)
-		coworkerGroup.PUT("/tasks/reorder", coworkerCtrl.ReorderTasks)
-		coworkerGroup.PUT("/tasks/:id", coworkerCtrl.UpdateTask)
-		coworkerGroup.DELETE("/tasks/:id", coworkerCtrl.DeleteTask)
-
-		// 文件管理
-		coworkerGroup.GET("/files", coworkerCtrl.ListFiles)
-		coworkerGroup.POST("/files/folder", coworkerCtrl.CreateFolder)
-		coworkerGroup.PUT("/files/rename", coworkerCtrl.RenameFile)
-		coworkerGroup.DELETE("/files", coworkerCtrl.DeleteFile)
-		coworkerGroup.POST("/files/upload", coworkerCtrl.UploadFile)
-		coworkerGroup.GET("/files/download", coworkerCtrl.DownloadFile)
-		coworkerGroup.GET("/files/preview", coworkerCtrl.PreviewFile)
-		coworkerGroup.GET("/files/stats", coworkerCtrl.GetWorkspaceStats)
-
-		// 配置管理
-		coworkerGroup.GET("/config", coworkerCtrl.GetConfig)
-		coworkerGroup.PUT("/config", coworkerCtrl.SaveConfig)
-
-		// 用户信息
-		coworkerGroup.GET("/userinfo", coworkerCtrl.GetUserInfo)
-		coworkerGroup.PUT("/userinfo", coworkerCtrl.SaveUserInfo)
-
-		// 记忆管理
-		coworkerGroup.GET("/memories", coworkerCtrl.ListMemories)
-		coworkerGroup.GET("/memories/search", coworkerCtrl.SearchMemories)
-		coworkerGroup.POST("/memories", coworkerCtrl.CreateMemory)
-		coworkerGroup.GET("/memories/:id", coworkerCtrl.GetMemory)
-		coworkerGroup.PUT("/memories/:id", coworkerCtrl.UpdateMemory)
-		coworkerGroup.DELETE("/memories/:id", coworkerCtrl.DeleteMemory)
-
-		// 定价配置
-		coworkerGroup.GET("/ratio_config", coworkerCtrl.GetRatioConfig)
-
-		// Job 管理
-		coworkerGroup.GET("/jobs", coworkerCtrl.ListJobs)
-		coworkerGroup.POST("/jobs", coworkerCtrl.CreateJob)
-		coworkerGroup.PUT("/jobs/reorder", coworkerCtrl.ReorderJobs)
-		coworkerGroup.PUT("/jobs/:id", coworkerCtrl.UpdateJob)
-		coworkerGroup.DELETE("/jobs/:id", coworkerCtrl.DeleteJob)
-		coworkerGroup.POST("/jobs/:id/run", coworkerCtrl.RunJob)
-
-		// 技能商店
-		coworkerGroup.GET("/store/items", coworkerCtrl.ListStoreItems)
-		coworkerGroup.POST("/store/items", coworkerCtrl.CreateStoreItem)
-		coworkerGroup.PUT("/store/items/:id", coworkerCtrl.UpdateStoreItem)
-		coworkerGroup.DELETE("/store/items/:id", coworkerCtrl.DeleteStoreItem)
-		coworkerGroup.GET("/store/items/:id", coworkerCtrl.GetStoreItem)
-		coworkerGroup.GET("/store/items/:id/download", coworkerCtrl.DownloadStoreItem)
-		coworkerGroup.POST("/store/import", coworkerCtrl.ImportStoreItems)
-		coworkerGroup.POST("/store/import-modelscope", coworkerCtrl.ImportFromModelScope)
-		coworkerGroup.GET("/store/user", coworkerCtrl.GetUserStore)
-		coworkerGroup.PUT("/store/user", coworkerCtrl.SaveUserStore)
-		coworkerGroup.POST("/store/user/install/:id", coworkerCtrl.InstallStoreItem)
-		coworkerGroup.DELETE("/store/user/uninstall/:id", coworkerCtrl.UninstallStoreItem)
-		// MCP 用户配置
-		coworkerGroup.GET("/store/user/:id/config", coworkerCtrl.GetUserMCPConfig)
-		coworkerGroup.PUT("/store/user/:id/config", coworkerCtrl.SaveUserMCPConfig)
-		// 收藏
-		coworkerGroup.POST("/store/user/favorite/:id", coworkerCtrl.FavoriteStoreItem)
-		coworkerGroup.GET("/store/user/favorites", coworkerCtrl.GetUserFavorites)
-		// AI 分类
-		coworkerGroup.POST("/store/items/:id/classify", coworkerCtrl.ClassifyStoreItem)
-		coworkerGroup.POST("/store/classify-all", coworkerCtrl.ClassifyAllStoreItems)
-		// MCP 连接测试
-		coworkerGroup.POST("/mcp/test", coworkerCtrl.TestMCPConnection)
-		// 内置模型设置
-		coworkerGroup.GET("/builtin-model", coworkerCtrl.GetBuiltinModel)
-		coworkerGroup.PUT("/builtin-model", coworkerCtrl.SaveBuiltinModel)
-
-		// 微信公众号回调（不需要认证，微信服务器直接调用）
+		// 微信公众号回调（微信服务器直接调用，无需认证）
 		coworkerGroup.GET("/wechat/callback", coworkerCtrl.WeChatVerify)
 		coworkerGroup.POST("/wechat/callback", coworkerCtrl.WeChatCallback)
-		// 微信主动推送消息（内部 API）
-		coworkerGroup.POST("/wechat/notify", coworkerCtrl.WeChatNotify)
-
-		// WebSocket 连接
-		coworkerGroup.GET("/ws", coworkerCtrl.HandleWebSocket)
 	}
 
+	// 需要用户认证的端点
+	userGroup := coworkerGroup.Group("")
+	userGroup.Use(middleware.UserAuth())
+	{
+		// 会话管理
+		userGroup.GET("/sessions", coworkerCtrl.ListSessions)
+		userGroup.POST("/sessions", coworkerCtrl.CreateSession)
+		userGroup.GET("/sessions/:id", coworkerCtrl.GetSession)
+		userGroup.GET("/sessions/:id/history", coworkerCtrl.GetSessionHistory)
+		userGroup.DELETE("/sessions/:id", coworkerCtrl.DeleteSession)
+
+		// 任务管理
+		userGroup.GET("/tasks", coworkerCtrl.ListTasks)
+		userGroup.POST("/tasks", coworkerCtrl.CreateTask)
+		userGroup.PUT("/tasks/reorder", coworkerCtrl.ReorderTasks)
+		userGroup.PUT("/tasks/:id", coworkerCtrl.UpdateTask)
+		userGroup.DELETE("/tasks/:id", coworkerCtrl.DeleteTask)
+
+		// 文件管理
+		userGroup.GET("/files", coworkerCtrl.ListFiles)
+		userGroup.POST("/files/folder", coworkerCtrl.CreateFolder)
+		userGroup.PUT("/files/rename", coworkerCtrl.RenameFile)
+		userGroup.DELETE("/files", coworkerCtrl.DeleteFile)
+		userGroup.POST("/files/upload", coworkerCtrl.UploadFile)
+		userGroup.GET("/files/download", coworkerCtrl.DownloadFile)
+		userGroup.GET("/files/preview", coworkerCtrl.PreviewFile)
+		userGroup.GET("/files/stats", coworkerCtrl.GetWorkspaceStats)
+
+		// 配置管理
+		userGroup.GET("/config", coworkerCtrl.GetConfig)
+		userGroup.PUT("/config", coworkerCtrl.SaveConfig)
+
+		// 用户信息
+		userGroup.GET("/userinfo", coworkerCtrl.GetUserInfo)
+		userGroup.PUT("/userinfo", coworkerCtrl.SaveUserInfo)
+
+		// 记忆管理
+		userGroup.GET("/memories", coworkerCtrl.ListMemories)
+		userGroup.GET("/memories/search", coworkerCtrl.SearchMemories)
+		userGroup.POST("/memories", coworkerCtrl.CreateMemory)
+		userGroup.GET("/memories/:id", coworkerCtrl.GetMemory)
+		userGroup.PUT("/memories/:id", coworkerCtrl.UpdateMemory)
+		userGroup.DELETE("/memories/:id", coworkerCtrl.DeleteMemory)
+
+		// 定价配置
+		userGroup.GET("/ratio_config", coworkerCtrl.GetRatioConfig)
+
+		// Job 管理
+		userGroup.GET("/jobs", coworkerCtrl.ListJobs)
+		userGroup.POST("/jobs", coworkerCtrl.CreateJob)
+		userGroup.PUT("/jobs/reorder", coworkerCtrl.ReorderJobs)
+		userGroup.PUT("/jobs/:id", coworkerCtrl.UpdateJob)
+		userGroup.DELETE("/jobs/:id", coworkerCtrl.DeleteJob)
+		userGroup.POST("/jobs/:id/run", coworkerCtrl.RunJob)
+
+		// 技能商店（用户操作）
+		userGroup.GET("/store/items", coworkerCtrl.ListStoreItems)
+		userGroup.GET("/store/items/:id", coworkerCtrl.GetStoreItem)
+		userGroup.GET("/store/items/:id/download", coworkerCtrl.DownloadStoreItem)
+		userGroup.GET("/store/user", coworkerCtrl.GetUserStore)
+		userGroup.PUT("/store/user", coworkerCtrl.SaveUserStore)
+		userGroup.POST("/store/user/install/:id", coworkerCtrl.InstallStoreItem)
+		userGroup.DELETE("/store/user/uninstall/:id", coworkerCtrl.UninstallStoreItem)
+		userGroup.GET("/store/user/:id/config", coworkerCtrl.GetUserMCPConfig)
+		userGroup.PUT("/store/user/:id/config", coworkerCtrl.SaveUserMCPConfig)
+		userGroup.POST("/store/user/favorite/:id", coworkerCtrl.FavoriteStoreItem)
+		userGroup.GET("/store/user/favorites", coworkerCtrl.GetUserFavorites)
+
+		// MCP 连接测试
+		userGroup.POST("/mcp/test", coworkerCtrl.TestMCPConnection)
+
+		// 内置模型设置（读取）
+		userGroup.GET("/builtin-model", coworkerCtrl.GetBuiltinModel)
+
+		// WebSocket 连接
+		userGroup.GET("/ws", coworkerCtrl.HandleWebSocket)
+	}
+
+	// 需要管理员权限的端点
+	adminGroup := coworkerGroup.Group("")
+	adminGroup.Use(middleware.AdminAuth())
+	{
+		// 技能商店管理（仅管理员）
+		adminGroup.POST("/store/items", coworkerCtrl.CreateStoreItem)
+		adminGroup.PUT("/store/items/:id", coworkerCtrl.UpdateStoreItem)
+		adminGroup.DELETE("/store/items/:id", coworkerCtrl.DeleteStoreItem)
+		adminGroup.POST("/store/import", coworkerCtrl.ImportStoreItems)
+		adminGroup.POST("/store/import-modelscope", coworkerCtrl.ImportFromModelScope)
+
+		// AI 分类（仅管理员）
+		adminGroup.POST("/store/items/:id/classify", coworkerCtrl.ClassifyStoreItem)
+		adminGroup.POST("/store/classify-all", coworkerCtrl.ClassifyAllStoreItems)
+
+		// 内置模型设置（修改，仅管理员）
+		adminGroup.PUT("/builtin-model", coworkerCtrl.SaveBuiltinModel)
+
+		// 微信推送（仅管理员）
+		adminGroup.POST("/wechat/notify", coworkerCtrl.WeChatNotify)
+	}
 }

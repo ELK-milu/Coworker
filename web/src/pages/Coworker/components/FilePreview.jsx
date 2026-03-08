@@ -20,8 +20,8 @@ const VIDEO_EXTS = new Set(['mp4','webm','mov','avi','mkv']);
 const AUDIO_EXTS = new Set(['mp3','wav','ogg','flac','m4a']);
 
 // 通用保存函数
-async function doSave(userId, filePath, fileName, blob) {
-  await saveFileContent(userId, filePath, blob, fileName);
+async function doSave(filePath, fileName, blob) {
+  await saveFileContent(filePath, blob, fileName);
   Toast.success('已保存');
 }
 
@@ -111,7 +111,7 @@ function DocxEditor({ blob, userId, filePath, fileName }) {
       }
       const doc = new Document({ sections: [{ children: paragraphs }] });
       const buf = await Packer.toBlob(doc);
-      await doSave(userId, filePath, fileName, buf);
+      await doSave(filePath, fileName, buf);
     } catch (e) {
       Toast.error('保存失败: ' + e.message);
     } finally {
@@ -219,7 +219,7 @@ function XlsxEditor({ blob, userId, filePath, fileName }) {
         }
       }
       const buf = await wb.xlsx.writeBuffer();
-      await doSave(userId, filePath, fileName, new Blob([buf], {
+      await doSave(filePath, fileName, new Blob([buf], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       }));
     } catch (e) {
@@ -597,7 +597,7 @@ function PptxEditor({ blob, userId, filePath, fileName }) {
         type: 'blob',
         mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       });
-      await doSave(userId, filePath, fileName, newBlob);
+      await doSave(filePath, fileName, newBlob);
       // 保存成功后，更新 originalText 并清空 modifiedRuns
       modifiedRunsRef.current.clear();
       setHasModifications(false);
@@ -754,7 +754,7 @@ function CodeEditor({ data, userId, filePath, fileName, ext }) {
     if (!userId) return;
     setSaving(true);
     try {
-      await doSave(userId, filePath, fileName, new Blob([code], { type: 'text/plain' }));
+      await doSave(filePath, fileName, new Blob([code], { type: 'text/plain' }));
     } catch (e) { Toast.error('保存失败: ' + e.message); }
     finally { setSaving(false); }
   }, [code, userId, filePath, fileName]);
@@ -838,7 +838,7 @@ function TextEditor({ data, userId, filePath, fileName }) {
     if (!userId) return;
     setSaving(true);
     try {
-      await doSave(userId, filePath, fileName, new Blob([text], { type: 'text/plain' }));
+      await doSave(filePath, fileName, new Blob([text], { type: 'text/plain' }));
     } catch (e) {
       Toast.error('保存失败: ' + e.message);
     } finally {

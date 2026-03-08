@@ -11,7 +11,7 @@ import './ConfigPanel.css';
 
 const { Text, Title } = Typography;
 
-const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChange }) => {
+const ConfigPanel = ({ content, loading, onContentChange, onLoadingChange }) => {
   const fileInputRef = useRef(null);
 
   // 用户信息状态
@@ -70,19 +70,19 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
       const headers = user.token ? { Authorization: 'Bearer ' + user.token } : {};
       const [itemsRes, userRes] = await Promise.all([
         fetch('/coworker/store/items', { headers }).then(r => r.json()),
-        userId ? fetch(`/coworker/store/user?user_id=${userId}`, { headers }).then(r => r.json()) : { installed: [] },
+        fetch('/coworker/store/user', { headers }).then(r => r.json()),
       ]);
       setStoreItems(itemsRes.items || []);
       setInstalledItems(userRes.installed || []);
     } catch (e) {
       console.log('Failed to load store data:', e.message);
     }
-  }, [userId]);
+  }, []);
 
   const handleUninstall = async (itemId) => {
     try {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
-      const res = await fetch(`/coworker/store/user/uninstall/${itemId}?user_id=${userId}`, {
+      const res = await fetch(`/coworker/store/user/uninstall/${itemId}`, {
         method: 'DELETE',
         headers: { ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
       });
@@ -101,7 +101,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
       const res = await fetch(`/coworker/store/user/install/${itemId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
-        body: JSON.stringify({ user_id: userId }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || '安装失败');
@@ -115,7 +115,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   // MCP 配置加载
   const loadMCPConfig = async (itemId) => {
     try {
-      const data = await api.getUserMCPConfig(userId, itemId);
+      const data = await api.getUserMCPConfig(itemId);
       setMcpJsons(prev => ({ ...prev, [itemId]: data.mcp_json || '' }));
     } catch (e) {
       console.log('Failed to load MCP config:', e.message);
@@ -125,7 +125,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   // MCP 配置保存
   const saveMCPConfig = async (itemId) => {
     try {
-      await api.saveUserMCPConfig(userId, itemId, mcpJsons[itemId] || '');
+      await api.saveUserMCPConfig(itemId, mcpJsons[itemId] || '');
       Toast.success('MCP 配置已保存');
     } catch (e) {
       Toast.error('保存失败: ' + e.message);
@@ -173,7 +173,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const loadConfig = async () => {
     onLoadingChange(true);
     try {
-      const data = await api.getConfig(userId);
+      const data = await api.getConfig();
       onContentChange(data.content || '');
     } catch (error) {
       Toast.error('加载配置失败: ' + error.message);
@@ -186,7 +186,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const saveConfig = async () => {
     onLoadingChange(true);
     try {
-      await api.saveConfig(userId, content);
+      await api.saveConfig(content);
       Toast.success('提示词配置已保存');
     } catch (error) {
       Toast.error('保存失败: ' + error.message);
@@ -199,7 +199,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
   const saveUserInfo = async () => {
     setUserInfoLoading(true);
     try {
-      await api.saveUserInfo(userId, userInfo);
+      await api.saveUserInfo(userInfo);
       Toast.success('用户信息已保存');
     } catch (error) {
       Toast.error('保存失败: ' + error.message);
@@ -246,12 +246,12 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       try {
-        await api.saveUserInfo(userId, updated);
+        await api.saveUserInfo(updated);
       } catch (e) {
         Toast.error('保存失败: ' + e.message);
       }
     }, 500);
-  }, [userId]);
+  }, []);
 
   // 处理模型选择
   const handleModelChange = (value) => {
@@ -338,14 +338,13 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
 
   // 初始加载
   useEffect(() => {
-    if (userId) {
-      loadConfig();
-      loadModels();
-      loadGroups();
-      loadStoreData();
-      (async () => {
+    loadConfig();
+    loadModels();
+    loadGroups();
+    loadStoreData();
+    (async () => {
         try {
-          const data = await api.getUserInfo(userId);
+          const data = await api.getUserInfo();
           const info = {
             userName: data.user_name || '',
             coworkerName: data.coworker_name || '',
@@ -373,8 +372,7 @@ const ConfigPanel = ({ userId, content, loading, onContentChange, onLoadingChang
           console.log('No user info found, using defaults');
         }
       })();
-    }
-  }, [userId]);
+  }, []);
 
   return (
     <div className="config-panel">

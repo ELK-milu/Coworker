@@ -190,7 +190,6 @@ const FileExplorer = ({
   files = [],
   currentPath = '',
   loading = false,
-  userId,
   onNavigate,
   onRefresh,
   onPreviewFile,
@@ -212,9 +211,8 @@ const FileExplorer = ({
   // 工作空间使用统计
   const [spaceStats, setSpaceStats] = useState(null);
   const fetchStats = useCallback(() => {
-    if (!userId) return;
-    api.getWorkspaceStats(userId).then(setSpaceStats).catch(() => {});
-  }, [userId]);
+    api.getWorkspaceStats().then(setSpaceStats).catch(() => {});
+  }, []);
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
@@ -286,7 +284,7 @@ const FileExplorer = ({
 
   // 下载文件（文件夹会自动打包为zip）
   const handleDownload = (file) => {
-    const url = api.getDownloadUrl(userId, file.path);
+    const url = api.getDownloadUrl(file.path);
     // 创建临时链接触发下载，不弹出新窗口
     const link = document.createElement('a');
     link.href = url;
@@ -304,7 +302,7 @@ const FileExplorer = ({
       okType: 'danger',
       onOk: async () => {
         try {
-          await api.deleteFile(userId, file.path);
+          await api.deleteFile(file.path);
           Toast.success('删除成功');
           onRefresh();
           fetchStats();
@@ -330,7 +328,7 @@ const FileExplorer = ({
     }
     if (renameValue !== renamingFile.name) {
       try {
-        await api.renameFile(userId, renamingFile.path, renameValue);
+        await api.renameFile(renamingFile.path, renameValue);
         Toast.success('重命名成功');
         onRefresh();
       } catch (error) {
@@ -365,7 +363,7 @@ const FileExplorer = ({
 
     const folderPath = currentPath ? `${currentPath}/${newFolderName}` : newFolderName;
     try {
-      await api.createFolder(userId, folderPath);
+      await api.createFolder(folderPath);
       Toast.success('文件夹创建成功');
       onRefresh();
     } catch (error) {
@@ -392,7 +390,7 @@ const FileExplorer = ({
 
     for (const file of fileList) {
       try {
-        await api.uploadFile(userId, currentPath, file);
+        await api.uploadFile(currentPath, file);
         Toast.success(`上传成功: ${file.name}`);
       } catch (error) {
         Toast.error(`上传失败: ${file.name}`);

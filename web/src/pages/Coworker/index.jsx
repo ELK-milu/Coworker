@@ -193,7 +193,7 @@ const Coworker = () => {
   const loadSessionsList = useCallback(async () => {
     setSessionsLoading(true);
     try {
-      const data = await api.listSessions(userId);
+      const data = await api.listSessions();
       const sorted = [...(data.sessions || [])].sort((a, b) => b.updated_at - a.updated_at);
       setSessions(sorted);
       console.log('[Coworker] Loaded sessions list:', sorted.length);
@@ -202,13 +202,13 @@ const Coworker = () => {
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId]);
+  }, []);
 
   // 加载文件列表 (REST API)
   const loadFilesList = useCallback(async (path = '') => {
     setFilesLoading(true);
     try {
-      const data = await api.listFiles(userId, path);
+      const data = await api.listFiles(path);
       setFiles(data.files || []);
       setCurrentPath(data.path || '');
       console.log('[Coworker] Loaded files list:', data.files?.length || 0, 'path:', data.path);
@@ -217,13 +217,13 @@ const Coworker = () => {
     } finally {
       setFilesLoading(false);
     }
-  }, [userId]);
+  }, []);
 
   // 加载任务列表 (REST API)
   const loadTasksList = useCallback(async () => {
     setTasksLoading(true);
     try {
-      const data = await api.listTasks(userId);
+      const data = await api.listTasks();
       setTasks((data.tasks || []).sort((a, b) => a.order - b.order));
       console.log('[Coworker] Loaded tasks:', data.tasks?.length || 0);
     } catch (error) {
@@ -231,13 +231,13 @@ const Coworker = () => {
     } finally {
       setTasksLoading(false);
     }
-  }, [userId]);
+  }, []);
 
   // 加载事项列表 (REST API)
   const loadJobsList = useCallback(async () => {
     setJobsLoading(true);
     try {
-      const data = await api.listJobs(userId);
+      const data = await api.listJobs();
       setJobs((data.jobs || []).sort((a, b) => a.order - b.order));
       console.log('[Coworker] Loaded jobs:', data.jobs?.length || 0);
     } catch (error) {
@@ -245,7 +245,7 @@ const Coworker = () => {
     } finally {
       setJobsLoading(false);
     }
-  }, [userId]);
+  }, []);
 
   // 删除会话 (REST API)
   const deleteSession = useCallback(async (sessId) => {
@@ -358,12 +358,11 @@ const Coworker = () => {
 
   // 加载助理名称和头像
   useEffect(() => {
-    if (!userId) return;
-    api.getUserInfo(userId).then(data => {
+    api.getUserInfo().then(data => {
       setAssistantName(data.coworker_name || '');
       setAssistantAvatar(data.assistant_avatar || '');
     }).catch(() => {});
-  }, [userId]);
+  }, []);
 
   // 断开 WebSocket 连接（用于测试 REST API）
   const disconnectWebSocket = useCallback(() => {
@@ -731,7 +730,6 @@ const Coworker = () => {
     const payload = {
       message: messageToSend,
       session_id: sessionId,
-      user_id: userId,
       mode,
       working_path: currentPath  // 传递当前文件路径
     };
@@ -781,7 +779,6 @@ const Coworker = () => {
         payload: {
           message: formattedText,
           session_id: sessionIdRef.current,
-          user_id: userId,
           mode,
           working_path: currentPathRef.current,
         }
@@ -804,7 +801,6 @@ const Coworker = () => {
         payload: {
           message: skipText,
           session_id: sessionIdRef.current,
-          user_id: userId,
           mode,
           working_path: currentPathRef.current,
         }
@@ -881,7 +877,7 @@ const Coworker = () => {
   // 创建任务 (REST API)
   const createTask = async (taskData) => {
     try {
-      const data = await api.createTask(userId, taskData);
+      const data = await api.createTask(taskData);
       if (data.success && data.task) {
         setTasks(prev => [...prev, data.task].sort((a, b) => a.order - b.order));
         console.log('[Coworker] Task created:', data.task.id);
@@ -895,7 +891,7 @@ const Coworker = () => {
   // 更新任务 (REST API)
   const updateTask = async (taskId, updates) => {
     try {
-      const data = await api.updateTask(userId, taskId, updates);
+      const data = await api.updateTask(taskId, updates);
       if (data.success && data.task) {
         if (data.task.status === 'deleted') {
           setTasks(prev => prev.filter(t => t.id !== data.task.id));
@@ -918,7 +914,7 @@ const Coworker = () => {
   // 任务排序 (REST API)
   const reorderTasks = async (taskIds) => {
     try {
-      await api.reorderTasks(userId, taskIds);
+      await api.reorderTasks(taskIds);
       console.log('[Coworker] Tasks reordered');
       loadTasksList();
     } catch (error) {
@@ -930,7 +926,7 @@ const Coworker = () => {
   // 创建事项 (REST API)
   const createJob = async (jobData) => {
     try {
-      const data = await api.createJob(userId, jobData);
+      const data = await api.createJob(jobData);
       if (data.success && data.job) {
         setJobs(prev => [...prev, data.job].sort((a, b) => a.order - b.order));
         console.log('[Coworker] Job created:', data.job.id);
@@ -944,7 +940,7 @@ const Coworker = () => {
   // 更新事项 (REST API)
   const updateJob = async (jobId, updates) => {
     try {
-      const data = await api.updateJob(userId, jobId, updates);
+      const data = await api.updateJob(jobId, updates);
       if (data.success && data.job) {
         setJobs(prev => prev.map(j => j.id === data.job.id ? data.job : j));
         console.log('[Coworker] Job updated:', data.job.id);
@@ -958,7 +954,7 @@ const Coworker = () => {
   // 删除事项 (REST API)
   const deleteJob = async (jobId) => {
     try {
-      await api.deleteJob(userId, jobId);
+      await api.deleteJob(jobId);
       setJobs(prev => prev.filter(j => j.id !== jobId));
       console.log('[Coworker] Job deleted:', jobId);
     } catch (error) {
@@ -970,7 +966,7 @@ const Coworker = () => {
   // 运行事项 (REST API)
   const runJob = async (jobId) => {
     try {
-      const data = await api.runJob(userId, jobId);
+      const data = await api.runJob(jobId);
       if (data.success) {
         Toast.success('事项已触发');
         // 更新状态为 running
@@ -991,7 +987,7 @@ const Coworker = () => {
   // 事项排序 (REST API)
   const reorderJobs = async (jobIds) => {
     try {
-      await api.reorderJobs(userId, jobIds);
+      await api.reorderJobs(jobIds);
       console.log('[Coworker] Jobs reordered');
       loadJobsList();
     } catch (error) {
@@ -1087,7 +1083,6 @@ const Coworker = () => {
           onRunJob={runJob}
           onRefreshJobs={refreshJobs}
           onReorderJobs={reorderJobs}
-          userId={userId}
           ws={wsRef.current}
           collapsed={sidebarCollapsed}
         />
@@ -1245,7 +1240,7 @@ const Coworker = () => {
             <div className="right-panel-content">
               {previewFile ? (
                 <FilePreview
-                  previewUrl={api.getPreviewUrl(userId, previewFile.path)}
+                  previewUrl={api.getPreviewUrl(previewFile.path)}
                   fileName={previewFile.name}
                   userId={userId}
                   filePath={previewFile.path}

@@ -80,8 +80,6 @@ const SessionSidebar = ({
   onRunJob,
   onRefreshJobs,
   onReorderJobs,
-  // 用户ID
-  userId,
   // WebSocket 连接
   ws,
   // 折叠状态（由父组件控制）
@@ -271,7 +269,6 @@ const SessionSidebar = ({
           />
         ) : activeTab === 'config' ? (
           <ConfigPanel
-            userId={userId}
             content={configContent}
             loading={configLoading}
             onContentChange={onConfigChange}
@@ -289,13 +286,12 @@ const SessionSidebar = ({
             onReorder={onReorderJobs}
           />
         ) : activeTab === 'memory' ? (
-          <MemoryPanel userId={userId} />
+          <MemoryPanel />
         ) : (
           <FileExplorer
             files={files}
             currentPath={currentPath}
             loading={filesLoading}
-            userId={userId}
             onNavigate={onNavigateFile}
             onRefresh={onRefreshFiles}
             onPreviewFile={onPreviewFile}
