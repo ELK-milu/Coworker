@@ -1,29 +1,25 @@
-# Development Docker Compose Configuration
-# 简化的本地开发方式
+# Coworker Docker Compose — 标准开发环境
 #
 # 使用方法:
 #   docker-compose -f docker-compose-dev.yml up --build
 #
-# 架构说明:
-#   开发时访问: http://localhost:3000 (后端服务)
-#       ↓
-#   Go 后端 (3000) + Air 热重载 + 静态文件服务
-#       ↓
-#   前端构建产物 (web/dist)
+# 架构:
+#   http://localhost:3000 (Go 后端 + Air 热重载 + 静态文件服务)
+#   Go 文件修改 → Air 自动重编译
+#   前端文件修改 → 手动重启: docker-compose -f docker-compose-dev.yml restart web-dev
 #
-# 特性:
-#   - 统一入口：http://localhost:3000
-#   - 后端：Go + Air 热重载
-#   - 前端：bun build 构建静态文件，修改后手动重启 web-dev 容器
-#   - 沙箱隔离：Bash 命令在独立 nsjail 容器中执行
-#
-# 前端修改后重新构建:
-#   docker-compose -f docker-compose-dev.yml restart web-dev
+# 包含服务:
+#   - web-dev          (Bun 构建前端，完成后退出)
+#   - coworker-dev     (Go 后端 + Air 热重载)
+#   - nsjail-sandbox   (Bash 命令沙箱隔离)
+#   - redis            (缓存)
+#   - postgres         (数据库)
+#   - milvus + etcd + minio (向量搜索)
 
 version: '3.4'
 
 services:
-  # 前端构建服务 (Bun + Vite Build)
+  # 前端构建服务（构建完自动退出，不常驻）
   web-dev:
     image: oven/bun:latest
     container_name: web-dev
@@ -37,42 +33,39 @@ services:
     environment:
       - NODE_ENV=production
 
-  # 后端开发服务 (Go + Air)
-  new-api-dev:
+  # 后端开发服务 (Go + Air 热重载)
+  coworker-dev:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: new-api-dev
+    container_name: coworker-dev
     restart: unless-stopped
     ports:
-      - "3000:3000"  # Go API 服务端口
+      - "3000:3000"
     volumes:
-      # 挂载源代码（实时更新）
       - .:/app
-      # 排除构建产物
       - /app/tmp
-      # 用户数据目录
       - ./userdata:/app/userdata
-      # Docker socket - 允许后端管理沙箱容器
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api
+      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/coworker
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
       - BATCH_UPDATE_ENABLED=true
       - DEBUG=true
-      # Agent 配置
+      # Coworker / ClaudeCLI 配置
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
       - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
       - WORKSPACE_BASE_PATH=/app/userdata
-      # Nsjail 沙箱配置
+      # nsjail 沙箱配置
       - NSJAIL_ENABLED=${NSJAIL_ENABLED:-true}
       - NSJAIL_CONTAINER_NAME=nsjail-sandbox
       - NSJAIL_MAX_CONCURRENT=${NSJAIL_MAX_CONCURRENT:-50}
       - NSJAIL_MEMORY_MB=${NSJAIL_MEMORY_MB:-512}
       - NSJAIL_EXEC_TIMEOUT=${NSJAIL_EXEC_TIMEOUT:-120}
-      # Milvus 向量数据库配置
+      # Milvus 向量数据库
       - MILVUS_ENABLED=${MILVUS_ENABLED:-true}
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
@@ -93,9 +86,7 @@ services:
     working_dir: /app
     command: air -c .air.toml
 
-  # nsjail 沙箱服务 (独立容器)
-  # 使用 Linux namespaces 提供进程级隔离
-  # 后端通过 docker exec 调用此容器执行命令
+  # nsjail 沙箱服务
   nsjail-sandbox:
     build:
       context: ./docker/nsjail
@@ -104,7 +95,6 @@ services:
     restart: unless-stopped
     privileged: true
     volumes:
-      # 用户数据目录 - 与后端共享
       - ./userdata:/userdata:rw
 
   redis:
@@ -121,15 +111,13 @@ services:
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: Xm8@Kp9#vL5n!Qw2%Rt7&Yz4
-      POSTGRES_DB: new-api
+      POSTGRES_DB: coworker
     volumes:
       - pg_data_dev:/var/lib/postgresql/data
     ports:
       - "5432:5432"
 
   # -------------------- Milvus 向量数据库 --------------------
-  # Milvus Standalone 模式，用于记忆系统的向量搜索
-  # 依赖 etcd 和 minio 作为元数据存储和对象存储
   etcd:
     image: quay.io/coreos/etcd:v3.5.5
     container_name: milvus-etcd
@@ -178,8 +166,8 @@ services:
     volumes:
       - milvus_data:/var/lib/milvus
     ports:
-      - "19530:19530"  # Milvus gRPC 端口
-      - "9091:9091"    # Milvus 健康检查端口
+      - "19530:19530"
+      - "9091:9091"
     depends_on:
       - etcd
       - minio
@@ -189,7 +177,6 @@ services:
       start_period: 120s
       timeout: 30s
       retries: 5
-
 
 volumes:
   pg_data_dev:

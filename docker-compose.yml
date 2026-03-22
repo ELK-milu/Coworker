@@ -1,23 +1,23 @@
-# New-API Docker Compose Configuration
-# 
-# Quick Start:
-#   1. docker-compose up -d
-#   2. Access at http://localhost:3000
+# Coworker Docker Compose — 生产部署
 #
-# Using MySQL instead of PostgreSQL:
-#   1. Comment out the postgres service and SQL_DSN line 15
-#   2. Uncomment the mysql service and SQL_DSN line 16
-#   3. Uncomment mysql in depends_on (line 28)
-#   4. Uncomment mysql_data in volumes section (line 64)
+# 使用方法:
+#   1. cp .env.example .env && 编辑 .env 填入必要配置
+#   2. docker-compose up -d --build
+#   3. 访问 http://localhost:3000
+#   4. 默认账号: root / 123456
 #
-# ⚠️  IMPORTANT: Change all default passwords before deploying to production!
+# 从源码构建镜像（多阶段: Bun 构建前端 → Go 编译后端 → Debian slim 运行）
+#
+# ⚠️ 生产部署前请修改所有默认密码！
 
-version: '3.4' # For compatibility with older Docker versions
+version: '3.4'
 
 services:
-  new-api:
-    image: calciumion/new-api:latest
-    container_name: new-api
+  coworker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: coworker
     restart: always
     command: --log-dir /app/logs
     ports:
@@ -25,29 +25,58 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/app/logs
+      - ./userdata:/app/userdata
+      # Docker socket — 允许后端管理 nsjail 沙箱容器
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api # ⚠️ IMPORTANT: Change the password in production!
-#      - SQL_DSN=root:123456@tcp(mysql:3306)/new-api  # Point to the mysql service, uncomment if using MySQL
+      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/coworker
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
-      - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
-      - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
-#      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
-#      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
-#      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
-#      - GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX  # Google Analytics 的测量 ID (Google Analytics Measurement ID)
-#      - UMAMI_WEBSITE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # Umami 网站 ID (Umami Website ID)
-#      - UMAMI_SCRIPT_URL=https://analytics.umami.is/script.js  # Umami 脚本 URL，默认为官方地址 (Umami Script URL, defaults to official URL)
-
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+      # 会话密钥 — 多机部署必须修改！
+      # - SESSION_SECRET=random_string
+      # Coworker / ClaudeCLI 配置
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+      - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
+      - WORKSPACE_BASE_PATH=/app/userdata
+      # nsjail 沙箱配置
+      - NSJAIL_ENABLED=${NSJAIL_ENABLED:-true}
+      - NSJAIL_CONTAINER_NAME=nsjail-sandbox
+      - NSJAIL_MAX_CONCURRENT=${NSJAIL_MAX_CONCURRENT:-50}
+      - NSJAIL_MEMORY_MB=${NSJAIL_MEMORY_MB:-512}
+      - NSJAIL_EXEC_TIMEOUT=${NSJAIL_EXEC_TIMEOUT:-120}
+      # Milvus 向量数据库（可选，禁用时自动降级为 BM25 检索）
+      - MILVUS_ENABLED=${MILVUS_ENABLED:-false}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      # Embedding API 配置
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-siliconflow}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-large-zh-v1.5}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
     depends_on:
       - redis
       - postgres
-#      - mysql  # Uncomment if using MySQL
+      - nsjail-sandbox
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # nsjail 沙箱服务 — Bash 命令在隔离环境中执行
+  nsjail-sandbox:
+    build:
+      context: ./docker/nsjail
+      dockerfile: Dockerfile
+    container_name: nsjail-sandbox
+    restart: always
+    privileged: true
+    volumes:
+      - ./userdata:/userdata:rw
 
   redis:
     image: redis:latest
@@ -60,25 +89,10 @@ services:
     restart: always
     environment:
       POSTGRES_USER: root
-      POSTGRES_PASSWORD: Xm8@Kp9#vL5n!Qw2%Rt7&Yz4  # ⚠️ IMPORTANT: Change this password in production!
-      POSTGRES_DB: new-api
+      POSTGRES_PASSWORD: Xm8@Kp9#vL5n!Qw2%Rt7&Yz4  # ⚠️ 生产环境请修改！
+      POSTGRES_DB: coworker
     volumes:
       - pg_data:/var/lib/postgresql/data
-#    ports:
-#      - "5432:5432"  # Uncomment if you need to access PostgreSQL from outside Docker
-
-#  mysql:
-#    image: mysql:8.2
-#    container_name: mysql
-#    restart: always
-#    environment:
-#      MYSQL_ROOT_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
-#      MYSQL_DATABASE: new-api
-#    volumes:
-#      - mysql_data:/var/lib/mysql
-#    ports:
-#      - "3306:3306"  # Uncomment if you need to access MySQL from outside Docker
 
 volumes:
   pg_data:
-#  mysql_data:

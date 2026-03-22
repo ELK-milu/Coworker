@@ -1,49 +1,47 @@
-# Fast Development Docker Compose Configuration (Lightweight)
+# Coworker Docker Compose — 轻量开发环境
+#
 # 适合 4G 内存服务器，不启动 Milvus（节省 ~2GB 内存）
 #
 # 使用方法:
-#   docker-compose -f docker-compose-dev-fast.yml up -d
+#   docker-compose -f docker-compose-dev-fast.yml up --build
 #
-# 架构说明:
-#   前端开发: http://localhost:5173 (Vite Dev Server + HMR)
-#   后端 API: http://localhost:3000 (Go + Air)
-#   Vite 自动代理 /api/* 到后端
+# 架构:
+#   http://localhost:3000 (Go 后端 + Air 热重载 + 静态文件服务)
+#   Go 文件修改 → Air 自动重编译
+#   前端文件修改 → 手动重启: docker-compose -f docker-compose-dev-fast.yml restart web-dev
 #
 # 包含服务:
-#   - new-api-dev  (Go 后端 + Air 热重载)
-#   - web-dev      (Vite Dev Server + HMR)
-#   - redis        (缓存)
-#   - postgres     (数据库)
-#   - nsjail-sandbox (Bash 命令沙箱隔离)
+#   - web-dev          (Bun 构建前端，完成后退出)
+#   - coworker-dev     (Go 后端 + Air 热重载)
+#   - nsjail-sandbox   (Bash 命令沙箱隔离)
+#   - redis            (缓存)
+#   - postgres         (数据库)
 #
 # 不包含（节省内存）:
-#   - Milvus + etcd + minio (向量搜索，自动降级为 BM25 纯文本检索)
+#   - Milvus + etcd + minio (向量搜索自动降级为 BM25 纯文本检索)
 
 version: '3.4'
 
 services:
-  # 前端开发服务 (Vite Dev Server + HMR)
+  # 前端构建服务（构建完自动退出，不常驻）
   web-dev:
     image: oven/bun:latest
     container_name: web-dev
-    restart: unless-stopped
+    restart: "no"
     volumes:
       - ./web:/app
       - web_node_modules:/app/node_modules
     working_dir: /app
-    ports:
-      - "5173:5173"
-    command: sh -c "bun install && bun run build && bun run dev -- --host 0.0.0.0"
+    command: sh -c "bun install && bun run build"
     environment:
-      - NODE_ENV=development
-      - VITE_API_URL=http://new-api-dev:3000
+      - NODE_ENV=production
 
-  # 后端开发服务 (Go + Air)
-  new-api-dev:
+  # 后端开发服务 (Go + Air 热重载)
+  coworker-dev:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: new-api-dev
+    container_name: coworker-dev
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -51,28 +49,28 @@ services:
       - .:/app
       - /app/tmp
       - ./userdata:/app/userdata
-      # Docker socket - 允许后端管理沙箱容器
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api
+      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/coworker
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
       - BATCH_UPDATE_ENABLED=true
       - DEBUG=true
-      # Agent 配置
+      # Coworker / ClaudeCLI 配置
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
       - ANTHROPIC_API_BASE_URL=${ANTHROPIC_API_BASE_URL}
       - WORKSPACE_BASE_PATH=/app/userdata
-      # Nsjail 沙箱配置
+      # nsjail 沙箱配置
       - NSJAIL_ENABLED=${NSJAIL_ENABLED:-true}
       - NSJAIL_CONTAINER_NAME=nsjail-sandbox
       - NSJAIL_MAX_CONCURRENT=${NSJAIL_MAX_CONCURRENT:-50}
       - NSJAIL_MEMORY_MB=${NSJAIL_MEMORY_MB:-512}
       - NSJAIL_EXEC_TIMEOUT=${NSJAIL_EXEC_TIMEOUT:-120}
-      # Milvus 禁用（4G 内存不够跑，自动降级为 BM25 检索）
+      # Milvus 禁用（自动降级为 BM25 检索）
       - MILVUS_ENABLED=false
-      # Embedding API 配置（BM25 不需要，但保留以便后续启用）
+      # Embedding API 配置（保留以便后续启用 Milvus）
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-siliconflow}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-large-zh-v1.5}
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
@@ -80,21 +78,6 @@ services:
       - SILICONFLOW_BASE_URL=${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - DASHSCOPE_BASE_URL=${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      # 微信公众号配置
-      - WECHAT_APP_ID=${WECHAT_APP_ID}
-      - WECHAT_APP_SECRET=${WECHAT_APP_SECRET}
-      - WECHAT_TOKEN=${WECHAT_TOKEN}
-      - WECHAT_DEFAULT_MODEL=${WECHAT_DEFAULT_MODEL:-gpt-4o-mini}
-      # 容器隔离配置 (可选)
-      - CONTAINER_ENABLED=${CONTAINER_ENABLED:-false}
-      - CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-}
-      - CONTAINER_IMAGE=${CONTAINER_IMAGE:-coworker-sandbox:latest}
-      - CONTAINER_MEMORY_MB=${CONTAINER_MEMORY_MB:-256}
-      - CONTAINER_CPU_QUOTA=${CONTAINER_CPU_QUOTA:-0.5}
-      - CONTAINER_PID_LIMIT=${CONTAINER_PID_LIMIT:-100}
-      - CONTAINER_DISK_MB=${CONTAINER_DISK_MB:-250}
-      - CONTAINER_IDLE_TIMEOUT=${CONTAINER_IDLE_TIMEOUT:-30}
-      - CONTAINER_HOST_BASE_PATH=${CONTAINER_HOST_BASE_PATH:-${PWD}/userdata}
     depends_on:
       - redis
       - postgres
@@ -104,7 +87,7 @@ services:
     group_add:
       - "999"  # docker 组 (Linux)
 
-  # nsjail 沙箱服务 (Bash 命令隔离执行)
+  # nsjail 沙箱服务
   nsjail-sandbox:
     build:
       context: ./docker/nsjail
@@ -129,7 +112,7 @@ services:
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: Xm8@Kp9#vL5n!Qw2%Rt7&Yz4
-      POSTGRES_DB: new-api
+      POSTGRES_DB: coworker
     volumes:
       - pg_data_dev:/var/lib/postgresql/data
     ports:
