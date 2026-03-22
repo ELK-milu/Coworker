@@ -26,10 +26,26 @@ RUN apt-get -y update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 从 GitHub 克隆并编译 (使用国内镜像)
-RUN git clone --depth 1 https://gh-proxy.net/https://github.com/google/nsjail.git /nsjail \
-    && cd /nsjail \
-    && make
+# 从 GitHub 克隆并编译 (多代理回退，含子模块处理)
+# 1) 克隆 nsjail 主仓库
+RUN git clone --depth 1 https://ghfast.top/https://github.com/google/nsjail.git /nsjail \
+    || git clone --depth 1 https://gh-proxy.net/https://github.com/google/nsjail.git /nsjail \
+    || git clone --depth 1 https://github.com/google/nsjail.git /nsjail
+
+# 2) 将子模块 URL 也改为代理，再初始化子模块
+RUN cd /nsjail \
+    && sed -i 's|https://github.com/|https://ghfast.top/https://github.com/|g' .gitmodules \
+    && git submodule sync \
+    && (git submodule update --init --depth 1 \
+        || (sed -i 's|https://ghfast.top/https://github.com/|https://gh-proxy.net/https://github.com/|g' .gitmodules \
+            && git submodule sync \
+            && git submodule update --init --depth 1) \
+        || (sed -i 's|https://gh-proxy.net/https://github.com/|https://github.com/|g' .gitmodules \
+            && git submodule sync \
+            && git submodule update --init --depth 1))
+
+# 3) 编译 (跳过 Makefile 自带的 submodule init，kafel 已就绪)
+RUN cd /nsjail && make
 
 # ============================================
 # Stage 2: 运行镜像 (基于 Python 官方镜像)

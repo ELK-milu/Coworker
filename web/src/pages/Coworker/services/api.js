@@ -8,6 +8,8 @@ Copyright (C) 2025 QuantumNous
  * user_id 由后端从 session cookie 中读取，前端无需传递
  */
 
+import { getUserIdFromLocalStorage } from '../../../helpers/utils';
+
 const API_BASE = '/coworker';
 
 // 通用请求方法
@@ -15,6 +17,7 @@ async function request(url, options = {}) {
   const response = await fetch(`${API_BASE}${url}`, {
     headers: {
       'Content-Type': 'application/json',
+      'New-API-User': getUserIdFromLocalStorage(),
       ...options.headers,
     },
     ...options,
@@ -134,6 +137,9 @@ export async function uploadFile(path, file) {
 
   const response = await fetch(`${API_BASE}/files/upload`, {
     method: 'POST',
+    headers: {
+      'New-API-User': getUserIdFromLocalStorage(),
+    },
     body: formData,
   });
 

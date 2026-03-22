@@ -29,7 +29,7 @@ services:
       # Docker socket — 允许后端管理 nsjail 沙箱容器
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/coworker
+      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/coworker?sslmode=disable
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
@@ -58,9 +58,12 @@ services:
       - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
     depends_on:
-      - redis
-      - postgres
-      - nsjail-sandbox
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      nsjail-sandbox:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
@@ -93,6 +96,11 @@ services:
       POSTGRES_DB: coworker
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d coworker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   pg_data:

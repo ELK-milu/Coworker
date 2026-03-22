@@ -7,6 +7,7 @@ import { Button, Typography, Toast, TextArea, Input, Select, Slider, Tag } from 
 import { IconUpload, IconDownload, IconSave, IconRefresh, IconChevronDown, IconChevronUp, IconDelete, IconGridStroked } from '@douyinfe/semi-icons';
 import * as api from '../services/api';
 import { API } from '../../../helpers/api';
+import { getUserIdFromLocalStorage } from '../../../helpers/utils';
 import './ConfigPanel.css';
 
 const { Text, Title } = Typography;
@@ -67,7 +68,7 @@ const ConfigPanel = ({ content, loading, onContentChange, onLoadingChange }) => 
   const loadStoreData = useCallback(async () => {
     try {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
-      const headers = user.token ? { Authorization: 'Bearer ' + user.token } : {};
+      const headers = { 'New-API-User': getUserIdFromLocalStorage(), ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) };
       const [itemsRes, userRes] = await Promise.all([
         fetch('/coworker/store/items', { headers }).then(r => r.json()),
         fetch('/coworker/store/user', { headers }).then(r => r.json()),
@@ -84,7 +85,7 @@ const ConfigPanel = ({ content, loading, onContentChange, onLoadingChange }) => 
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       const res = await fetch(`/coworker/store/user/uninstall/${itemId}`, {
         method: 'DELETE',
-        headers: { ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
+        headers: { 'New-API-User': getUserIdFromLocalStorage(), ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || '卸载失败');
@@ -100,7 +101,7 @@ const ConfigPanel = ({ content, loading, onContentChange, onLoadingChange }) => 
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       const res = await fetch(`/coworker/store/user/install/${itemId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
+        headers: { 'Content-Type': 'application/json', 'New-API-User': getUserIdFromLocalStorage(), ...(user.token ? { Authorization: 'Bearer ' + user.token } : {}) },
         body: JSON.stringify({}),
       });
       const data = await res.json();
