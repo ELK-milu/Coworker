@@ -4,7 +4,9 @@
 
 # Coworker
 
-**Web-based, Multi-tenant OpenClaw — 把 Claude Code 搬进浏览器**
+**基于NewApi的网页版的多租户OpenClaw**
+
+> 本项目 fork 自 [New API](https://github.com/Calcium-Ion/new-api)（LLM Gateway），在其基础上新增了完整的 Web 端 AI Agent 模块（ClaudeCLI / Coworker）。感谢 [Calcium-Ion](https://github.com/Calcium-Ion) 和 [JustSong](https://github.com/songquanpeng)（[One API](https://github.com/songquanpeng/one-api) 作者）及所有上游贡献者的工作。
 
 <p align="center">
   <strong>简体中文</strong>
@@ -28,11 +30,9 @@
 
 ## What is Coworker?
 
-[OpenClaw](https://github.com/anthropics/openclaw) 把 AI Agent 带进了 WhatsApp 和 Slack，[Claude Code](https://docs.anthropic.com/en/docs/claude-code) 把它带进了终端。**Coworker 把它带进了浏览器 —— 支持多租户、开箱即用。**
+[OpenClaw](https://github.com/openclaw/openclaw) 把 AI Agent 带进了 WhatsApp 和 Slack，[Claude Code](https://docs.anthropic.com/en/docs/claude-code) 把它带进了终端。**Coworker 把它带进了浏览器 —— 支持多租户、开箱即用。**
 
-Coworker 是一个开源的 Web 端 AI Agent 平台，提供完整的 Claude Code CLI 体验：对话循环、工具调用、沙箱隔离、持久记忆、文件管理 —— 全部通过 WebSocket 实时交付到浏览器。一次部署，团队共用。
-
-> **与 OpenClaw 的关系：** OpenClaw 面向个人，通过消息应用交互；Coworker 面向团队，通过 Web UI 交互。如果说 OpenClaw 是你口袋里的 AI 助手，Coworker 就是团队共享的 AI 工作站。
+Coworker 是一个开源的 Web 端 AI Agent 平台，提供完整的 OpenClaw 体验：技能商店、对话循环、工具调用、沙箱隔离、token计数、持久记忆、文件管理、基于Claude Code的插件系统和Skill、支持远程调用魔搭MCP—— 全部通过 WebSocket 实时交付到浏览器，让你随时随地都能养龙虾。
 
 ---
 
@@ -49,7 +49,7 @@ Coworker 是一个开源的 Web 端 AI Agent 平台，提供完整的 Claude Cod
 ### 多租户与安全
 
 - **用户隔离** — 每个用户独立的工作空间（`userdata/{user_id}/`）、会话、任务、记忆
-- **沙箱执行** — nsjail 进程隔离（容器级）或 Microsandbox MicroVM 隔离，防止代码逃逸
+- **沙箱执行** — nsjail 进程隔离（容器级），防止代码逃逸
 - **路径遍历防护** — 虚拟路径映射（`/workspace/` ↔ 真实路径），阻断 `../../../etc/passwd` 类攻击
 - **权限系统** — Ruleset 评估引擎，支持 allow/deny/ask 规则，通配符匹配
 
@@ -167,12 +167,12 @@ Browser (React 18 + Semi-UI)
 
 | 层级 | 技术 |
 |------|------|
-| **后端** | Go 1.25+, Gin, GORM, gorilla/websocket |
+| **后端** | Go 1.25+, Gin, GORM,websocket |
 | **前端** | React 18, Vite 5, Semi-UI, CodeMirror |
 | **数据库** | PostgreSQL（推荐）/ SQLite / MySQL |
 | **缓存** | Redis（可选，支持内存缓存回退） |
 | **向量库** | Milvus 2.5（Linux amd64/arm64，其他平台自动 stub） |
-| **沙箱** | nsjail（进程隔离）/ Microsandbox（MicroVM） |
+| **沙箱** | nsjail（进程隔离） |
 | **部署** | Docker + Docker Compose（多阶段构建，多架构） |
 
 ---
@@ -184,7 +184,7 @@ Browser (React 18 + Semi-UI)
 | **交互方式** | WhatsApp / Slack / Telegram | 终端 CLI | **浏览器 Web UI** |
 | **部署模型** | 个人本地运行 | 个人本地安装 | **多租户服务器部署** |
 | **用户隔离** | 单用户 | 单用户 | **多用户，工作空间隔离** |
-| **沙箱** | 无 | 有限 | **nsjail / MicroVM** |
+| **沙箱** | 无 | 有限 | **nsjail** |
 | **记忆系统** | 基础 | 基础 | **BM25 + 向量混合检索** |
 | **模型支持** | 多模型 | Claude 系列 | **40+ 服务商，统一网关** |
 | **计费** | 无 | 按订阅 | **按量计费 + 管理后台** |
@@ -233,17 +233,20 @@ Browser (React 18 + Semi-UI)
 完整配置请参考 [.env.example](./.env.example)
 
 ---
+## 参与贡献
 
-## 相关项目
+感谢所有贡献者的支持！
 
-| 项目 | 关系 |
-|------|------|
-| [OpenClaw](https://github.com/anthropics/openclaw) | 灵感来源 — 个人 AI 助手的开源标杆 |
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | 核心对标 — Coworker 的 Agent 引擎参考实现 |
-| [New API](https://github.com/Calcium-Ion/new-api) | 上游项目 — LLM 网关基座 |
-| [One API](https://github.com/songquanpeng/one-api) | 原始项目 — New API 的基础 |
+<!-- 仅列出 fork 后的实际贡献者，新贡献者合入 PR 后请在此追加 -->
+<a href="https://github.com/ELK-milu"><img src="https://github.com/ELK-milu.png" width="50" style="border-radius:50%" /></a> <a href="https://github.com/yxwzuishuai"><img src="https://github.com/yxwzuishuai.png" width="50" style="border-radius:50%" /></a>
 
----
+
+同时感谢上游项目 [New API](https://github.com/Calcium-Ion/new-api) / [One API](https://github.com/songquanpeng/one-api) 的所有贡献者。
+
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ELK-milu/Coworker)](https://star-history.com/#ELK-milu/Coworker)
 
 ## 许可证
 
@@ -251,3 +254,4 @@ Browser (React 18 + Semi-UI)
 
 LLM 网关部分基于 [New API](https://github.com/Calcium-Ion/new-api)（AGPLv3）/ [One API](https://github.com/songquanpeng/one-api)（MIT）。
 </div>
+
