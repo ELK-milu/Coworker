@@ -1,0 +1,15 @@
+e479ad42 security(P1): add symlink protection to sandbox path validation
+5d6c1c09 security(P1): harden WeChat, file preview, rate limiting and token quota
+8add8f37 security(P0): harden command execution and network access
+55832528 security(P0): add authentication & authorization to all coworker endpoints
+5a3910d4 fix(docker): build web/dist before vite dev in fast compose
+cb09c9d4 chore(docker): add nsjail, wechat env and disable milvus in fast compose
+dcc29c08 Merge pull request #1 from ELK-milu/feature/#修改readme
+af97d1d7 feature/ 提交readme
+84a0201f feat(wechat): add WeChat Official Account service module
+dbdb16a5 feat(coworker): add wechat_id field to user profile
+8882c9b8 fix(store): add agents directory support for import and file management
+983687e0 fix(store): improve AI classification prompt and move builtin model setting
+42d35531 feat(store): enhance GitHub/ModelScope import with auto-translate, classify and avatar
+5a1aff57 feat(store): add skill store detail page with readme, file tree and download
+4e9b1844 Merge remote-tracking branch 'upstream/main'
