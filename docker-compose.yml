@@ -29,7 +29,7 @@ services:
       # Docker socket — 允许后端管理 nsjail 沙箱容器
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/coworker?sslmode=disable
+      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api?sslmode=disable
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
@@ -93,11 +93,11 @@ services:
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: Xm8@Kp9#vL5n!Qw2%Rt7&Yz4  # ⚠️ 生产环境请修改！
-      POSTGRES_DB: coworker
+      POSTGRES_DB: new-api
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U root -d coworker"]
+      test: ["CMD-SHELL", "pg_isready -U root -d new-api"]
       interval: 5s
       timeout: 5s
       retries: 10

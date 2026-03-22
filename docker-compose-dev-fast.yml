@@ -51,7 +51,7 @@ services:
       - ./userdata:/app/userdata
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/coworker
+      - SQL_DSN=postgresql://root:Xm8%40Kp9%23vL5n%21Qw2%25Rt7%26Yz4@postgres:5432/new-api
       - REDIS_CONN_STRING=redis://redis
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
@@ -112,7 +112,7 @@ services:
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: Xm8@Kp9#vL5n!Qw2%Rt7&Yz4
-      POSTGRES_DB: coworker
+      POSTGRES_DB: new-api
     volumes:
       - pg_data_dev:/var/lib/postgresql/data
     ports:

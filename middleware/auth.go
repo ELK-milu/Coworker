@@ -74,8 +74,10 @@ func authHelper(c *gin.Context, minRole int) {
 		}
 	}
 	// get header New-Api-User
+	// WebSocket 升级请求无法携带自定义 header，跳过此检查，直接使用 session 中的 id
+	isWebSocket := strings.EqualFold(c.Request.Header.Get("Upgrade"), "websocket")
 	apiUserIdStr := c.Request.Header.Get("New-Api-User")
-	if apiUserIdStr == "" {
+	if apiUserIdStr == "" && !isWebSocket {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
 			"message": "无权进行此操作，未提供 New-Api-User",
@@ -83,23 +85,24 @@ func authHelper(c *gin.Context, minRole int) {
 		c.Abort()
 		return
 	}
-	apiUserId, err := strconv.Atoi(apiUserIdStr)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "无权进行此操作，New-Api-User 格式错误",
-		})
-		c.Abort()
-		return
-
-	}
-	if id != apiUserId {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": "无权进行此操作，New-Api-User 与登录用户不匹配",
-		})
-		c.Abort()
-		return
+	if apiUserIdStr != "" {
+		apiUserId, err := strconv.Atoi(apiUserIdStr)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": "无权进行此操作，New-Api-User 格式错误",
+			})
+			c.Abort()
+			return
+		}
+		if id != apiUserId {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": "无权进行此操作，New-Api-User 与登录用户不匹配",
+			})
+			c.Abort()
+			return
+		}
 	}
 	if status.(int) == common.UserStatusDisabled {
 		c.JSON(http.StatusOK, gin.H{

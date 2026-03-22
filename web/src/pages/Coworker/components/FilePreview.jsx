@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react
 import { Spin, Typography, Button, Toast } from '@douyinfe/semi-ui';
 import { IconSave } from '@douyinfe/semi-icons';
 import { saveFileContent } from '../services/api';
+import { getUserIdFromLocalStorage } from '../../../helpers/utils';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -881,7 +882,10 @@ const FilePreview = ({ previewUrl, fileName, userId, filePath }) => {
 
     const doFetch = async () => {
       try {
-        const res = await fetch(previewUrl, { credentials: 'same-origin' });
+        const res = await fetch(previewUrl, {
+          credentials: 'same-origin',
+          headers: { 'New-API-User': getUserIdFromLocalStorage() },
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
         // 文本类
